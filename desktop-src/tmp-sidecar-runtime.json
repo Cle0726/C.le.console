@@ -1,0 +1,12 @@
+[
+  {
+    "accountId": "acct_disabled",
+    "status": "disabled",
+    "todayCalls": 0
+  },
+  {
+    "accountId": "acct_enabled",
+    "status": "healthy",
+    "todayCalls": 0
+  }
+]

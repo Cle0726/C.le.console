@@ -1,0 +1,23 @@
+# Compiled executables and backups
+*.exe
+*.bak*
+
+# Logs
+service-logs/
+*.log
+
+# Temporary electron files
+tmp-electron-app/
+tmp-electron-smoke.cjs
+
+# Agent learnings/internal files
+.learnings/
+.claude/
+
+# Ignore node_modules if any
+node_modules/
+
+# Rust/Tauri build artifacts
+target/
+dist/
+build/

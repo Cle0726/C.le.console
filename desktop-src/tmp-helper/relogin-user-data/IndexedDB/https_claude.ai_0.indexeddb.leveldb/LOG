@@ -1,0 +1,32 @@
+2026/07/15-18:00:53.163 ad8 Reusing MANIFEST f:\C.le.控制台\desktop-src\tmp-helper\relogin-user-data\IndexedDB\https_claude.ai_0.indexeddb.leveldb/MANIFEST-000001
+2026/07/15-18:00:53.181 ad8 Recovering log #3
+2026/07/15-18:00:53.182 ad8 Reusing old log f:\C.le.控制台\desktop-src\tmp-helper\relogin-user-data\IndexedDB\https_claude.ai_0.indexeddb.leveldb/000003.log 
+2026/07/15-18:02:46.093 6f50 Level-0 table #5: started
+2026/07/15-18:02:46.113 6f50 Level-0 table #5: 3196 bytes OK
+2026/07/15-18:02:46.124 6f50 Delete type=0 #3
+2026/07/15-18:02:46.125 ad8 Manual compaction at level-0 from '\x00\x03\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x04\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/07/15-18:02:46.126 6f50 Level-0 table #7: started
+2026/07/15-18:02:46.142 6f50 Level-0 table #7: 1147 bytes OK
+2026/07/15-18:02:46.158 6f50 Delete type=0 #4
+2026/07/15-18:02:46.159 ad8 Manual compaction at level-0 from '\x00\x04\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x05\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/07/15-18:02:48.345 ad8 Level-0 table #9: started
+2026/07/15-18:02:48.362 ad8 Level-0 table #9: 1759 bytes OK
+2026/07/15-18:02:48.364 ad8 Delete type=0 #6
+2026/07/15-18:02:48.366 ad8 Manual compaction at level-0 from '\x00\x07\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x08\x00\x00\x00' @ 0 : 0; will stop at '\x00\x07\x00\x00\x05' @ 289 : 1
+2026/07/15-18:02:48.366 ad8 Compacting 1@0 + 1@1 files
+2026/07/15-18:02:48.380 ad8 Generated table #10@0: 69 keys, 1480 bytes
+2026/07/15-18:02:48.381 ad8 Compacted 1@0 + 1@1 files => 1480 bytes
+2026/07/15-18:02:48.391 ad8 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/07/15-18:02:48.392 ad8 Delete type=2 #9
+2026/07/15-18:02:48.392 ad8 Manual compaction at level-0 from '\x00\x07\x00\x00\x05' @ 289 : 1 .. '\x00\x08\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/07/15-18:02:49.069 7634 Level-0 table #12: started
+2026/07/15-18:02:49.096 7634 Level-0 table #12: 646 bytes OK
+2026/07/15-18:02:49.098 7634 Delete type=2 #7
+2026/07/15-18:02:49.099 7634 Delete type=0 #8
+2026/07/15-18:02:49.100 7634 Manual compaction at level-0 from '\x00\x08\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x09\x00\x00\x00' @ 0 : 0; will stop at '\x00\x08\x00\x00\x05' @ 308 : 1
+2026/07/15-18:02:49.100 7634 Compacting 1@0 + 1@1 files
+2026/07/15-18:02:49.119 7634 Generated table #13@0: 73 keys, 1507 bytes
+2026/07/15-18:02:49.119 7634 Compacted 1@0 + 1@1 files => 1507 bytes
+2026/07/15-18:02:49.121 7634 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/07/15-18:02:49.121 7634 Delete type=2 #12
+2026/07/15-18:02:49.122 7634 Manual compaction at level-0 from '\x00\x08\x00\x00\x05' @ 308 : 1 .. '\x00\x09\x00\x00\x00' @ 0 : 0; will stop at (end)

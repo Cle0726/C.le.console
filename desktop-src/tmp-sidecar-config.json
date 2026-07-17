@@ -1,0 +1,28 @@
+{
+  "enabled": true,
+  "listenHost": "127.0.0.1",
+  "listenPort": 8787,
+  "maxRetries": 3,
+  "cooldownMinutes": 15,
+  "claudeDailyLimit": 100,
+  "requireApiKey": false,
+  "localApiKey": "",
+  "accounts": [
+    {
+      "id": "acct_disabled",
+      "label": "Disabled Account",
+      "sessionKey": "sk-disabled",
+      "enabled": false,
+      "proxyUrl": "",
+      "dailyLimit": 50
+    },
+    {
+      "id": "acct_enabled",
+      "label": "Enabled Account",
+      "sessionKey": "sk-enabled",
+      "enabled": true,
+      "proxyUrl": "",
+      "dailyLimit": 50
+    }
+  ]
+}

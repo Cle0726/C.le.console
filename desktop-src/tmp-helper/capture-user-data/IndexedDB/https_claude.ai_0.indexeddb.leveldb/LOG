@@ -1,0 +1,11 @@
+2026/07/14-14:36:37.589 1a30 Creating DB f:\C.le.控制台\desktop-src\tmp-helper\capture-user-data\IndexedDB\https_claude.ai_0.indexeddb.leveldb since it was missing.
+2026/07/14-14:36:37.598 1a30 Reusing MANIFEST f:\C.le.控制台\desktop-src\tmp-helper\capture-user-data\IndexedDB\https_claude.ai_0.indexeddb.leveldb/MANIFEST-000001
+2026/07/14-14:36:40.797 2184 Level-0 table #5: started
+2026/07/14-14:36:40.812 2184 Level-0 table #5: 1942 bytes OK
+2026/07/14-14:36:40.814 2184 Delete type=0 #3
+2026/07/14-14:36:40.815 1628 Manual compaction at level-0 from '\x00\x03\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x04\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/07/14-14:36:40.824 1628 Level-0 table #7: started
+2026/07/14-14:36:40.842 1628 Level-0 table #7: 658 bytes OK
+2026/07/14-14:36:40.844 1628 Delete type=0 #4
+2026/07/14-14:36:40.845 1a30 Manual compaction at level-0 from '\x00\x04\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x05\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/07/14-14:36:41.910 66c8 Manual compaction at level-0 from '\x00\x06\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x07\x00\x00\x00' @ 0 : 0; will stop at (end)

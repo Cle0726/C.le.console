@@ -1,0 +1,19 @@
+[
+  {
+    "accountId": "acct_invalid",
+    "status": "invalid",
+    "todayCalls": 0,
+    "lastError": "invalid Claude session: {\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"Invalid authorization\",\"details\":{\"error_code\":\"account_session_invalid\",\"error_visibility\":\"user_facing\"}},\"request_id\":\"req_mock_invalid_auth\"}",
+    "lastFailureKind": "invalid_session",
+    "lastStatusCode": 403,
+    "lastTransport": "direct_http",
+    "consecutiveFailures": 1
+  },
+  {
+    "accountId": "acct_mock_ok",
+    "status": "healthy",
+    "todayCalls": 2,
+    "lastSuccessAt": "2026-07-14T09:39:32Z",
+    "lastTransport": "direct_http"
+  }
+]

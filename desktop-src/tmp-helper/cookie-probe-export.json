@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "source": "cockpit-claude-desktop-auth-helper",
+  "exportedAt": "2026-07-14T04:32:01.619Z",
+  "userDataDir": "f:\\C.le.控制台\\desktop-src\\tmp-helper\\cookie-probe-user-data",
+  "cookies": [
+    {
+      "name": "sessionKey",
+      "value": "fake-session-key-for-probe",
+      "domain": ".claude.ai",
+      "hostOnly": false,
+      "path": "/",
+      "secure": true,
+      "httpOnly": true,
+      "session": true,
+      "expirationDate": null,
+      "sameSite": "lax"
+    },
+    {
+      "name": "lastActiveOrg",
+      "value": "11111111-1111-1111-1111-111111111111",
+      "domain": ".claude.ai",
+      "hostOnly": false,
+      "path": "/",
+      "secure": true,
+      "httpOnly": false,
+      "session": true,
+      "expirationDate": null,
+      "sameSite": "lax"
+    },
+    {
+      "name": "_fbp",
+      "value": "fb.1.1784003518580.67691423668977320",
+      "domain": ".claude.ai",
+      "hostOnly": false,
+      "path": "/",
+      "secure": true,
+      "httpOnly": false,
+      "session": false,
+      "expirationDate": 1818563517.107829,
+      "sameSite": "no_restriction"
+    },
+    {
+      "name": "anthropic-device-id",
+      "value": "113cd293-cbd3-44d1-a931-0525d684fcad",
+      "domain": "claude.ai",
+      "hostOnly": true,
+      "path": "/",
+      "secure": true,
+      "httpOnly": false,
+      "session": false,
+      "expirationDate": 1809923517.108478,
+      "sameSite": "lax"
+    },
+    {
+      "name": "activitySessionId",
+      "value": "8bf11a4d-33e9-4d68-a32f-9e934e79cad3",
+      "domain": "claude.ai",
+      "hostOnly": true,
+      "path": "/",
+      "secure": true,
+      "httpOnly": false,
+      "session": false,
+      "expirationDate": 1784046717.108544,
+      "sameSite": "lax"
+    },
+    {
+      "name": "ion-vk",
+      "value": "f167a799-fc96-4731-ba35-bc97f6a7e426",
+      "domain": "claude.ai",
+      "hostOnly": true,
+      "path": "/",
+      "secure": true,
+      "httpOnly": true,
+      "session": true,
+      "expirationDate": null,
+      "sameSite": "lax"
+    },
+    {
+      "name": "_dd_s",
+      "value": "aid=79d5d70b-1c1f-4d7a-9789-4b5eaefef27a&rum=2&id=5e371797-efd2-4f86-8a40-ce680ea40dde&created=1784003518933&expire=1784004418933",
+      "domain": "claude.ai",
+      "hostOnly": true,
+      "path": "/",
+      "secure": false,
+      "httpOnly": false,
+      "session": false,
+      "expirationDate": 1815539518,
+      "sameSite": "strict"
+    },
+    {
+      "name": "__cf_bm",
+      "value": "ElRHe2oEZDa_K.iB5XRDNmeaQmBhpDONeWbSKbWdI8Q-1784003520.5024428-1.0.1.1-JTReBhkyIOC0Sr8zSfJj2tRxdQJZKR03tvoViMy423FQnmQU96RxWV2qNDxPvUUAAWaLnSV.46bQ64vaezy9bT2xMx9kCWNXDQ7u4yvj0r3B75zaANZjHZHVbbegvBwN",
+      "domain": ".claude.ai",
+      "hostOnly": false,
+      "path": "/",
+      "secure": true,
+      "httpOnly": true,
+      "session": false,
+      "expirationDate": 1784005319.003235,
+      "sameSite": "no_restriction"
+    },
+    {
+      "name": "ajs_anonymous_id",
+      "value": "claudeai.v1.d1e43b4b-681d-4509-9f95-130d67b64a2f",
+      "domain": ".claude.ai",
+      "hostOnly": false,
+      "path": "/",
+      "secure": true,
+      "httpOnly": false,
+      "session": false,
+      "expirationDate": 1815539519.012356,
+      "sameSite": "lax"
+    },
+    {
+      "name": "_cfuvid",
+      "value": "m3q4zgCU__leF3RmwE804frTihX9.bkRSPvGkG2WCjc-1784003520.38329-1.0.1.1-uSjx_nv7Y9drKN3XFQBG55N3RfVOUN6KaYHmhFFtRx4",
+      "domain": ".claude.ai",
+      "hostOnly": false,
+      "path": "/",
+      "secure": true,
+      "httpOnly": true,
+      "session": true,
+      "expirationDate": null,
+      "sameSite": "no_restriction"
+    },
+    {
+      "name": "CH-prefers-color-scheme",
+      "value": "dark",
+      "domain": ".claude.ai",
+      "hostOnly": false,
+      "path": "/",
+      "secure": true,
+      "httpOnly": false,
+      "session": false,
+      "expirationDate": 1815539519.104527,
+      "sameSite": "lax"
+    }
+  ],
+  "webProfile": {
+    "version": 1,
+    "fetchContext": "page",
+    "fetchedAt": "2026-07-14T04:31:59.169Z",
+    "endpoints": {},
+    "errors": {
+      "accountProfile": "HTTP 403 {\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"Invalid authorization\",\"details\":{\"error_visibility\":\"user_facing\",\"error_code\":\"account_session_invalid\"}},\"request_id\":\"req_011Cd1KisTmh3heRVEML3iri\"}",
+      "account": "HTTP 403 {\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"Invalid authorization\",\"details\":{\"error_visibility\":\"user_facing\",\"error_code\":\"account_session_invalid\"}},\"request_id\":\"req_011Cd1KivZ4Boo111AcLkZYN\"}",
+      "bootstrapAppStart": "HTTP 403 {\"error\":{\"details\":{\"error_code\":\"account_session_invalid\",\"error_visibility\":\"user_facing\"},\"message\":\"Invalid authorization\",\"type\":\"permission_error\"},\"request_id\":\"req_011Cd1KixVPzK1wD3b6eQXoz\",\"type\":\"error\"}\n",
+      "organizationUsage": "HTTP 403 {\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"Invalid authorization\",\"details\":{\"error_visibility\":\"user_facing\",\"error_code\":\"account_session_invalid\"}},\"request_id\":\"req_011Cd1KizA6XkxxFYG9HpKVc\"}",
+      "subscriptionDetails": "HTTP 403 {\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"Invalid authorization\",\"details\":{\"error_visibility\":\"user_facing\",\"error_code\":\"account_session_invalid\"}},\"request_id\":\"req_011Cd1Kj1Ko7PVgnUSU6dWvP\"}",
+      "overageSpendLimit": "HTTP 403 {\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"Invalid authorization\",\"details\":{\"error_visibility\":\"user_facing\",\"error_code\":\"account_session_invalid\"}},\"request_id\":\"req_011Cd1Kj2UVwtn8Cg992h3HB\"}"
+    }
+  }
+}

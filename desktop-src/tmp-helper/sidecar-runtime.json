@@ -1,0 +1,9 @@
+[
+  {
+    "accountId": "acct_fake_probe",
+    "status": "cooling_down",
+    "todayCalls": 0,
+    "cooldownUntil": "2026-07-14T04:52:10Z",
+    "lastError": "cloudflare or risk control block: \u003c!DOCTYPE html\u003e\u003chtml lang=\"en-US\"\u003e\u003chead\u003e\u003ctitle\u003eJust a moment...\u003c/title\u003e\u003cmeta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"\u003e\u003cmeta http-equiv=\"X-UA-Compatible\" content=\"IE=Edge\"\u003e\u003cmeta name=\"robots\" content=\"noindex,nofollow\"\u003e\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scal"
+  }
+]

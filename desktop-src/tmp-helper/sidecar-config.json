@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "listenHost": "127.0.0.1",
+  "listenPort": 8788,
+  "maxRetries": 1,
+  "cooldownMinutes": 15,
+  "claudeDailyLimit": 100,
+  "requireApiKey": false,
+  "localApiKey": "",
+  "accounts": [
+    {
+      "id": "acct_fake_probe",
+      "label": "Fake Probe Account",
+      "sessionKey": "fake-session-key-for-probe",
+      "enabled": true,
+      "proxyUrl": "",
+      "dailyLimit": 100
+    }
+  ]
+}

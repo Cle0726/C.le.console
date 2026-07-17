@@ -1,0 +1,698 @@
+{
+  "listenHost": "127.0.0.1",
+  "listenPort": 13978,
+  "adminToken": "local-admin-token",
+  "requireApiKey": false,
+  "localApiKeys": [
+    "local-api-key"
+  ],
+  "defaultModel": "coding-auto",
+  "errorPolicy": {
+    "maxRetries": 3,
+    "cooldownSeconds": 60,
+    "requestTimeoutMs": 120000
+  },
+  "proxies": [
+    {
+      "id": "direct",
+      "label": "DIRECT",
+      "type": "direct"
+    },
+    {
+      "id": "codex-us",
+      "label": "CodexFixed-US 127.0.0.1:7896",
+      "type": "http",
+      "url": "http://127.0.0.1:7896"
+    },
+    {
+      "id": "bridge-11086",
+      "label": "Secondary mihomo 127.0.0.1:11086",
+      "type": "http",
+      "url": "http://127.0.0.1:11086"
+    }
+  ],
+  "providers": [
+    {
+      "id": "mock-a",
+      "label": "Mock Platform A",
+      "kind": "openai_compatible",
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:19081/v1",
+      "defaultProxyId": "direct",
+      "timeoutMs": 30000
+    },
+    {
+      "id": "mock-b",
+      "label": "Mock Platform B",
+      "kind": "openai_compatible",
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:19082/v1",
+      "defaultProxyId": "direct",
+      "timeoutMs": 30000
+    },
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "kind": "openai_compatible",
+      "enabled": false,
+      "baseUrl": "https://api.openai.com/v1",
+      "defaultProxyId": "codex-us",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "kind": "openai_compatible",
+      "enabled": false,
+      "baseUrl": "https://api.deepseek.com/v1",
+      "defaultProxyId": "direct",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "antigravity-codex-local",
+      "label": "Antigravity Cockpit Codex Local Access",
+      "kind": "openai_compatible",
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:13977/v1",
+      "defaultProxyId": "direct",
+      "timeoutMs": 180000
+    },
+    {
+      "id": "xai",
+      "label": "xAI / Grok",
+      "kind": "openai_compatible",
+      "enabled": false,
+      "baseUrl": "https://api.x.ai/v1",
+      "defaultProxyId": "codex-us",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "anthropic",
+      "label": "Anthropic Claude API",
+      "kind": "openai_compatible",
+      "enabled": false,
+      "baseUrl": "https://api.anthropic.com/v1",
+      "defaultProxyId": "codex-us",
+      "timeoutMs": 180000
+    },
+    {
+      "id": "gemini",
+      "label": "Google Gemini OpenAI-Compatible",
+      "kind": "openai_compatible",
+      "enabled": false,
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "defaultProxyId": "codex-us",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "openrouter",
+      "label": "OpenRouter",
+      "kind": "openai_compatible",
+      "enabled": false,
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "defaultProxyId": "codex-us",
+      "timeoutMs": 180000
+    },
+    {
+      "id": "moonshot",
+      "label": "Moonshot / Kimi",
+      "kind": "openai_compatible",
+      "enabled": false,
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "defaultProxyId": "direct",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "qwen",
+      "label": "Alibaba Qwen DashScope Compatible",
+      "kind": "openai_compatible",
+      "enabled": false,
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "defaultProxyId": "direct",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "siliconflow",
+      "label": "SiliconFlow",
+      "kind": "openai_compatible",
+      "enabled": false,
+      "baseUrl": "https://api.siliconflow.cn/v1",
+      "defaultProxyId": "direct",
+      "timeoutMs": 120000
+    }
+  ],
+  "accounts": [
+    {
+      "id": "mock-a-1",
+      "providerId": "mock-a",
+      "label": "Mock A Account 1",
+      "enabled": true,
+      "priority": 10,
+      "auth": {
+        "type": "api_key",
+        "apiKey": "mock-a-key-1"
+      }
+    },
+    {
+      "id": "mock-a-2",
+      "providerId": "mock-a",
+      "label": "Mock A Account 2",
+      "enabled": true,
+      "priority": 9,
+      "auth": {
+        "type": "api_key",
+        "apiKey": "mock-a-key-2"
+      }
+    },
+    {
+      "id": "mock-b-1",
+      "providerId": "mock-b",
+      "label": "Mock B Account 1",
+      "enabled": true,
+      "priority": 8,
+      "auth": {
+        "type": "api_key",
+        "apiKey": "mock-b-key-1"
+      }
+    },
+    {
+      "id": "antigravity-codex_b246cf84d49bd5266381c59171412c60",
+      "providerId": "antigravity-codex-local",
+      "label": "Antigravity/Codex kk07266417@gmail.com",
+      "enabled": true,
+      "priority": 100,
+      "auth": {
+        "type": "api_key",
+        "apiKey": "agt_codex_6c078caabc18ebb618758881afe6ffcf"
+      },
+      "meta": {
+        "source": "codex_local_access_sidecar_manifest",
+        "authId": "codex_b246cf84d49bd5266381c59171412c60.json",
+        "email": "kk07266417@gmail.com",
+        "remainingQuota": 0,
+        "subscriptionExpiryMs": null,
+        "dedicatedApiKey": true
+      }
+    },
+    {
+      "id": "antigravity-codex_a41599844df5458ee566153a22953a83",
+      "providerId": "antigravity-codex-local",
+      "label": "Antigravity/Codex MiguelArnold51657bJ@outlook.com",
+      "enabled": true,
+      "priority": 100,
+      "auth": {
+        "type": "api_key",
+        "apiKey": "agt_codex_2b1bfa8a4081d26bad13fefd0c2df0b9"
+      },
+      "meta": {
+        "source": "codex_local_access_sidecar_manifest",
+        "authId": "codex_a41599844df5458ee566153a22953a83.json",
+        "email": "MiguelArnold51657bJ@outlook.com",
+        "remainingQuota": 0,
+        "subscriptionExpiryMs": null,
+        "dedicatedApiKey": true
+      }
+    },
+    {
+      "id": "antigravity-codex_6d19b318bd46b5646ff9238491d4eecf",
+      "providerId": "antigravity-codex-local",
+      "label": "Antigravity/Codex ccc01632@gmail.com",
+      "enabled": true,
+      "priority": 100,
+      "auth": {
+        "type": "api_key",
+        "apiKey": "agt_codex_223d73b205e56116c88a865a6ccf47da"
+      },
+      "meta": {
+        "source": "codex_local_access_sidecar_manifest",
+        "authId": "codex_6d19b318bd46b5646ff9238491d4eecf.json",
+        "email": "ccc01632@gmail.com",
+        "remainingQuota": 0,
+        "subscriptionExpiryMs": null,
+        "dedicatedApiKey": true
+      }
+    },
+    {
+      "id": "antigravity-codex_946ee3e4f94e91491fd78ef6c16f25ec",
+      "providerId": "antigravity-codex-local",
+      "label": "Antigravity/Codex ysbvpaqoqzoo@hotmail.com",
+      "enabled": true,
+      "priority": 400,
+      "auth": {
+        "type": "api_key",
+        "apiKey": "agt_codex_0f85b128e0c0049bbb96ddf6892abb53"
+      },
+      "meta": {
+        "source": "codex_local_access_sidecar_manifest",
+        "authId": "codex_946ee3e4f94e91491fd78ef6c16f25ec.json",
+        "email": "ysbvpaqoqzoo@hotmail.com",
+        "remainingQuota": 84,
+        "subscriptionExpiryMs": 1786544854000,
+        "dedicatedApiKey": true
+      }
+    }
+  ],
+  "models": [
+    {
+      "id": "mock-a-chat",
+      "providerId": "mock-a",
+      "upstreamModel": "mock-a-model",
+      "strategy": "round_robin",
+      "capabilities": [
+        "chat"
+      ]
+    },
+    {
+      "id": "mock-b-chat",
+      "providerId": "mock-b",
+      "upstreamModel": "mock-b-model",
+      "strategy": "round_robin",
+      "capabilities": [
+        "chat"
+      ]
+    },
+    {
+      "id": "mock-a-image",
+      "providerId": "mock-a",
+      "upstreamModel": "mock-a-image-model",
+      "strategy": "round_robin",
+      "capabilities": [
+        "image"
+      ]
+    },
+    {
+      "id": "mock-b-image",
+      "providerId": "mock-b",
+      "upstreamModel": "mock-b-image-model",
+      "strategy": "round_robin",
+      "capabilities": [
+        "image"
+      ]
+    },
+    {
+      "id": "coding-auto",
+      "strategy": "fallback",
+      "capabilities": [
+        "chat"
+      ],
+      "candidates": [
+        {
+          "providerId": "mock-a",
+          "model": "mock-a-model"
+        },
+        {
+          "providerId": "mock-b",
+          "model": "mock-b-model"
+        }
+      ]
+    },
+    {
+      "id": "image-auto",
+      "strategy": "fallback",
+      "capabilities": [
+        "image"
+      ],
+      "candidates": [
+        {
+          "providerId": "mock-a",
+          "model": "mock-a-image-model"
+        },
+        {
+          "providerId": "mock-b",
+          "model": "mock-b-image-model"
+        }
+      ]
+    },
+    {
+      "id": "gpt-4o",
+      "providerId": "openai",
+      "upstreamModel": "gpt-4o",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "deepseek-chat",
+      "providerId": "deepseek",
+      "upstreamModel": "deepseek-chat",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gpt-5.5",
+      "providerId": "antigravity-codex-local",
+      "upstreamModel": "gpt-5.5",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gpt-5.4",
+      "providerId": "antigravity-codex-local",
+      "upstreamModel": "gpt-5.4",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "providerId": "antigravity-codex-local",
+      "upstreamModel": "gpt-5.4-mini",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "providerId": "antigravity-codex-local",
+      "upstreamModel": "gpt-5.6-sol",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "providerId": "antigravity-codex-local",
+      "upstreamModel": "gpt-5.6-terra",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "providerId": "antigravity-codex-local",
+      "upstreamModel": "gpt-5.6-luna",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gpt-5.6",
+      "providerId": "antigravity-codex-local",
+      "upstreamModel": "gpt-5.6",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gpt-image-2",
+      "providerId": "antigravity-codex-local",
+      "upstreamModel": "gpt-image-2",
+      "strategy": "round_robin",
+      "capabilities": [
+        "image"
+      ]
+    },
+    {
+      "id": "codex-auto-review",
+      "providerId": "antigravity-codex-local",
+      "upstreamModel": "codex-auto-review",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "antigravity-auto",
+      "strategy": "fallback",
+      "capabilities": [
+        "chat"
+      ],
+      "candidates": [
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.5"
+        },
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.4"
+        },
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.4-mini"
+        },
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.6-sol"
+        },
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.6-terra"
+        },
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.6-luna"
+        },
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.6"
+        },
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "codex-auto-review"
+        }
+      ]
+    },
+    {
+      "id": "antigravity-image-auto",
+      "strategy": "fallback",
+      "capabilities": [
+        "image"
+      ],
+      "candidates": [
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-image-2"
+        }
+      ]
+    },
+    {
+      "id": "antigravity-b246cf84-smoke",
+      "strategy": "fallback",
+      "candidates": [
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.4-mini",
+          "accountIds": [
+            "antigravity-codex_b246cf84d49bd5266381c59171412c60"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "antigravity-a4159984-smoke",
+      "strategy": "fallback",
+      "candidates": [
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.4-mini",
+          "accountIds": [
+            "antigravity-codex_a41599844df5458ee566153a22953a83"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "antigravity-6d19b318-smoke",
+      "strategy": "fallback",
+      "candidates": [
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.4-mini",
+          "accountIds": [
+            "antigravity-codex_6d19b318bd46b5646ff9238491d4eecf"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "antigravity-946ee3e4-smoke",
+      "strategy": "fallback",
+      "candidates": [
+        {
+          "providerId": "antigravity-codex-local",
+          "model": "gpt-5.4-mini",
+          "accountIds": [
+            "antigravity-codex_946ee3e4f94e91491fd78ef6c16f25ec"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-4.1",
+      "providerId": "openai",
+      "upstreamModel": "gpt-4.1",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gpt-4.1-mini",
+      "providerId": "openai",
+      "upstreamModel": "gpt-4.1-mini",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gpt-4o-mini",
+      "providerId": "openai",
+      "upstreamModel": "gpt-4o-mini",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "o3",
+      "providerId": "openai",
+      "upstreamModel": "o3",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "o4-mini",
+      "providerId": "openai",
+      "upstreamModel": "o4-mini",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "grok-4",
+      "providerId": "xai",
+      "upstreamModel": "grok-4",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "grok-3",
+      "providerId": "xai",
+      "upstreamModel": "grok-3",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "grok-3-mini",
+      "providerId": "xai",
+      "upstreamModel": "grok-3-mini",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "grok-2-image",
+      "providerId": "xai",
+      "upstreamModel": "grok-2-image",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "grok-code-fast-1",
+      "providerId": "xai",
+      "upstreamModel": "grok-code-fast-1",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "claude-sonnet-4",
+      "providerId": "anthropic",
+      "upstreamModel": "claude-sonnet-4-20250514",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "claude-opus-4",
+      "providerId": "anthropic",
+      "upstreamModel": "claude-opus-4-20250514",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "claude-3-5-haiku",
+      "providerId": "anthropic",
+      "upstreamModel": "claude-3-5-haiku-20241022",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gemini-2.5-pro",
+      "providerId": "gemini",
+      "upstreamModel": "gemini-2.5-pro",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "providerId": "gemini",
+      "upstreamModel": "gemini-2.5-flash",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "gemini-2.0-flash",
+      "providerId": "gemini",
+      "upstreamModel": "gemini-2.0-flash",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "deepseek-reasoner",
+      "providerId": "deepseek",
+      "upstreamModel": "deepseek-reasoner",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "kimi-k2",
+      "providerId": "moonshot",
+      "upstreamModel": "kimi-k2-0711-preview",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "moonshot-v1-128k",
+      "providerId": "moonshot",
+      "upstreamModel": "moonshot-v1-128k",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "qwen3-coder-plus",
+      "providerId": "qwen",
+      "upstreamModel": "qwen3-coder-plus",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "qwen-plus",
+      "providerId": "qwen",
+      "upstreamModel": "qwen-plus",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "qwen-max",
+      "providerId": "qwen",
+      "upstreamModel": "qwen-max",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "siliconflow-deepseek-v3",
+      "providerId": "siliconflow",
+      "upstreamModel": "deepseek-ai/DeepSeek-V3",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "siliconflow-qwen3-coder",
+      "providerId": "siliconflow",
+      "upstreamModel": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "openrouter-auto",
+      "providerId": "openrouter",
+      "upstreamModel": "openrouter/auto",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "openrouter-grok-4",
+      "providerId": "openrouter",
+      "upstreamModel": "x-ai/grok-4",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "openrouter-claude-sonnet-4",
+      "providerId": "openrouter",
+      "upstreamModel": "anthropic/claude-sonnet-4",
+      "strategy": "round_robin"
+    },
+    {
+      "id": "commercial-auto",
+      "strategy": "fallback",
+      "candidates": [
+        {
+          "providerId": "xai",
+          "model": "grok-4"
+        },
+        {
+          "providerId": "openai",
+          "model": "gpt-4.1"
+        },
+        {
+          "providerId": "anthropic",
+          "model": "claude-sonnet-4-20250514"
+        },
+        {
+          "providerId": "gemini",
+          "model": "gemini-2.5-pro"
+        },
+        {
+          "providerId": "deepseek",
+          "model": "deepseek-chat"
+        },
+        {
+          "providerId": "moonshot",
+          "model": "kimi-k2-0711-preview"
+        },
+        {
+          "providerId": "qwen",
+          "model": "qwen3-coder-plus"
+        }
+      ]
+    }
+  ]
+}

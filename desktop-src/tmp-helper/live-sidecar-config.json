@@ -1,0 +1,33 @@
+{
+  "enabled": true,
+  "listenHost": "127.0.0.1",
+  "listenPort": 8794,
+  "maxRetries": 3,
+  "cooldownMinutes": 15,
+  "claudeDailyLimit": 100,
+  "requireApiKey": false,
+  "localApiKey": "",
+  "accounts": [
+    {
+      "id": "acct_disabled",
+      "label": "Disabled Account",
+      "sessionKey": "sk-disabled-placeholder",
+      "enabled": false,
+      "proxyUrl": "",
+      "dailyLimit": 50
+    },
+    {
+      "id": "acct_enabled",
+      "label": "Enabled Account",
+      "sessionKey": "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",
+      "enabled": true,
+      "proxyUrl": "",
+      "dailyLimit": 50
+    }
+  ],
+  "transportMode": "direct_http",
+  "helperMode": "probe_only",
+  "respectRetryAfter": true,
+  "streamFirstChunkTimeoutMs": 8000,
+  "upstreamBaseUrl": "https://claude.ai"
+}

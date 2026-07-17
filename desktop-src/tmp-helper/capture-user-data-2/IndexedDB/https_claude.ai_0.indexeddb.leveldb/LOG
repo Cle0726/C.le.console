@@ -1,0 +1,32 @@
+2026/07/14-15:11:08.531 7288 Reusing MANIFEST f:\C.le.控制台\desktop-src\tmp-helper\capture-user-data-2\IndexedDB\https_claude.ai_0.indexeddb.leveldb/MANIFEST-000001
+2026/07/14-15:11:08.531 7288 Recovering log #3
+2026/07/14-15:11:08.532 7288 Reusing old log f:\C.le.控制台\desktop-src\tmp-helper\capture-user-data-2\IndexedDB\https_claude.ai_0.indexeddb.leveldb/000003.log 
+2026/07/14-15:19:52.664 2d3c Level-0 table #5: started
+2026/07/14-15:19:52.672 2d3c Level-0 table #5: 4653 bytes OK
+2026/07/14-15:19:52.675 2d3c Delete type=0 #3
+2026/07/14-15:19:52.676 8820 Manual compaction at level-0 from '\x00\x04\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x05\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/07/14-15:19:52.677 8820 Level-0 table #7: started
+2026/07/14-15:19:52.694 8820 Level-0 table #7: 811 bytes OK
+2026/07/14-15:19:52.696 8820 Delete type=0 #4
+2026/07/14-15:19:52.697 8820 Manual compaction at level-0 from '\x00\x05\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x06\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/07/14-15:19:54.668 2d3c Level-0 table #9: started
+2026/07/14-15:19:54.683 2d3c Level-0 table #9: 2035 bytes OK
+2026/07/14-15:19:54.685 2d3c Delete type=0 #6
+2026/07/14-15:19:54.687 8820 Manual compaction at level-0 from '\x00\x08\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x09\x00\x00\x00' @ 0 : 0; will stop at '\x00\x08\x00\x00\x05' @ 400 : 1
+2026/07/14-15:19:54.687 8820 Compacting 1@0 + 1@1 files
+2026/07/14-15:19:54.701 8820 Generated table #10@0: 69 keys, 1473 bytes
+2026/07/14-15:19:54.701 8820 Compacted 1@0 + 1@1 files => 1473 bytes
+2026/07/14-15:19:54.702 8820 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/07/14-15:19:54.703 8820 Delete type=2 #9
+2026/07/14-15:19:54.704 8820 Manual compaction at level-0 from '\x00\x08\x00\x00\x05' @ 400 : 1 .. '\x00\x09\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/07/14-15:19:55.087 9414 Level-0 table #12: started
+2026/07/14-15:19:55.103 9414 Level-0 table #12: 645 bytes OK
+2026/07/14-15:19:55.105 9414 Delete type=2 #7
+2026/07/14-15:19:55.105 9414 Delete type=0 #8
+2026/07/14-15:19:55.106 2d3c Manual compaction at level-0 from '\x00\x09\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x0a\x00\x00\x00' @ 0 : 0; will stop at '\x00\x09\x00\x00\x05' @ 419 : 1
+2026/07/14-15:19:55.107 2d3c Compacting 1@0 + 1@1 files
+2026/07/14-15:19:55.122 2d3c Generated table #13@0: 73 keys, 1502 bytes
+2026/07/14-15:19:55.122 2d3c Compacted 1@0 + 1@1 files => 1502 bytes
+2026/07/14-15:19:55.124 2d3c compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/07/14-15:19:55.125 2d3c Delete type=2 #12
+2026/07/14-15:19:55.126 7288 Manual compaction at level-0 from '\x00\x09\x00\x00\x05' @ 419 : 1 .. '\x00\x0a\x00\x00\x00' @ 0 : 0; will stop at (end)

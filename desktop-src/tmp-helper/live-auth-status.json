@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "status": "closed",
+  "authenticated": true,
+  "exportedAt": "2026-07-14T10:37:28.542Z",
+  "userDataDir": "f:\\C.le.控制台\\desktop-src\\tmp-helper\\live-user-data",
+  "cookieNames": [
+    "ARID",
+    "CH-prefers-color-scheme",
+    "__cf_bm",
+    "__ssid",
+    "_cfuvid",
+    "_dd_s",
+    "_fbp",
+    "_gcl_au",
+    "activitySessionId",
+    "ajs_anonymous_id",
+    "anthropic-device-id",
+    "cf_clearance",
+    "g_state",
+    "ion-vk",
+    "lastActiveOrg",
+    "routingHint",
+    "sessionKey",
+    "sessionKeyLC",
+    "user-sidebar-pinned",
+    "user-sidebar-visible-on-load"
+  ],
+  "hasSessionKey": true,
+  "hasLastActiveOrg": true
+}

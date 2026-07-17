@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Multi Platform CLI Proxy API</title>
+    <link rel="stylesheet" href="/ui.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="panel status-panel">
+        <div>
+          <p class="eyebrow">API 代理服务</p>
+          <h1>Multi Platform CLI Proxy API</h1>
+          <p class="subtle">独立本地 OpenAI-compatible 反代服务，支持多平台、多账号、模型路由、失败 fallback。</p>
+        </div>
+
+        <div class="status-grid" id="statusGrid"></div>
+
+        <div class="gateway-toolbar">
+          <div class="toggle-block">
+            <span class="toggle-label">Admin Token</span>
+            <input id="adminToken" value="local-admin-token" />
+          </div>
+          <div class="button-row">
+            <button class="secondary" id="refreshBtn">刷新状态</button>
+            <button class="primary" id="testBtn">测试反代：你好</button>
+            <button class="ghost" id="resetRuntimeBtn">重置运行态</button>
+          </div>
+        </div>
+      </section>
+
+      <div id="messageBox"></div>
+
+      <section class="panel stats-panel">
+        <div class="panel-header split">
+          <div>
+            <p class="eyebrow">运行态</p>
+            <h2>当前网关摘要</h2>
+          </div>
+        </div>
+        <div class="stats-grid" id="statsGrid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header split">
+          <div>
+            <p class="eyebrow">Providers</p>
+            <h2>平台列表</h2>
+            <p class="subtle">启用的平台会参与模型路由；OpenAI-compatible 平台可直接反代。</p>
+          </div>
+        </div>
+        <div class="table-shell"><table id="providersTable"></table></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header split">
+          <div>
+            <p class="eyebrow">Accounts</p>
+            <h2>账号池</h2>
+            <p class="subtle">同平台多账号按优先级 + 轮询调度，限流/失效会进入运行态。</p>
+          </div>
+        </div>
+        <div class="table-shell"><table id="accountsTable"></table></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header split">
+          <div>
+            <p class="eyebrow">Models</p>
+            <h2>模型路由</h2>
+            <p class="subtle">客户端请求模型名映射到真实 provider/model；coding-auto 演示跨平台 fallback。</p>
+          </div>
+        </div>
+        <div class="table-shell"><table id="modelsTable"></table></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header split">
+          <div>
+            <p class="eyebrow">Runtime</p>
+            <h2>账号运行状态</h2>
+          </div>
+        </div>
+        <div class="table-shell"><table id="runtimeTable"></table></div>
+      </section>
+    </main>
+    <script src="/ui.js"></script>
+  </body>
+</html>

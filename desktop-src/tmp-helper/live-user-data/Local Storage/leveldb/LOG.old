@@ -1,0 +1,6 @@
+2026/07/15-13:58:24.122 8e68 Reusing MANIFEST F:/C.le.控制台/desktop-src/tmp-helper/live-user-data\Local Storage\leveldb/MANIFEST-000001
+2026/07/15-13:58:24.158 8e68 Recovering log #32
+2026/07/15-13:58:24.162 8e68 Reusing old log F:/C.le.控制台/desktop-src/tmp-helper/live-user-data\Local Storage\leveldb/000032.log 
+2026/07/15-13:59:24.170 a174 Level-0 table #37: started
+2026/07/15-13:59:24.177 a174 Level-0 table #37: 19733 bytes OK
+2026/07/15-13:59:24.180 a174 Delete type=0 #32

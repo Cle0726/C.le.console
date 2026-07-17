@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "status": "probe",
+  "authenticated": true,
+  "exportedAt": "2026-07-14T04:32:01.619Z",
+  "userDataDir": "f:\\C.le.控制台\\desktop-src\\tmp-helper\\cookie-probe-user-data",
+  "cookieNames": [
+    "CH-prefers-color-scheme",
+    "__cf_bm",
+    "_cfuvid",
+    "_dd_s",
+    "_fbp",
+    "activitySessionId",
+    "ajs_anonymous_id",
+    "anthropic-device-id",
+    "ion-vk",
+    "lastActiveOrg",
+    "sessionKey"
+  ],
+  "hasSessionKey": true,
+  "hasLastActiveOrg": true,
+  "url": "https://claude.ai/"
+}

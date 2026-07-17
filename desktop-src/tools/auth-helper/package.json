@@ -1,0 +1,13 @@
+{
+  "name": "@desktop/auth-helper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node claude-desktop-auth-helper.cjs",
+    "start:bridge": "node claude-browser-bridge.cjs"
+  },
+  "dependencies": {
+    "electron": "^43.1.1"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "multi-platform-proxy-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone multi-platform OpenAI-compatible reverse proxy API with simple UI.",
+  "scripts": {
+    "start": "node src/server.js",
+    "mock": "node test/mock-upstreams.js",
+    "sync:antigravity": "node scripts/sync-antigravity-codex.js",
+    "verify": "node test/verify.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

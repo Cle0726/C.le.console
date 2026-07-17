@@ -1,0 +1,35 @@
+{
+  "enabled": true,
+  "listenHost": "127.0.0.1",
+  "listenPort": 8793,
+  "upstreamBaseUrl": "http://127.0.0.1:8792",
+  "transportMode": "direct_http",
+  "helperMode": "probe_only",
+  "probeBeforeStart": false,
+  "preferBrowserOn403": true,
+  "respectRetryAfter": true,
+  "streamFirstChunkTimeoutMs": 8000,
+  "maxRetries": 2,
+  "cooldownMinutes": 15,
+  "claudeDailyLimit": 100,
+  "requireApiKey": false,
+  "localApiKey": "",
+  "accounts": [
+    {
+      "id": "acct_invalid",
+      "label": "Invalid Placeholder",
+      "sessionKey": "sk-disabled-placeholder",
+      "enabled": true,
+      "proxyUrl": "",
+      "dailyLimit": 50
+    },
+    {
+      "id": "acct_mock_ok",
+      "label": "Mock Healthy",
+      "sessionKey": "sk-enabled-placeholder",
+      "enabled": true,
+      "proxyUrl": "",
+      "dailyLimit": 50
+    }
+  ]
+}

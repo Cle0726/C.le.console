@@ -1,0 +1,14 @@
+{
+  "ready": true,
+  "currentUrl": "https://claude.ai/new",
+  "lastError": null,
+  "updatedAt": "2026-07-14T11:33:48.535Z",
+  "authenticated": false,
+  "cookieNames": [
+    "__cf_bm",
+    "_fbp",
+    "activitySessionId",
+    "anthropic-device-id",
+    "ion-vk"
+  ]
+}
