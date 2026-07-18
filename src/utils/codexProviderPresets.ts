@@ -44,7 +44,7 @@ const CODEX_API_PROVIDER_PRESET_CATALOG: readonly CodexApiProviderPreset[] = [
       "https://api-slb.packyapi.com/v1",
     ],
     website: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    apiKeyUrl: "https://www.packyapi.com",
     isPartner: true,
   },
   {
@@ -57,7 +57,7 @@ const CODEX_API_PROVIDER_PRESET_CATALOG: readonly CodexApiProviderPreset[] = [
       "https://api-bwg.cubence.com/v1",
     ],
     website: "https://cubence.com",
-    apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
+    apiKeyUrl: "https://cubence.com",
     isPartner: true,
   },
   {
@@ -65,7 +65,7 @@ const CODEX_API_PROVIDER_PRESET_CATALOG: readonly CodexApiProviderPreset[] = [
     name: "AIGoCode",
     baseUrls: ["https://api.aigocode.com"],
     website: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    apiKeyUrl: "https://aigocode.com",
     isPartner: true,
   },
   {
@@ -73,7 +73,7 @@ const CODEX_API_PROVIDER_PRESET_CATALOG: readonly CodexApiProviderPreset[] = [
     name: "RightCode",
     baseUrls: ["https://right.codes/codex/v1"],
     website: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    apiKeyUrl: "https://www.right.codes",
     isPartner: true,
   },
   {
@@ -131,7 +131,7 @@ const CODEX_API_PROVIDER_PRESET_CATALOG: readonly CodexApiProviderPreset[] = [
     baseUrls: ["https://api.modelverse.cn/v1"],
     website: "https://www.compshare.cn",
     apiKeyUrl:
-      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+      "https://www.compshare.cn/coding-plan",
     isPartner: true,
   },
   {
@@ -157,7 +157,7 @@ const CODEX_API_PROVIDER_PRESET_CATALOG: readonly CodexApiProviderPreset[] = [
     name: "AICoding",
     baseUrls: ["https://api.aicoding.sh"],
     website: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    apiKeyUrl: "https://aicoding.sh",
     isPartner: true,
   },
   {
@@ -165,7 +165,7 @@ const CODEX_API_PROVIDER_PRESET_CATALOG: readonly CodexApiProviderPreset[] = [
     name: "CrazyRouter",
     baseUrls: ["https://crazyrouter.com/v1"],
     website: "https://www.crazyrouter.com",
-    apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
+    apiKeyUrl: "https://www.crazyrouter.com",
     isPartner: true,
   },
   {
@@ -325,7 +325,7 @@ const CODEX_API_PROVIDER_PRESET_CATALOG: readonly CodexApiProviderPreset[] = [
     baseUrls: ["https://cp.compshare.cn/v1"],
     website: "https://www.compshare.cn",
     apiKeyUrl:
-      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+      "https://www.compshare.cn/coding-plan",
   },
   {
     id: "lemondata",

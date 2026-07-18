@@ -212,8 +212,8 @@ target/release/bundle/nsis/C.le.控制台_1.1.4_x64-setup.exe
 
 | 文件 | SHA-256 |
 |---|---|
-| `release/C.le.控制台_1.1.4_x64-setup.exe` | `97dedb4a05355999902f13768d79fc4a0b442a3782f77b78fe9e0315c3d14d58` |
-| `release/portable/C.le.控制台.exe` | `64e2f294f55b343f587278468989b444b0061f60c485d49fa34fd9b1744783f4` |
+| `release/C.le.控制台_1.1.4_x64-setup.exe` | `927e2ba7f103d51ad5c55b21b552c865dea48ac698414e77ecfd19c6fb902c4a` |
+| `release/portable/C.le.控制台.exe` | `ac4de8ee03170d28212b95117f808eca7fe43815c270bdee2bb0a2a651fdfb6e` |
 | `release/portable/cle-cliproxy.exe` | `9d8193a15ef038953eefa65ed2cc2ed0d5a3c434820f0f64d10d6e8e5b0b2600` |
 
 完整资源校验见 `release/SHA256SUMS.txt`。

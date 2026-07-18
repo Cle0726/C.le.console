@@ -1,7 +1,7 @@
-﻿# C.le.控制台 1.1.4 SHA-256
+# C.le.控制台 1.1.4 SHA-256
 
-97dedb4a05355999902f13768d79fc4a0b442a3782f77b78fe9e0315c3d14d58  C.le.控制台_1.1.4_x64-setup.exe
-64e2f294f55b343f587278468989b444b0061f60c485d49fa34fd9b1744783f4  portable/C.le.控制台.exe
+927e2ba7f103d51ad5c55b21b552c865dea48ac698414e77ecfd19c6fb902c4a  C.le.控制台_1.1.4_x64-setup.exe
+ac4de8ee03170d28212b95117f808eca7fe43815c270bdee2bb0a2a651fdfb6e  portable/C.le.控制台.exe
 9d8193a15ef038953eefa65ed2cc2ed0d5a3c434820f0f64d10d6e8e5b0b2600  portable/cle-cliproxy.exe
 befd3c78f579fc623b2bcfeafbe4d6c9f04c3241993ff18b187d0e68c1d7de16  portable/native-menu-icons/antigravity-menu.png
 8d8d51ac7dff1060c5f787d5aab984950650ba4f29d73a24d5de642778345a35  portable/native-menu-icons/claude.png
