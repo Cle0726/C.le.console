@@ -1,0 +1,1425 @@
+/* Account workspace visual repair
+   ---------------------------------------------------------------
+   The application still keeps a legacy data-theme flag for component
+   compatibility. The current day/night canvas is driven by
+   data-visual-theme, so account surfaces must follow that flag as well.
+   Everything here is deliberately scoped to data-heavy account pages. */
+
+/* Keep scrolled account content out of the fixed date/navigation lane. */
+.app-container:has(.codex-accounts-page)::before,
+.app-container:has(.accounts-page)::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 1200;
+  height: 108px;
+  border-bottom: 1px solid rgba(18, 25, 30, 0.14);
+  background:
+    linear-gradient(180deg, rgba(190, 197, 202, 0.97), rgba(184, 192, 198, 0.9) 72%, rgba(184, 192, 198, 0));
+  -webkit-backdrop-filter: blur(18px) saturate(0.72);
+  backdrop-filter: blur(18px) saturate(0.72);
+  pointer-events: none;
+}
+
+.main-wrapper:has(.codex-accounts-page),
+.main-wrapper:has(.accounts-page) {
+  min-width: 0;
+  max-width: 100%;
+  scroll-padding-top: 120px;
+  /* Perspective turns fixed descendants into scroll-bound overlays. Account
+     dialogs use a body portal, and this scoped reset protects legacy modals. */
+  perspective: none !important;
+}
+
+.codex-accounts-page > .toolbar,
+.accounts-page > .toolbar {
+  position: sticky;
+  top: 112px;
+  z-index: 80;
+}
+
+/* Day canvas: restore the light industrial material even when the legacy
+   component theme remains `dark`. */
+html:not([data-visual-theme='night']) .codex-accounts-page,
+html:not([data-visual-theme='night']) .accounts-page {
+  --industrial-ink: #10171c;
+  --industrial-inverse: #f1f4f5;
+  --industrial-panel: rgba(220, 227, 231, 0.9);
+  --industrial-panel-strong: rgba(236, 240, 242, 0.97);
+  --industrial-line: rgba(16, 23, 28, 0.46);
+  --industrial-line-soft: rgba(16, 23, 28, 0.14);
+  --industrial-focus: #10171c;
+  --industrial-depth: 3px 4px 0 rgba(16, 23, 28, 0.075);
+  --industrial-depth-raised: 5px 6px 0 rgba(16, 23, 28, 0.11);
+  --bg-secondary: #e9eef0;
+  --bg-surface: #edf1f2;
+  --bg-tertiary: rgba(204, 213, 219, 0.76);
+  --bg-card: rgba(225, 231, 234, 0.88);
+  --bg-hover: rgba(16, 23, 28, 0.075);
+  --text-primary: #11191e;
+  --text-secondary: #47545d;
+  --text-muted: #687680;
+  --border: rgba(16, 23, 28, 0.4);
+  --border-light: rgba(16, 23, 28, 0.14);
+  color: var(--text-primary);
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page > .toolbar,
+html:not([data-visual-theme='night']) .accounts-page > .toolbar {
+  border-color: rgba(15, 22, 27, 0.5) !important;
+  background:
+    linear-gradient(180deg, rgba(239, 243, 244, 0.95), rgba(210, 219, 224, 0.94)) !important;
+  box-shadow:
+    4px 5px 0 rgba(15, 22, 27, 0.09),
+    inset 0 1px rgba(255, 255, 255, 0.72) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(0.7);
+  backdrop-filter: blur(20px) saturate(0.7);
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-account-card,
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-local-access-card,
+html:not([data-visual-theme='night']) .accounts-page .account-card {
+  border-color: rgba(15, 22, 27, 0.42) !important;
+  color: #11191e;
+  background:
+    radial-gradient(circle at 86% 3%, rgba(255, 255, 255, 0.38), transparent 29%),
+    linear-gradient(155deg, rgba(226, 232, 235, 0.96), rgba(201, 211, 217, 0.9)) !important;
+  box-shadow:
+    4px 5px 0 rgba(15, 22, 27, 0.08),
+    inset 0 1px rgba(255, 255, 255, 0.64) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-account-card:hover,
+html:not([data-visual-theme='night']) .accounts-page .account-card:hover {
+  border-color: rgba(15, 22, 27, 0.68) !important;
+  box-shadow:
+    6px 7px 0 rgba(15, 22, 27, 0.12),
+    inset 0 1px rgba(255, 255, 255, 0.72) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-account-card.current,
+html:not([data-visual-theme='night']) .accounts-page .account-card.current {
+  border-color: #172128 !important;
+  box-shadow:
+    0 0 0 1px rgba(239, 243, 244, 0.65),
+    5px 6px 0 rgba(15, 22, 27, 0.14) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-account-card.selected,
+html:not([data-visual-theme='night']) .accounts-page .account-card.selected {
+  background:
+    linear-gradient(155deg, rgba(239, 242, 243, 0.98), rgba(193, 204, 211, 0.94)) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-api-service-panel,
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-overview-selection-bar,
+html:not([data-visual-theme='night']) .accounts-page .selection-bar {
+  border-color: rgba(15, 22, 27, 0.34) !important;
+  color: #11191e;
+  background:
+    linear-gradient(145deg, rgba(229, 234, 237, 0.92), rgba(205, 214, 220, 0.84)) !important;
+  box-shadow: 3px 4px 0 rgba(15, 22, 27, 0.065) !important;
+}
+
+/* Card information hierarchy: primary identifiers stay dark, while metadata
+   remains secondary but never falls below practical contrast. */
+html:not([data-visual-theme='night']) .codex-accounts-page :is(
+  .account-email,
+  .account-email-text,
+  .folder-inline-name,
+  .quota-value,
+  .codex-compact-email
+),
+html:not([data-visual-theme='night']) .accounts-page :is(
+  .account-email,
+  .folder-inline-name,
+  .quota-value
+) {
+  color: #11191e !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(
+  .codex-login-subline,
+  .codex-provider-inline-text,
+  .card-date,
+  .quota-label,
+  .quota-reset,
+  .folder-inline-count
+),
+html:not([data-visual-theme='night']) .accounts-page :is(
+  .card-date,
+  .quota-label,
+  .quota-reset,
+  .folder-inline-count,
+  .notes-text
+) {
+  color: #52616b !important;
+  opacity: 1;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .card-footer,
+html:not([data-visual-theme='night']) .accounts-page .card-footer {
+  border-top-color: rgba(15, 22, 27, 0.15) !important;
+  background: rgba(177, 188, 195, 0.32) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(
+  .card-action-btn,
+  .action-btn,
+  .folder-icon-btn,
+  .sort-direction-btn,
+  .tag-filter-btn,
+  .view-btn
+),
+html:not([data-visual-theme='night']) .accounts-page :is(
+  .card-action-btn,
+  .action-btn,
+  .folder-icon-btn,
+  .sort-direction-btn,
+  .tag-filter-btn,
+  .view-btn
+) {
+  border-color: rgba(15, 22, 27, 0.34) !important;
+  color: #28343c;
+  background: rgba(232, 236, 238, 0.7);
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(
+  .card-action-btn,
+  .action-btn,
+  .folder-icon-btn,
+  .sort-direction-btn,
+  .tag-filter-btn,
+  .view-btn
+):hover:not(:disabled),
+html:not([data-visual-theme='night']) .accounts-page :is(
+  .card-action-btn,
+  .action-btn,
+  .folder-icon-btn,
+  .sort-direction-btn,
+  .tag-filter-btn,
+  .view-btn
+):hover:not(:disabled) {
+  border-color: #11191e !important;
+  color: #f2f5f6 !important;
+  background: #11191e !important;
+}
+
+/* Disabled actions should look deliberately unavailable, not broken or
+   accidentally transparent. */
+.codex-accounts-page button:disabled,
+.accounts-page button:disabled,
+.codex-accounts-page [aria-disabled='true'],
+.accounts-page [aria-disabled='true'] {
+  opacity: 0.72 !important;
+  color: var(--text-secondary) !important;
+  border-color: color-mix(in srgb, var(--text-secondary) 28%, transparent) !important;
+  background: color-mix(in srgb, var(--bg-tertiary) 78%, transparent) !important;
+  filter: saturate(0.45) !important;
+  box-shadow: inset 0 1px color-mix(in srgb, white 20%, transparent) !important;
+  cursor: not-allowed !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(input, select, textarea),
+html:not([data-visual-theme='night']) .accounts-page :is(input, select, textarea) {
+  border-color: rgba(15, 22, 27, 0.34) !important;
+  color: #11191e !important;
+  background: rgba(232, 236, 238, 0.78) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(input, textarea)::placeholder,
+html:not([data-visual-theme='night']) .accounts-page :is(input, textarea)::placeholder {
+  color: #66747d;
+  opacity: 1;
+}
+
+/* Night accounts use the same hierarchy with true graphite surfaces. */
+html[data-visual-theme='night'] .app-container:has(.codex-accounts-page)::before,
+html[data-visual-theme='night'] .app-container:has(.accounts-page)::before {
+  border-bottom-color: rgba(225, 232, 235, 0.1);
+  background: linear-gradient(180deg, rgba(30, 36, 40, 0.98), rgba(24, 30, 34, 0.92) 72%, rgba(24, 30, 34, 0));
+}
+
+html[data-visual-theme='night'] .codex-accounts-page > .toolbar,
+html[data-visual-theme='night'] .accounts-page > .toolbar {
+  border-color: rgba(228, 234, 236, 0.18) !important;
+  background:
+    linear-gradient(180deg, rgba(44, 52, 57, 0.96), rgba(22, 28, 32, 0.95)) !important;
+  box-shadow: 4px 5px 0 rgba(0, 0, 0, 0.24), inset 0 1px rgba(255, 255, 255, 0.07) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page .codex-account-card,
+html[data-visual-theme='night'] .codex-accounts-page .codex-local-access-card,
+html[data-visual-theme='night'] .accounts-page .account-card {
+  border-color: rgba(228, 234, 236, 0.17) !important;
+  color: #e7ecee;
+  background:
+    radial-gradient(circle at 86% 3%, rgba(221, 228, 231, 0.055), transparent 29%),
+    linear-gradient(155deg, rgba(35, 43, 48, 0.95), rgba(16, 21, 24, 0.92)) !important;
+  box-shadow: 4px 5px 0 rgba(0, 0, 0, 0.25), inset 0 1px rgba(255, 255, 255, 0.055) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page .card-footer,
+html[data-visual-theme='night'] .accounts-page .card-footer {
+  border-top-color: rgba(228, 234, 236, 0.1) !important;
+  background: rgba(7, 11, 13, 0.24) !important;
+}
+
+/* Bilingual account shell --------------------------------------------------
+   Chinese carries the task meaning; English behaves like quiet editorial
+   metadata. This keeps the workspace international without doubling its
+   visual density. */
+.codex-accounts-page .account-workspace-kicker {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  color: var(--text-primary);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+.codex-accounts-page .account-workspace-kicker > span {
+  font-size: 20px;
+  font-weight: 760;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.codex-accounts-page .account-workspace-kicker > small {
+  color: var(--text-muted);
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+  font-size: 8px;
+  font-weight: 680;
+  letter-spacing: 0.2em;
+  line-height: 1;
+}
+
+.codex-accounts-page .page-tabs.filter-tabs .filter-tab {
+  min-height: 46px;
+  padding-block: 6px;
+}
+
+.codex-accounts-page .account-bilingual-label {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1;
+}
+
+.codex-accounts-page .account-bilingual-label-zh {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 720;
+  letter-spacing: -0.015em;
+  white-space: nowrap;
+}
+
+.codex-accounts-page .account-bilingual-label-en {
+  color: currentColor;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+  font-size: 7px;
+  font-weight: 650;
+  letter-spacing: 0.13em;
+  opacity: 0.52;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.codex-accounts-page .filter-tab.active .account-bilingual-label-en {
+  opacity: 0.72;
+}
+
+.codex-accounts-page .account-toolbar-kicker {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 74px;
+  padding-right: 11px;
+  border-right: 1px solid var(--border-light);
+  line-height: 1;
+}
+
+.codex-accounts-page .account-toolbar-kicker strong {
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.02em;
+}
+
+.codex-accounts-page .account-toolbar-kicker small,
+.codex-accounts-page .account-toolbar-actions-label small,
+.codex-accounts-page .codex-overview-selection-bar small {
+  color: var(--text-muted);
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+  font-size: 7px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.codex-accounts-page .account-toolbar-actions-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-right: 2px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.codex-accounts-page .codex-overview-selection-bar small {
+  opacity: 0.72;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page .account-workspace-kicker,
+html[data-visual-theme='night'] .codex-accounts-page .account-toolbar-kicker strong {
+  color: #edf1f2;
+}
+
+@media (max-width: 1520px) {
+  .codex-accounts-page .account-toolbar-kicker,
+  .codex-accounts-page .account-toolbar-actions-label {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-container:has(.codex-accounts-page)::before,
+  .app-container:has(.accounts-page)::before {
+    height: 158px;
+  }
+
+  .codex-accounts-page > .toolbar,
+  .accounts-page > .toolbar {
+    top: 164px;
+  }
+
+  .codex-accounts-page .page-tabs.filter-tabs .filter-tab {
+    min-height: 40px;
+    padding-inline: 8px;
+  }
+
+  .codex-accounts-page .account-bilingual-label-en {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codex-accounts-page > .toolbar,
+  .accounts-page > .toolbar {
+    transition: none;
+  }
+}
+
+/* Final account data-surface contract -------------------------------------
+   The legacy application flag can remain `data-theme="dark"` while the
+   visual canvas is in day mode. These deliberately strong, late overrides
+   keep the complete grid / compact / table system on one visual theme and
+   prevent dark rows from being paired with day-mode text. */
+
+html:not([data-visual-theme='night']) .codex-accounts-page {
+  --account-row-odd: rgba(220, 228, 232, 0.94);
+  --account-row-even: rgba(213, 222, 226, 0.94);
+  --account-row-hover: rgba(200, 211, 216, 0.97);
+  --account-row-current: rgba(193, 205, 211, 0.98);
+  --account-action-surface: #ccd6db;
+  --account-action-hover: #bcc9cf;
+  --account-data-ink: #11191e;
+  --account-data-secondary: #4a5962;
+  --account-data-muted: #62717a;
+  --account-data-line: rgba(17, 25, 30, 0.18);
+  --plan-free-color: #3e4d56;
+  --plan-plus-color: #076545;
+  --plan-team-color: #5b3b96;
+  --plan-enterprise-color: #87470b;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page {
+  --account-row-odd: rgba(27, 34, 38, 0.94);
+  --account-row-even: rgba(23, 30, 34, 0.94);
+  --account-row-hover: rgba(40, 50, 55, 0.97);
+  --account-row-current: rgba(48, 58, 63, 0.98);
+  --account-action-surface: #252e33;
+  --account-action-hover: #354147;
+  --account-data-ink: #eef2f3;
+  --account-data-secondary: #b3bdc2;
+  --account-data-muted: #8f9ba1;
+  --account-data-line: rgba(225, 232, 235, 0.115);
+  --plan-free-bg: rgba(184, 197, 204, 0.12);
+  --plan-free-color: #d5dde0;
+  --plan-free-border: rgba(213, 222, 226, 0.24);
+  --plan-plus-bg: rgba(52, 211, 153, 0.13);
+  --plan-plus-color: #91efc4;
+  --plan-plus-border: rgba(110, 231, 183, 0.28);
+  --plan-team-bg: rgba(167, 139, 250, 0.15);
+  --plan-team-color: #d0c4ff;
+  --plan-team-border: rgba(196, 181, 253, 0.3);
+  --plan-enterprise-bg: rgba(251, 191, 36, 0.14);
+  --plan-enterprise-color: #f8d66d;
+  --plan-enterprise-border: rgba(252, 211, 77, 0.3);
+}
+
+/* Table frame, header and rows. `!important` is required here because the
+   old `[data-theme="dark"]` account rules intentionally use opaque colors. */
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table-container {
+  border-color: rgba(17, 25, 30, 0.42) !important;
+  background: rgba(218, 226, 230, 0.96) !important;
+  box-shadow:
+    4px 5px 0 rgba(17, 25, 30, 0.085),
+    inset 0 1px rgba(255, 255, 255, 0.64) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page .account-table-container {
+  border-color: rgba(225, 232, 235, 0.18) !important;
+  background: #171d21 !important;
+  box-shadow:
+    4px 5px 0 rgba(0, 0, 0, 0.28),
+    inset 0 1px rgba(255, 255, 255, 0.045) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table,
+html[data-visual-theme='night'] .codex-accounts-page .account-table {
+  color: var(--account-data-ink) !important;
+  background: transparent !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table thead th {
+  border-color: rgba(17, 25, 30, 0.24) !important;
+  color: #38464e !important;
+  background: #c8d2d7 !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page .account-table thead th {
+  border-color: rgba(225, 232, 235, 0.14) !important;
+  color: #cbd3d6 !important;
+  background: #252d32 !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr,
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr {
+  color: var(--account-data-ink) !important;
+  background: var(--account-row-odd) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:nth-child(even),
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:nth-child(even) {
+  background: var(--account-row-even) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:hover,
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:hover {
+  background: var(--account-row-hover) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr.current,
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr.current,
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr.selected,
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr.selected {
+  background: var(--account-row-current) !important;
+  box-shadow: inset 4px 0 var(--account-data-ink) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr.pending-auth,
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr.pending-auth {
+  box-shadow: inset 4px 0 #6e7c84 !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:is(.new-api-exclusive, .api-key-usage-account),
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:is(.new-api-exclusive, .api-key-usage-account) {
+  box-shadow: inset 4px 0 #16877d !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody td,
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody td {
+  border-bottom-color: var(--account-data-line) !important;
+  color: var(--account-data-ink) !important;
+  background: transparent !important;
+}
+
+/* Sticky actions are a continuation of the row, not an unrelated grey slab. */
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table :is(
+  th.sticky-action-header,
+  th.table-action-header
+),
+html[data-visual-theme='night'] .codex-accounts-page .account-table :is(
+  th.sticky-action-header,
+  th.table-action-header
+) {
+  border-left-color: var(--account-data-line) !important;
+  color: var(--account-data-secondary) !important;
+  background: var(--account-action-surface) !important;
+  box-shadow: -12px 0 18px -16px rgba(0, 0, 0, 0.48) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr > td:is(.sticky-action-cell, .table-action-cell),
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr > td:is(.sticky-action-cell, .table-action-cell) {
+  border-left: 1px solid var(--account-data-line) !important;
+  color: var(--account-data-ink) !important;
+  background: var(--account-action-surface) !important;
+  box-shadow: -12px 0 18px -16px rgba(0, 0, 0, 0.52) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:hover > td:is(.sticky-action-cell, .table-action-cell),
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:hover > td:is(.sticky-action-cell, .table-action-cell),
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr.current > td:is(.sticky-action-cell, .table-action-cell),
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr.current > td:is(.sticky-action-cell, .table-action-cell) {
+  background: var(--account-action-hover) !important;
+}
+
+/* Text hierarchy remains explicit inside every account layout. */
+html:not([data-visual-theme='night']) .codex-accounts-page :is(
+  .account-email,
+  .account-email-text,
+  .codex-compact-email,
+  .quota-name,
+  .quota-credits-label,
+  .codex-account-balance-line strong
+),
+html[data-visual-theme='night'] .codex-accounts-page :is(
+  .account-email,
+  .account-email-text,
+  .codex-compact-email,
+  .quota-name,
+  .quota-credits-label,
+  .codex-account-balance-line strong
+) {
+  color: var(--account-data-ink) !important;
+  -webkit-text-fill-color: currentColor !important;
+  opacity: 1 !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(
+  .codex-login-subline,
+  .codex-provider-inline-text,
+  .codex-subscription-date,
+  .codex-subscription-table-empty,
+  .quota-label,
+  .quota-reset,
+  .quota-footer,
+  .card-date,
+  .folder-inline-count
+),
+html[data-visual-theme='night'] .codex-accounts-page :is(
+  .codex-login-subline,
+  .codex-provider-inline-text,
+  .codex-subscription-date,
+  .codex-subscription-table-empty,
+  .quota-label,
+  .quota-reset,
+  .quota-footer,
+  .card-date,
+  .folder-inline-count
+) {
+  color: var(--account-data-secondary) !important;
+  -webkit-text-fill-color: currentColor !important;
+  opacity: 1 !important;
+}
+
+/* Contrast QA: keep small day-mode metadata safely above the 4.5:1 text
+   threshold on both odd and selected grey rows. */
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-login-subline {
+  color: #45545d !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(.text-muted, .quota-empty),
+html[data-visual-theme='night'] .codex-accounts-page :is(.text-muted, .quota-empty) {
+  color: var(--account-data-muted) !important;
+  opacity: 1 !important;
+}
+
+/* Quota tracks must remain distinguishable underneath every semantic fill. */
+html:not([data-visual-theme='night']) .codex-accounts-page :is(.quota-progress-track, .quota-bar-track) {
+  border: 1px solid rgba(17, 25, 30, 0.12) !important;
+  background: rgba(17, 25, 30, 0.16) !important;
+  box-shadow: inset 0 1px 2px rgba(17, 25, 30, 0.08) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.quota-progress-track, .quota-bar-track) {
+  border: 1px solid rgba(225, 232, 235, 0.1) !important;
+  background: rgba(225, 232, 235, 0.14) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32) !important;
+}
+
+/* Legacy semantic quota colors were authored for white cards and became
+   muddy on graphite. Night mode gets its own luminous but restrained ink. */
+html[data-visual-theme='night'] .codex-accounts-page :is(
+  .quota-value.high,
+  .codex-compact-quota-value.high
+) {
+  color: #8ee4b7 !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(
+  .quota-progress-bar.high,
+  .quota-bar.high
+) {
+  background: #68c596 !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(.quota-progress-bar, .quota-bar),
+html[data-visual-theme='night'] .codex-accounts-page :is(.quota-progress-bar, .quota-bar) {
+  opacity: 1 !important;
+}
+
+/* Compact view follows the same material and contrast system as the table. */
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-compact-list,
+html[data-visual-theme='night'] .codex-accounts-page .codex-compact-list {
+  border-color: var(--account-data-line) !important;
+  color: var(--account-data-ink) !important;
+  background: var(--account-action-surface) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-compact-row,
+html[data-visual-theme='night'] .codex-accounts-page .codex-compact-row {
+  border-color: var(--account-data-line) !important;
+  color: var(--account-data-ink) !important;
+  background: var(--account-row-odd) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-compact-row:hover,
+html[data-visual-theme='night'] .codex-accounts-page .codex-compact-row:hover {
+  border-color: color-mix(in srgb, var(--account-data-ink) 42%, transparent) !important;
+  background: var(--account-row-hover) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .codex-compact-row:is(.current, .selected),
+html[data-visual-theme='night'] .codex-accounts-page .codex-compact-row:is(.current, .selected) {
+  border-color: var(--account-data-ink) !important;
+  color: var(--account-data-ink) !important;
+  background: var(--account-row-current) !important;
+  box-shadow: inset 3px 0 var(--account-data-ink) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(.codex-compact-switch-btn, .codex-compact-note-btn),
+html[data-visual-theme='night'] .codex-accounts-page :is(.codex-compact-switch-btn, .codex-compact-note-btn) {
+  border-color: var(--account-data-line) !important;
+  color: var(--account-data-secondary) !important;
+  background: color-mix(in srgb, var(--account-action-surface) 84%, transparent) !important;
+}
+
+/* Grid cards need the same explicit content contract as table rows. */
+html[data-visual-theme='night'] .codex-accounts-page :is(.codex-account-card, .codex-local-access-card) {
+  color: var(--account-data-ink) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.codex-account-card, .codex-local-access-card):hover {
+  border-color: rgba(233, 238, 240, 0.34) !important;
+  background:
+    radial-gradient(circle at 86% 3%, rgba(228, 234, 237, 0.075), transparent 31%),
+    linear-gradient(155deg, rgba(43, 52, 57, 0.97), rgba(19, 25, 28, 0.95)) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page .codex-account-card:is(.current, .selected) {
+  border-color: rgba(239, 243, 244, 0.72) !important;
+  box-shadow: 0 0 0 1px rgba(239, 243, 244, 0.12), 5px 6px 0 rgba(0, 0, 0, 0.32) !important;
+}
+
+/* Semantic badges are intentionally saturated just enough to read on both
+   grey paper and graphite without turning the data table into a dashboard. */
+html:not([data-visual-theme='night']) .codex-accounts-page :is(.mini-tag, .tier-badge, .codex-status-pill, .codex-subscription-badge, .group-account-badge, .codex-compact-expiry) {
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.mini-tag, .tier-badge, .codex-status-pill, .codex-subscription-badge, .group-account-badge, .codex-compact-expiry) {
+  color: #dce3e6;
+  border-color: rgba(221, 229, 232, 0.22);
+  background: rgba(221, 229, 232, 0.1);
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.mini-tag.current, .group-account-badge.is-current, .codex-subscription-badge.active, .codex-compact-expiry.active) {
+  border-color: rgba(110, 231, 183, 0.32) !important;
+  color: #91efc4 !important;
+  background: rgba(52, 211, 153, 0.14) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.codex-subscription-badge.warning, .codex-compact-expiry.warning) {
+  border-color: rgba(252, 211, 77, 0.32) !important;
+  color: #f8d66d !important;
+  background: rgba(251, 191, 36, 0.14) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.codex-subscription-badge.expired, .codex-status-pill.quota-error, .codex-compact-expiry.expired) {
+  border-color: rgba(252, 165, 165, 0.3) !important;
+  color: #ffb4b4 !important;
+  background: rgba(239, 68, 68, 0.15) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.codex-subscription-badge.missing, .codex-compact-expiry.missing) {
+  border-color: rgba(203, 213, 225, 0.24) !important;
+  color: #cbd5e1 !important;
+  background: rgba(148, 163, 184, 0.13) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.codex-subscription-badge.new-api-exclusive, .tier-badge.new-api-exclusive) {
+  border-color: rgba(94, 234, 212, 0.32) !important;
+  color: #99f6e4 !important;
+  background: rgba(45, 212, 191, 0.14) !important;
+}
+
+/* Error and refresh notices keep a readable foreground and a bounded panel. */
+html:not([data-visual-theme='night']) .codex-accounts-page :is(.quota-error-inline, .message-bar.error) {
+  border-color: rgba(153, 27, 27, 0.34) !important;
+  color: #7f1d1d !important;
+  background: rgba(254, 226, 226, 0.88) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.quota-error-inline, .message-bar.error) {
+  border-color: rgba(252, 165, 165, 0.3) !important;
+  color: #fecaca !important;
+  background: rgba(92, 28, 31, 0.78) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(.quota-error-inline.quota-refresh-notice, .quota-error-inline.quota-pending-auth) {
+  border-color: rgba(50, 70, 81, 0.28) !important;
+  color: #344852 !important;
+  background: rgba(203, 215, 221, 0.88) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.quota-error-inline.quota-refresh-notice, .quota-error-inline.quota-pending-auth) {
+  border-color: rgba(189, 204, 211, 0.22) !important;
+  color: #cbd6db !important;
+  background: rgba(48, 59, 65, 0.84) !important;
+}
+
+/* Functional controls remain visible at rest, on hover and while disabled. */
+html:not([data-visual-theme='night']) .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn) {
+  border: 1px solid rgba(17, 25, 30, 0.34) !important;
+  color: #27343b !important;
+  background: rgba(231, 236, 238, 0.86) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.56) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn) {
+  border: 1px solid rgba(221, 229, 232, 0.24) !important;
+  color: #e5ebed !important;
+  background: rgba(58, 69, 75, 0.9) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.075) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn):hover:not(:disabled) {
+  border-color: #11191e !important;
+  color: #f4f6f6 !important;
+  background: #11191e !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn):hover:not(:disabled) {
+  border-color: #eef2f3 !important;
+  color: #12181b !important;
+  background: #eef2f3 !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn):disabled {
+  border-color: rgba(17, 25, 30, 0.18) !important;
+  color: #65727a !important;
+  background: #bbc6cb !important;
+  opacity: 1 !important;
+  filter: saturate(0.35) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn):disabled {
+  border-color: rgba(221, 229, 232, 0.12) !important;
+  color: #89959b !important;
+  background: #2c353a !important;
+  opacity: 1 !important;
+  filter: saturate(0.35) !important;
+}
+
+/* Account dialogs are rendered through portals, so scope them via the page
+   still mounted below the overlay. This prevents old dark modal rules from
+   leaking into the day canvas. */
+html:not([data-visual-theme='night']):has(.codex-accounts-page) :is(
+  .modal,
+  .modal-content,
+  .confirm-modal,
+  .codex-add-modal,
+  .codex-quick-config-modal,
+  .codex-sync-settings-modal,
+  [class*='codex-'][class$='-modal']
+) {
+  border-color: rgba(17, 25, 30, 0.42) !important;
+  color: #11191e !important;
+  background: #e4eaed !important;
+  box-shadow: 8px 10px 0 rgba(17, 25, 30, 0.12), 0 28px 76px rgba(17, 25, 30, 0.24) !important;
+}
+
+html[data-visual-theme='night']:has(.codex-accounts-page) :is(
+  .modal,
+  .modal-content,
+  .confirm-modal,
+  .codex-add-modal,
+  .codex-quick-config-modal,
+  .codex-sync-settings-modal,
+  [class*='codex-'][class$='-modal']
+) {
+  border-color: rgba(225, 232, 235, 0.2) !important;
+  color: #eef2f3 !important;
+  background: #1a2125 !important;
+  box-shadow: 8px 10px 0 rgba(0, 0, 0, 0.32), 0 30px 82px rgba(0, 0, 0, 0.54) !important;
+}
+
+html:not([data-visual-theme='night']):has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(.modal-header, .modal-footer),
+html[data-visual-theme='night']:has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(.modal-header, .modal-footer) {
+  border-color: var(--account-data-line) !important;
+  color: var(--account-data-ink) !important;
+  background: var(--account-action-surface) !important;
+}
+
+html:not([data-visual-theme='night']):has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(h1, h2, h3, h4, label, strong),
+html[data-visual-theme='night']:has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(h1, h2, h3, h4, label, strong) {
+  color: var(--account-data-ink) !important;
+}
+
+html:not([data-visual-theme='night']):has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(p, small, .hint, .description),
+html[data-visual-theme='night']:has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(p, small, .hint, .description) {
+  color: var(--account-data-secondary) !important;
+  opacity: 1 !important;
+}
+
+/* Editorial data layout ---------------------------------------------------
+   Account management stays dense, but borrows the main scene's technical
+   drawing language: a quiet matrix, numbered records, ruled column groups
+   and monochrome selection. No controls or routes are removed. */
+.codex-accounts-page .account-table-container {
+  position: relative;
+  isolation: isolate;
+}
+
+.codex-accounts-page .account-table-container::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--account-data-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--account-data-line) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.22;
+}
+
+.codex-accounts-page .account-table {
+  position: relative;
+  z-index: 1;
+}
+
+.codex-accounts-page .account-table thead {
+  position: relative;
+  z-index: 2;
+}
+
+.codex-accounts-page .account-table thead th {
+  height: 46px;
+  padding-block: 10px;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+  font-size: 9px;
+  font-weight: 720;
+  letter-spacing: 0.13em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.codex-accounts-page .account-table-heading {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  line-height: 1;
+}
+
+.codex-accounts-page .account-table-heading-zh {
+  color: var(--account-data-ink);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.codex-accounts-page .account-table-heading-en {
+  color: var(--account-data-muted);
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+  font-size: 6px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+}
+
+.codex-accounts-page .account-table tbody {
+  counter-reset: cle-account-record;
+}
+
+.codex-accounts-page .account-table tbody tr {
+  counter-increment: cle-account-record;
+}
+
+.codex-accounts-page .account-table tbody tr.tag-group-row {
+  counter-increment: none;
+}
+
+.codex-accounts-page .account-table tbody td {
+  padding-block: 15px;
+}
+
+.codex-accounts-page .account-table :is(th, td):not(:last-child) {
+  border-right: 1px solid color-mix(in srgb, var(--account-data-line) 62%, transparent);
+}
+
+.codex-accounts-page .account-table :is(th, td):first-child {
+  width: 54px;
+  min-width: 54px;
+  padding-inline: 10px;
+  text-align: center;
+}
+
+.codex-accounts-page .account-table tbody td:first-child::after {
+  content: counter(cle-account-record, decimal-leading-zero);
+  display: block;
+  margin-top: 6px;
+  color: var(--account-data-muted);
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+
+.codex-accounts-page .account-table tbody tr.tag-group-row td:first-child::after {
+  display: none;
+}
+
+.codex-accounts-page .account-table input[type='checkbox'],
+.codex-accounts-page .codex-compact-row input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  border-radius: 2px;
+  accent-color: var(--account-data-ink);
+  cursor: pointer;
+}
+
+.codex-accounts-page .account-table .account-cell {
+  gap: 7px;
+}
+
+.codex-accounts-page .account-table .account-main-line {
+  min-height: 24px;
+}
+
+.codex-accounts-page .account-table .account-email-text {
+  font-size: 13px;
+  font-weight: 690;
+  letter-spacing: -0.025em;
+}
+
+.codex-accounts-page .account-table .codex-login-subline {
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+  font-size: 10px;
+  letter-spacing: -0.015em;
+}
+
+.codex-accounts-page .account-table .quota-grid {
+  gap: 14px;
+}
+
+.codex-accounts-page .account-table .quota-item {
+  justify-content: center;
+  padding-inline: 4px;
+}
+
+.codex-accounts-page .account-table .quota-header {
+  min-height: 18px;
+}
+
+.codex-accounts-page .account-table .quota-name,
+.codex-accounts-page .account-table .quota-reset {
+  font-size: 9px;
+  letter-spacing: 0.025em;
+}
+
+.codex-accounts-page .account-table .quota-value {
+  font-size: 11px;
+  text-shadow: none !important;
+}
+
+.codex-accounts-page .account-table .quota-progress-bar {
+  box-shadow: none !important;
+}
+
+.codex-accounts-page .account-table .action-buttons {
+  gap: 7px;
+}
+
+.codex-accounts-page .account-table .action-btn {
+  width: 31px;
+  height: 31px;
+  border-radius: 3px !important;
+}
+
+.codex-accounts-page .codex-compact-list {
+  counter-reset: cle-compact-record;
+  position: relative;
+  isolation: isolate;
+  padding: 14px;
+  gap: 9px;
+  background-image:
+    linear-gradient(var(--account-data-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--account-data-line) 1px, transparent 1px) !important;
+  background-size: 28px 28px !important;
+}
+
+.codex-accounts-page .codex-compact-row {
+  counter-increment: cle-compact-record;
+  min-height: 54px;
+  padding: 9px 10px;
+  border-radius: 3px !important;
+  box-shadow: inset 0 1px color-mix(in srgb, white 18%, transparent);
+}
+
+.codex-accounts-page .codex-compact-row::before {
+  content: counter(cle-compact-record, decimal-leading-zero);
+  flex: 0 0 20px;
+  color: var(--account-data-muted);
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+.codex-accounts-page .codex-compact-email {
+  font-size: 11px;
+  font-weight: 690;
+  letter-spacing: -0.02em;
+}
+
+.codex-accounts-page .codex-account-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.codex-accounts-page .codex-account-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--account-data-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--account-data-line) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.14;
+}
+
+.codex-accounts-page .codex-account-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 1180px) {
+  .codex-accounts-page .account-table tbody td {
+    padding-block: 12px;
+  }
+
+  .codex-accounts-page .account-table :is(th, td):first-child {
+    width: 46px;
+    min-width: 46px;
+    padding-inline: 7px;
+  }
+
+  .codex-accounts-page .codex-compact-list {
+    padding: 10px;
+  }
+}
+
+/* Mid-width account navigation -------------------------------------------
+   The desktop three-column header keeps the function tabs optically centred,
+   but its intrinsic bilingual width can exceed the usable Tauri viewport once
+   the window drops below a wide desktop. Give the platform switcher its own
+   measured column and let the five destinations share the remaining lane.
+   The page itself never becomes the horizontal scroller; dense account data
+   scrolls only inside its local table surface. */
+.app-container .codex-accounts-page {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.codex-accounts-page > :is(
+  .page-top-strip,
+  .page-tabs-row,
+  .toolbar,
+  .codex-overview-selection-bar,
+  .codex-api-service-panel,
+  .codex-accounts-grid,
+  .codex-compact-list,
+  .account-table-container
+) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.codex-accounts-page .account-table-container {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--account-data-muted) transparent;
+}
+
+@media (min-width: 901px) and (max-width: 1460px) {
+  .codex-accounts-page > .page-tabs-row.page-tabs-row-with-leading {
+    grid-template-columns: minmax(152px, auto) minmax(0, 1fr);
+    column-gap: 16px;
+    justify-items: stretch;
+  }
+
+  .codex-accounts-page > .page-tabs-row.page-tabs-row-with-leading .page-tabs-leading {
+    grid-column: 1;
+    justify-self: start;
+  }
+
+  .codex-accounts-page > .page-tabs-row.page-tabs-row-with-leading .page-tabs {
+    grid-column: 2;
+    justify-self: center;
+    width: min(100%, 860px);
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scroll-padding-inline: 6px;
+    scrollbar-width: none;
+  }
+
+  .codex-accounts-page > .page-tabs-row.page-tabs-row-with-leading .page-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .codex-accounts-page > .page-tabs-row.page-tabs-row-with-leading .filter-tab {
+    flex: 1 1 0;
+    min-width: 112px;
+    justify-content: center;
+    padding-inline: 10px;
+  }
+
+  .codex-accounts-page > .page-tabs-row.page-tabs-row-with-leading .filter-tab:focus-visible {
+    outline-offset: -3px !important;
+  }
+}
+
+/* High-DPI Windows commonly turns a 1295px physical window into an 850px
+   CSS viewport. Keep the collapsed account header compact so the bilingual
+   workspace title is not hidden behind the fixed veil; reserve the taller
+   safety lane exclusively for the expanded two-wing model navigation. */
+@media (max-width: 900px) {
+  .app-container:has(.codex-accounts-page)::before {
+    height: 108px;
+  }
+
+  .main-wrapper:has(.codex-accounts-page) {
+    padding-top: 118px !important;
+  }
+
+  .codex-accounts-page > .toolbar {
+    top: 112px;
+  }
+
+  .app-container:has(.codex-accounts-page):has(.spatial-top-nav.expanded)::before {
+    height: 190px;
+  }
+
+  .app-container:has(.codex-accounts-page):has(.spatial-top-nav.expanded) .main-wrapper {
+    padding-top: 196px !important;
+  }
+
+  .app-container:has(.codex-accounts-page):has(.spatial-top-nav.expanded) .codex-accounts-page > .toolbar {
+    top: 198px;
+  }
+}
+
+/* Account command dock ----------------------------------------------------
+   Filters are page context, not persistent chrome. Keeping this surface in
+   normal document flow prevents it from covering account rows on scrolled,
+   high-DPI Windows viewports. The dock still has enough local elevation for
+   dropdowns, but no longer becomes a full-width floating obstruction. */
+.codex-accounts-page > .account-command-dock {
+  position: relative !important;
+  top: auto !important;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 14px;
+  margin-block: 12px 16px;
+  padding: 10px 11px !important;
+  overflow: visible;
+  isolation: isolate;
+  border-radius: 6px !important;
+}
+
+.codex-accounts-page > .account-command-dock::before {
+  content: "";
+  position: absolute;
+  inset: 9px auto 9px 0;
+  width: 2px;
+  background: var(--account-data-ink);
+  opacity: 0.74;
+  pointer-events: none;
+}
+
+.codex-accounts-page > .account-command-dock .toolbar-left {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.codex-accounts-page > .account-command-dock .search-box {
+  flex: 1 1 190px;
+  width: clamp(180px, 21vw, 270px);
+  min-width: 170px;
+  max-width: 270px;
+}
+
+.codex-accounts-page > .account-command-dock :is(
+  .search-box input,
+  .view-switcher,
+  .tag-filter-btn,
+  .sort-direction-btn,
+  .multi-select-dropdown-trigger,
+  .single-select-dropdown-trigger
+) {
+  min-height: 34px;
+}
+
+.codex-accounts-page > .account-command-dock .toolbar-right {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  margin-left: 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--account-data-line);
+}
+
+.codex-accounts-page > .account-command-dock .toolbar-right .btn.icon-only {
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 3px !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page > .account-command-dock {
+  border-color: rgba(17, 25, 30, 0.34) !important;
+  background:
+    linear-gradient(90deg, rgba(16, 23, 28, 0.035) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(237, 241, 242, 0.96), rgba(217, 224, 227, 0.96)) !important;
+  background-size: 28px 100%, auto;
+  box-shadow: 3px 4px 0 rgba(17, 25, 30, 0.075), inset 0 1px rgba(255, 255, 255, 0.66) !important;
+}
+
+html[data-visual-theme='night'] .codex-accounts-page > .account-command-dock {
+  border-color: rgba(226, 233, 236, 0.18) !important;
+  background:
+    linear-gradient(90deg, rgba(226, 233, 236, 0.025) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(31, 39, 43, 0.98), rgba(23, 30, 34, 0.98)) !important;
+  background-size: 28px 100%, auto;
+  box-shadow: 3px 4px 0 rgba(0, 0, 0, 0.24), inset 0 1px rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Keep the action column useful without allowing it to consume a third of a
+   mid-width table. Seven icon actions fit in a measured 226px lane. */
+.codex-accounts-page .account-table :is(.sticky-action-header, .table-action-header),
+.codex-accounts-page .account-table tbody tr > td:is(.sticky-action-cell, .table-action-cell) {
+  width: 240px;
+  min-width: 240px;
+  max-width: 240px;
+  padding-inline: 8px;
+}
+
+.codex-accounts-page .account-table :is(.sticky-action-cell, .table-action-cell) .action-buttons {
+  gap: 4px;
+}
+
+.codex-accounts-page .account-table :is(.sticky-action-cell, .table-action-cell) .action-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.codex-accounts-page .account-table-container {
+  scrollbar-gutter: stable;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:nth-child(odd) > td:is(.sticky-action-cell, .table-action-cell),
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:nth-child(odd) > td:is(.sticky-action-cell, .table-action-cell) {
+  background: var(--account-row-odd) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:nth-child(even) > td:is(.sticky-action-cell, .table-action-cell),
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:nth-child(even) > td:is(.sticky-action-cell, .table-action-cell) {
+  background: var(--account-row-even) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:hover > td:is(.sticky-action-cell, .table-action-cell),
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:hover > td:is(.sticky-action-cell, .table-action-cell) {
+  background: var(--account-row-hover) !important;
+}
+
+html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:is(.current, .selected) > td:is(.sticky-action-cell, .table-action-cell),
+html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:is(.current, .selected) > td:is(.sticky-action-cell, .table-action-cell) {
+  background: var(--account-row-current) !important;
+}
+
+@media (max-width: 1280px) {
+  .codex-accounts-page > .account-command-dock {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 9px;
+  }
+
+  .codex-accounts-page > .account-command-dock .toolbar-right {
+    width: 100%;
+    padding-top: 9px;
+    padding-left: 0;
+    border-top: 1px solid var(--account-data-line);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .codex-accounts-page > .account-command-dock {
+    padding: 9px !important;
+  }
+
+  .codex-accounts-page > .account-command-dock .search-box {
+    flex-basis: 100%;
+    width: 100%;
+    min-width: 100%;
+    max-width: none;
+  }
+
+  .codex-accounts-page > .account-command-dock .toolbar-right {
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+}
+
+html[data-performance-mode='lite'] .codex-accounts-page > .account-command-dock {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: 2px 3px 0 color-mix(in srgb, var(--account-data-ink) 8%, transparent) !important;
+}

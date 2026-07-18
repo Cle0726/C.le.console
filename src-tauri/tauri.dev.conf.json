@@ -1,0 +1,56 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "C.le.控制台",
+  "mainBinaryName": "C.le.控制台",
+  "identifier": "com.cle0726.cle-console.dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "C.le.控制台",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": false,
+        "resizable": true
+      },
+      {
+        "label": "floating-card",
+        "title": "C.le.控制台",
+        "create": false,
+        "width": 250,
+        "height": 290,
+        "minWidth": 250,
+        "minHeight": 290,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": false,
+        "visible": false
+      },
+      {
+        "label": "status-window",
+        "title": "C.le. 状态窗",
+        "create": false,
+        "width": 480,
+        "height": 288,
+        "minWidth": 420,
+        "minHeight": 270,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": true,
+        "skipTaskbar": false,
+        "alwaysOnTop": false,
+        "center": true,
+        "visible": false
+      }
+    ]
+  }
+}

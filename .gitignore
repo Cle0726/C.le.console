@@ -1,0 +1,67 @@
+# JavaScript / frontend build
+node_modules/
+dist/
+dist-ssr/
+*.tsbuildinfo
+
+# Rust / Tauri build
+target/
+src-tauri/target/
+src-tauri/gen/schemas/
+src-tauri/arms_cache/
+
+# Go sidecar build
+sidecars/cle-cliproxy/bin/
+
+# Runtime and local data
+logs/
+service-logs/
+*.log
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.local
+.env
+.env.*
+!.env.example
+announcements.local.json
+
+# Test and temporary profiles
+.status-window-profile-*/
+.tmp/
+tmp-*/
+*.tmp
+*.bak
+*.old
+*.bad-*
+
+# Local tools and agent state
+.agents/
+.learnings/
+.cargo/
+.gemini/
+.codegraph/
+.planning/
+.aitasks/
+.qoder/
+AGENTS.md
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Native build caches
+src-tauri/native/macos-native-menu/.build/
+src-tauri/resources/electron/*
+!src-tauri/resources/electron/.gitkeep
+
+# Installer formats not committed unless copied deliberately to release/
+*.dmg

@@ -1,0 +1,707 @@
+.codebuddy-accounts-page .codebuddy-quota-item {
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-header {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.codebuddy-accounts-page .quota-query-failed-inline {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.codebuddy-accounts-page .codebuddy-extra-credit {
+  gap: 6px;
+}
+
+.codebuddy-accounts-page .codebuddy-official-quota-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.codebuddy-accounts-page .codebuddy-official-quota-row .quota-header {
+  min-width: 0;
+  margin-bottom: 6px;
+}
+
+.codebuddy-accounts-page .codebuddy-official-quota-row .quota-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.codebuddy-accounts-page .codebuddy-official-quota-meta {
+  font-size: 11px;
+}
+
+.codebuddy-accounts-page .codebuddy-official-quota-meta-wrap {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  align-items: flex-end;
+  text-align: right;
+  width: 100%;
+}
+
+.codebuddy-accounts-page .codebuddy-table-usage {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+}
+
+.codebuddy-accounts-page .codebuddy-table-usage .codebuddy-official-quota-list {
+  width: 100%;
+}
+
+.codebuddy-accounts-page .codebuddy-usage-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.codebuddy-accounts-page .codebuddy-usage-detail-trigger {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  color: var(--primary);
+  cursor: pointer;
+}
+
+.codebuddy-accounts-page .codebuddy-usage-detail-trigger:hover {
+  text-decoration: underline;
+}
+
+.codebuddy-accounts-page .quota-error-detail {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.codebuddy-accounts-page .codebuddy-usage-detail-modal {
+  max-width: 560px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-query-modal {
+  max-width: 720px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-mode-tabs {
+  width: 100%;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-mode-tabs .add-tab {
+  min-height: 34px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-steps {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-step-with-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-url-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-right: 8px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-url-text {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-url-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-url-buttons .btn {
+  min-height: 30px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-field > span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.codebuddy-accounts-page .codebuddy-quota-field input {
+  width: 100%;
+  height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.codebuddy-accounts-page .codebuddy-quota-field input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.codebuddy-accounts-page .codebuddy-quota-query-modal .token-input {
+  min-height: 120px;
+}
+
+.codebuddy-accounts-page .codebuddy-oauth-feature-card {
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.codebuddy-accounts-page .codebuddy-oauth-feature-card.oauth {
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+.codebuddy-accounts-page .codebuddy-oauth-feature-card .feature-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.codebuddy-accounts-page .codebuddy-oauth-feature-card .feature-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* ===== 签到弹窗 ===== */
+.checkin-modal {
+  max-width: 600px;
+  width: 92vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.checkin-modal .modal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkin-modal .modal-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+}
+
+.checkin-modal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.checkin-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.checkin-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.checkin-stat.checked {
+  color: var(--color-success, #22c55e);
+}
+
+.checkin-stat.unchecked {
+  color: var(--color-warning, #f59e0b);
+}
+
+.checkin-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkin-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.checkin-empty {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 32px 0;
+  font-size: 14px;
+}
+
+.checkin-account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.checkin-account-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-secondary);
+  transition: border-color 0.2s;
+  flex-wrap: wrap;
+}
+
+.checkin-account-row:hover {
+  border-color: var(--border-hover, var(--primary));
+}
+
+.checkin-account-row.checked {
+  opacity: 0.7;
+}
+
+.checkin-account-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 120px;
+}
+
+.checkin-account-name {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.checkin-streak-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--color-warning, #f59e0b);
+  font-weight: 500;
+}
+
+.checkin-credit-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--color-success, #22c55e);
+  font-weight: 500;
+}
+
+.checkin-streak-reward {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.checkin-streak-reward.streak-today {
+  color: var(--primary);
+  font-weight: 600;
+  animation: checkin-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes checkin-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.checkin-dates {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding-top: 4px;
+}
+
+.checkin-date-tag {
+  padding: 1px 6px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.checkin-account-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.checkin-status-yes {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-success, #22c55e);
+}
+
+.checkin-status-no {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-warning, #f59e0b);
+}
+
+.checkin-status-unknown {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.checkin-last-time {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.checkin-reward-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--primary);
+  background: var(--primary-light, rgba(59, 130, 246, 0.1));
+  padding: 2px 8px;
+  border-radius: 12px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkin-account-action {
+  flex-shrink: 0;
+}
+
+.checkin-account-error {
+  width: 100%;
+  font-size: 11px;
+  color: var(--color-error, #ef4444);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 4px;
+}
+
+.checkin-account-info-msg {
+  width: 100%;
+  font-size: 12px;
+  color: var(--color-warning, #f59e0b);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 4px;
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.checkin-account-success {
+  width: 100%;
+  font-size: 11px;
+  color: var(--color-success, #22c55e);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 4px;
+}
+
+.btn-ghost {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.btn-ghost:disabled {
+  opacity: 0.5;
+}
+
+/* ===== 配额分类分组展示 ===== */
+.quota-category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quota-category-empty {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 16px 0;
+  font-size: 13px;
+}
+
+.quota-category-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-secondary);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.quota-category-item:hover {
+  border-color: var(--border-hover, var(--primary));
+}
+
+.quota-category-item.critical {
+  border-left: 3px solid var(--color-error, #ef4444);
+}
+
+.quota-category-item.low {
+  border-left: 3px solid var(--color-warning, #f59e0b);
+}
+
+.quota-category-item.medium {
+  border-left: 3px solid var(--color-info, #3b82f6);
+}
+
+.quota-category-item.high {
+  border-left: 3px solid var(--color-success, #22c55e);
+}
+
+.quota-category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+.quota-category-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.quota-category-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quota-category-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.quota-category-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.quota-category-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.quota-category-value {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.quota-category-expand-icon {
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+}
+
+.quota-category-progress {
+  height: 4px;
+  background: var(--bg-tertiary);
+  margin: 0 12px 10px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.quota-category-progress-bar {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.quota-category-progress-bar.critical {
+  background: var(--color-error, #ef4444);
+}
+
+.quota-category-progress-bar.low {
+  background: var(--color-warning, #f59e0b);
+}
+
+.quota-category-progress-bar.medium {
+  background: var(--color-info, #3b82f6);
+}
+
+.quota-category-progress-bar.high {
+  background: var(--color-success, #22c55e);
+}
+
+/* 详情列表 */
+.quota-category-details {
+  border-top: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  padding: 8px 12px;
+}
+
+.quota-category-detail-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.quota-category-detail-item:last-child {
+  border-bottom: none;
+}
+
+.quota-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.quota-detail-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.quota-detail-value {
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.quota-detail-value.critical {
+  color: var(--color-error, #ef4444);
+}
+
+.quota-detail-value.low {
+  color: var(--color-warning, #f59e0b);
+}
+
+.quota-detail-value.medium {
+  color: var(--color-info, #3b82f6);
+}
+
+.quota-detail-value.high {
+  color: var(--color-success, #22c55e);
+}
+
+.quota-detail-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 720px) {
+  .codebuddy-accounts-page .codebuddy-quota-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .checkin-modal-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .checkin-account-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .quota-category-header {
+    padding: 8px 10px;
+  }
+
+  .quota-category-value {
+    font-size: 11px;
+  }
+}

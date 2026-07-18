@@ -1,0 +1,142 @@
+/* ============================================
+   C.le.控制台 - Design System
+   Brand Direction: floating dashboard with soft gradients
+   ============================================ */
+
+:root {
+  /* Typography */
+  --font-sans: 'Inter', 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', monospace;
+
+  /* Brand Colors */
+  --primary: #1d4ed8;
+  --primary-hover: #1e40af;
+  --primary-light: rgba(29, 78, 216, 0.12);
+  --accent: #0ea5a5;
+
+  /* Status Colors */
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --warning-strong: #f97316;
+  --danger: #ef4444;
+
+  /* Background Colors */
+  --bg-primary: #f6f5f2;
+  /* Solid surfaces: dialogs / dropdowns / menus (no transparency) */
+  --bg-secondary: #ffffff;
+  --bg-surface: var(--bg-secondary);
+  /* Soft panels: cards / list rows (slight transparency to show gradient) */
+  --bg-tertiary: #eef2f7;
+  --bg-card: rgba(255, 255, 255, 0.75);
+  --bg-hover: rgba(15, 23, 42, 0.06);
+
+  /* Text Colors */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  /* Border Colors */
+  --border: rgba(15, 23, 42, 0.12);
+  --border-light: rgba(15, 23, 42, 0.08);
+
+  /* Shadows */
+  --shadow-sm: 0 2px 6px rgba(15, 23, 42, 0.08);
+  --shadow-md: 0 12px 24px rgba(15, 23, 42, 0.12);
+  --shadow-lg: 0 20px 40px rgba(15, 23, 42, 0.18);
+
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, #1d4ed8 0%, #0ea5a5 100%);
+  --gradient-success: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  --gradient-danger: linear-gradient(135deg, #f97316 0%, #ef4444 100%);
+
+  /* Radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* Component sizing */
+  --modal-close-icon-size: 16px;
+
+  /* Motion rhythm */
+  --breathe-slow: 15s;
+  --breathe-medium: 4s;
+  --breathe-fast: 2s;
+}
+
+/* === Dark Theme === */
+[data-theme="dark"] {
+  /* Brand Colors - slightly brighter for dark mode */
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
+  --primary-light: rgba(59, 130, 246, 0.15);
+  --accent: #14b8a6;
+
+  /* Status Colors */
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --warning-strong: #f97316;
+  --danger: #ef4444;
+
+  /* Background Colors - dark palette */
+  --bg-primary: #0f172a;
+  /* Solid surfaces: dialogs / dropdowns / menus (no transparency) */
+  --bg-secondary: #1e293b;
+  --bg-surface: var(--bg-secondary);
+  /* Soft panels: cards / list rows (slight transparency to show gradient) */
+  --bg-tertiary: #334155;
+  --bg-card: rgba(30, 41, 59, 0.85);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+
+  /* Text Colors - inverted */
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  /* Border Colors */
+  --border: rgba(255, 255, 255, 0.12);
+  --border-light: rgba(255, 255, 255, 0.06);
+
+  /* Shadows - darker */
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 12px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.45);
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: radial-gradient(circle at 12% 10%, rgba(29, 78, 216, 0.12), transparent 45%),
+    radial-gradient(circle at 90% 5%, rgba(14, 165, 165, 0.12), transparent 40%),
+    linear-gradient(180deg, #f8f7f4 0%, #eef1f6 100%);
+  color: var(--text-primary);
+  line-height: 1.6;
+  color-scheme: light;
+  -webkit-font-smoothing: antialiased;
+  background-size: 104% 104%;
+}
+
+/* Dark mode body background */
+[data-theme="dark"] body,
+html[data-theme="dark"] body {
+  background: radial-gradient(circle at 12% 10%, rgba(59, 130, 246, 0.15), transparent 45%),
+    radial-gradient(circle at 90% 5%, rgba(20, 184, 166, 0.12), transparent 40%),
+    linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+}

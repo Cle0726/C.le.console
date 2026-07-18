@@ -1,0 +1,220 @@
+.webgl-geometric-core {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 220px;
+  min-height: 220px;
+  isolation: isolate;
+  contain: layout paint style;
+  user-select: none;
+}
+
+.webgl-geometric-core::before,
+.webgl-geometric-core::after {
+  position: absolute;
+  z-index: -2;
+  content: "";
+  pointer-events: none;
+}
+
+.webgl-geometric-core::before {
+  inset: 10% 4%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(221, 226, 228, 0.24), rgba(154, 164, 170, 0.06) 42%, transparent 69%);
+  filter: blur(22px);
+}
+
+.webgl-geometric-core::after {
+  left: 20%;
+  right: 20%;
+  bottom: 7%;
+  height: 9%;
+  border-radius: 50%;
+  background: rgba(38, 46, 50, 0.16);
+  filter: blur(17px);
+  transform: perspective(300px) rotateX(62deg);
+}
+
+.webgl-core-ambient {
+  position: absolute;
+  z-index: -1;
+  inset: 5%;
+  border: 1px solid rgba(31, 38, 42, 0.055);
+  border-radius: 50%;
+  opacity: 0.7;
+  pointer-events: none;
+  transform: rotate(-8deg) scaleX(0.9);
+}
+
+.webgl-core-ambient::before,
+.webgl-core-ambient::after {
+  position: absolute;
+  content: "";
+  background: #171d20;
+  opacity: 0.62;
+}
+
+.webgl-core-ambient::before {
+  top: 47%;
+  left: -2px;
+  width: 15px;
+  height: 1px;
+}
+
+.webgl-core-ambient::after {
+  right: 11%;
+  bottom: 4%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.webgl-geometric-core-canvas,
+.webgl-core-fallback {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.webgl-geometric-core-canvas {
+  pointer-events: none;
+  filter: drop-shadow(0 20px 22px rgba(40, 48, 52, 0.11));
+  animation: webglCanvasReveal 560ms cubic-bezier(.2,.72,.22,1) both;
+}
+
+.webgl-core-fallback {
+  overflow: visible;
+  filter: drop-shadow(0 18px 20px rgba(35, 42, 46, 0.15));
+}
+
+.webgl-core-fallback-frame {
+  position: absolute;
+  inset: 0;
+}
+
+.webgl-core-fallback-model {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 62%;
+  height: 58%;
+  transform: translate(-50%, -51%);
+  filter: drop-shadow(0 17px 18px rgba(25, 31, 34, 0.16));
+}
+
+.webgl-core-fallback-model .model-geometric-emblem {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@keyframes webglCanvasReveal {
+  from { opacity: 0; transform: scale(.985); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.webgl-fallback-orbits,
+.webgl-fallback-cage {
+  fill: none;
+  stroke: #263034;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.webgl-fallback-orbits {
+  opacity: 0.34;
+  stroke-dasharray: 4 7;
+}
+
+.webgl-fallback-cage {
+  opacity: 0.44;
+}
+
+.webgl-fallback-solid path {
+  stroke: #111719;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.webgl-fallback-solid path:nth-child(1) { fill: #dfe4e5; }
+.webgl-fallback-solid path:nth-child(2) { fill: #aab3b7; }
+.webgl-fallback-solid path:nth-child(3) { fill: #171c1f; }
+.webgl-fallback-solid path:nth-child(4) { fill: #596267; }
+.webgl-fallback-satellite ellipse {
+  fill: none;
+  stroke: #263034;
+  stroke-width: 0.9;
+  stroke-dasharray: 3 5;
+  opacity: 0.42;
+}
+
+.webgl-fallback-satellite .webgl-fallback-core {
+  fill: #070a0c;
+  stroke: #e1e5e6;
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+
+.webgl-fallback-satellite circle { fill: #edf0f1; stroke: #111719; stroke-width: 2; }
+
+html[data-visual-theme="night"] .webgl-geometric-core::before,
+html:not([data-visual-theme])[data-theme="dark"] .webgl-geometric-core::before {
+  background: radial-gradient(ellipse at center, rgba(164, 176, 181, 0.1), rgba(75, 86, 92, 0.035) 44%, transparent 70%);
+}
+
+html[data-visual-theme="night"] .webgl-geometric-core::after,
+html:not([data-visual-theme])[data-theme="dark"] .webgl-geometric-core::after {
+  background: rgba(0, 0, 0, 0.34);
+}
+
+html[data-visual-theme="night"] .webgl-core-ambient,
+html:not([data-visual-theme])[data-theme="dark"] .webgl-core-ambient {
+  border-color: rgba(215, 223, 226, 0.07);
+}
+
+html[data-visual-theme="night"] .webgl-core-ambient::before,
+html[data-visual-theme="night"] .webgl-core-ambient::after,
+html:not([data-visual-theme])[data-theme="dark"] .webgl-core-ambient::before,
+html:not([data-visual-theme])[data-theme="dark"] .webgl-core-ambient::after {
+  background: #d8dfe1;
+  opacity: 0.52;
+}
+
+html[data-visual-theme="night"] .webgl-geometric-core-canvas,
+html:not([data-visual-theme])[data-theme="dark"] .webgl-geometric-core-canvas {
+  filter: drop-shadow(0 23px 28px rgba(0, 0, 0, 0.34));
+}
+
+html[data-visual-theme="night"] .webgl-fallback-orbits,
+html[data-visual-theme="night"] .webgl-fallback-cage,
+html[data-visual-theme="night"] .webgl-fallback-satellite ellipse,
+html:not([data-visual-theme])[data-theme="dark"] .webgl-fallback-orbits,
+html:not([data-visual-theme])[data-theme="dark"] .webgl-fallback-cage,
+html:not([data-visual-theme])[data-theme="dark"] .webgl-fallback-satellite ellipse {
+  stroke: #a6b0b5;
+}
+
+html[data-visual-theme="night"] .webgl-fallback-solid path:nth-child(1),
+html:not([data-visual-theme])[data-theme="dark"] .webgl-fallback-solid path:nth-child(1) { fill: #d8dfe1; }
+html[data-visual-theme="night"] .webgl-fallback-solid path:nth-child(2),
+html:not([data-visual-theme])[data-theme="dark"] .webgl-fallback-solid path:nth-child(2) { fill: #879297; }
+html[data-visual-theme="night"] .webgl-fallback-solid path:nth-child(3),
+html:not([data-visual-theme])[data-theme="dark"] .webgl-fallback-solid path:nth-child(3) { fill: #080c0e; }
+html[data-visual-theme="night"] .webgl-fallback-solid path:nth-child(4),
+html:not([data-visual-theme])[data-theme="dark"] .webgl-fallback-solid path:nth-child(4) { fill: #343d42; }
+
+@media (max-width: 700px) {
+  .webgl-geometric-core {
+    min-width: 180px;
+    min-height: 180px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .webgl-geometric-core *,
+  .webgl-geometric-core *::before,
+  .webgl-geometric-core *::after {
+    animation: none !important;
+  }
+}

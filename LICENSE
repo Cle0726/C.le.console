@@ -1,0 +1,23 @@
+C.le.控制台
+Copyright (c) Cle0726 and contributors
+
+This project is licensed under the Creative Commons
+Attribution-NonCommercial-ShareAlike 4.0 International License
+(CC BY-NC-SA 4.0).
+
+You may share and adapt the material under the following terms:
+
+1. Attribution — Give appropriate credit, provide a link to the license,
+   and indicate whether changes were made.
+2. NonCommercial — Do not use the material for commercial purposes.
+3. ShareAlike — Distribute adaptations under the same license.
+4. No additional restrictions — Do not apply legal or technical measures
+   that restrict others from doing anything the license permits.
+
+The full legal code is available at:
+https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode
+
+This repository contains derivative and third-party components. Copyright
+in those components remains with their respective contributors. The bundled
+CLIProxyAPI component is separately licensed under the MIT License located at:
+sidecars/cle-cliproxy/cdk/CLIProxyAPI/LICENSE

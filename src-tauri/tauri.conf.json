@@ -1,0 +1,121 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "C.le.控制台",
+  "mainBinaryName": "C.le.控制台",
+  "version": "1.1.4",
+  "identifier": "com.cle0726.cle-console",
+  "build": {
+    "beforeDevCommand": "node scripts/prepare-tauri.cjs && npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "node scripts/prepare-tauri.cjs && npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "C.le.控制台",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": false,
+        "resizable": true
+      },
+      {
+        "label": "floating-card",
+        "title": "C.le.控制台",
+        "create": false,
+        "width": 250,
+        "height": 290,
+        "minWidth": 250,
+        "minHeight": 290,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": false,
+        "visible": false
+      },
+      {
+        "label": "status-window",
+        "title": "C.le. 状态窗",
+        "create": false,
+        "width": 480,
+        "height": 288,
+        "minWidth": 420,
+        "minHeight": 270,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": true,
+        "skipTaskbar": false,
+        "alwaysOnTop": false,
+        "center": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "createUpdaterArtifacts": false,
+    "externalBin": [
+      "../sidecars/cle-cliproxy/bin/cle-cliproxy"
+    ],
+    "icon": [
+      "icons/48x48.png",
+      "icons/32x32.png",
+      "icons/16x16.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/256x256.png",
+      "icons/512x512.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../scripts/claude-desktop-auth-helper.cjs": "scripts/claude-desktop-auth-helper.cjs",
+      "../src/assets/icons/antigravity-menu.png": "native-menu-icons/antigravity-menu.png",
+      "../src/assets/icons/claude.png": "native-menu-icons/claude.png",
+      "../src/assets/icons/codebuddy.png": "native-menu-icons/codebuddy.png",
+      "../src/assets/icons/codex.svg": "native-menu-icons/codex.svg",
+      "../src/assets/icons/cursor-menu.png": "native-menu-icons/cursor-menu.png",
+      "../src/assets/icons/gemini-menu.png": "native-menu-icons/gemini-menu.png",
+      "../src/assets/icons/github-copilot.svg": "native-menu-icons/github-copilot.svg",
+      "../src/assets/icons/kiro-menu.png": "native-menu-icons/kiro-menu.png",
+      "../src/assets/icons/qoder.png": "native-menu-icons/qoder.png",
+      "../src/assets/icons/trae.png": "native-menu-icons/trae.png",
+      "../src/assets/icons/trae-cn.png": "native-menu-icons/trae-cn.png",
+      "../src/assets/icons/trae-solo.png": "native-menu-icons/trae-solo.png",
+      "../src/assets/icons/trae-solo-cn.png": "native-menu-icons/trae-solo-cn.png",
+      "../src/assets/icons/windsurf.svg": "native-menu-icons/windsurf.svg",
+      "../src/assets/icons/workbuddy.png": "native-menu-icons/workbuddy.png",
+      "../src/assets/icons/zed.png": "native-menu-icons/zed.png"
+    },
+    "macOS": {
+      "bundleName": "C.le.控制台",
+      "infoPlist": "Info.plist"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "cle-console",
+          "cleconsole"
+        ]
+      }
+    }
+  }
+}

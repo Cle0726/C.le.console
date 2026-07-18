@@ -1,0 +1,295 @@
+/* ============================================
+   Account Group Modal
+   ============================================ */
+
+.account-group-modal {
+  max-width: 480px;
+}
+
+.account-group-modal .modal-body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+/* 创建分组 */
+.group-create-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.group-create-row input {
+  flex: 1;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.group-create-row input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.group-create-row .btn {
+  height: 36px;
+  padding: 0 14px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+/* 分组列表 */
+.group-modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.group-modal-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  transition: all 0.15s ease;
+}
+
+.group-modal-item:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-hover);
+}
+
+.group-modal-item .group-icon {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.group-modal-item .group-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.group-modal-item .group-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-modal-item .group-count {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.group-modal-item .group-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.group-modal-item .group-action-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.group-modal-item .group-action-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.group-modal-item .group-action-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* 重命名编辑 */
+.group-rename-input {
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--primary);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+/* 空状态 */
+.group-modal-empty {
+  text-align: center;
+  padding: 24px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.group-modal-empty svg {
+  display: block;
+  margin: 0 auto 10px;
+  opacity: 0.4;
+}
+
+/* 添加到分组弹窗 */
+.add-to-group-modal {
+  max-width: 380px;
+}
+
+.add-to-group-modal .modal-body {
+  padding: 16px 20px;
+  max-height: 50vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.add-to-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-to-group-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.add-to-group-item:hover {
+  border-color: var(--primary);
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.add-to-group-item .group-icon {
+  flex-shrink: 0;
+  color: var(--primary);
+}
+
+.add-to-group-item .group-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.add-to-group-item .group-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  min-width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* 弹窗内错误提示 */
+.group-modal-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: var(--danger, #ef4444);
+  font-size: 13px;
+  animation: groupErrorFadeIn 0.2s ease;
+}
+
+.group-modal-error svg {
+  flex-shrink: 0;
+}
+
+@keyframes groupErrorFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 分组筛选复选框 */
+.group-filter-checkbox {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+/* 分组筛选选中高亮 */
+.group-modal-item.group-filter-active {
+  border-color: var(--primary);
+  background: rgba(59, 130, 246, 0.06);
+}
+
+/* 筛选提示条 */
+.group-filter-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  font-size: 12px;
+  color: var(--primary);
+}
+
+.group-filter-clear-btn {
+  border: none;
+  background: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.group-filter-clear-btn:hover {
+  opacity: 0.8;
+}
+
+/* 工具栏按钮 - 筛选激活高亮 */
+.btn-filter-active {
+  border-color: var(--primary) !important;
+  color: var(--primary) !important;
+  background: rgba(59, 130, 246, 0.08) !important;
+}

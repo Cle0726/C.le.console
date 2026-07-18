@@ -1,0 +1,440 @@
+/* C.le. night canvas
+   A graphite counterpart to the cool-grey day canvas. The hierarchy stays
+   identical while light, edges and model wireframes are re-balanced for a
+   low-luminance environment instead of being mechanically inverted. */
+
+html[data-visual-theme='night'] {
+  color-scheme: dark;
+  --ink-0: #050708;
+  --ink-1: #0b0f12;
+  --ink-2: #171d21;
+  --fog-0: #2a3136;
+  --fog-1: #20272c;
+  --fog-2: #151b1f;
+  --signal: #eef1f2;
+  --signal-strong: #f4f6f6;
+  --signal-dark: #c9d0d3;
+  --glass-white: rgba(30, 37, 42, 0.7);
+  --glass-dark: rgba(5, 8, 10, 0.9);
+  --edge: rgba(224, 231, 234, 0.17);
+  --edge-bright: rgba(255, 255, 255, 0.2);
+  --bg-primary: #151a1e;
+  --bg-secondary: rgba(23, 29, 33, 0.8);
+  --bg-surface: rgba(25, 31, 35, 0.76);
+  --bg-tertiary: rgba(44, 52, 57, 0.44);
+  --bg-card: rgba(29, 36, 40, 0.7);
+  --bg-hover: rgba(237, 241, 242, 0.07);
+  --text-primary: #edf0f1;
+  --text-secondary: #aab2b6;
+  --text-muted: #6f7980;
+  --border: rgba(224, 231, 234, 0.17);
+  --border-light: rgba(224, 231, 234, 0.09);
+  --primary: #edf0f1;
+  --primary-hover: #ffffff;
+  --primary-light: rgba(237, 240, 241, 0.08);
+  --shadow-sm: 0 10px 26px rgba(0, 0, 0, 0.2), inset 0 1px rgba(255,255,255,.05);
+  --shadow-md: 0 20px 48px rgba(0, 0, 0, 0.28), inset 0 1px rgba(255,255,255,.06);
+  --shadow-lg: 0 34px 90px rgba(0, 0, 0, 0.4), inset 0 1px rgba(255,255,255,.07);
+  --monitor-panel: rgba(20, 27, 31, 0.68);
+  --monitor-panel-strong: rgba(38, 47, 52, 0.86);
+  --monitor-line: rgba(229, 235, 237, 0.16);
+  --monitor-line-strong: rgba(231, 237, 239, 0.38);
+  --monitor-text: #edf1f2;
+  --monitor-muted: #9ba7ad;
+  --monitor-faint: #727e84;
+  --monitor-inverse: #111619;
+  --monitor-ink: #e8edee;
+  --monitor-success: #7ec8a2;
+  --monitor-danger: #df8585;
+  --monitor-shadow: rgba(0, 0, 0, 0.28);
+}
+
+html[data-visual-theme='night'] body,
+html[data-visual-theme='night'][data-theme='dark'] body {
+  color-scheme: dark;
+  color: var(--text-primary);
+  background:
+    linear-gradient(
+      180deg,
+      #242a2f 0%,
+      #242a2f 34%,
+      #20262b 38%,
+      #1a2024 44%,
+      #151b1f 48%,
+      #151b1f 56%,
+      #11171a 64%,
+      #0e1316 72%,
+      #0a0f12 82%,
+      #080b0d 92%,
+      #050708 100%
+    );
+}
+
+html[data-visual-theme='night'] .ambient-interaction-layer::before {
+  background:
+    radial-gradient(ellipse 70% 19% at 50% 47%, rgba(202,211,215,.045), transparent 72%),
+    linear-gradient(90deg, transparent, rgba(255,255,255,.018) 48%, transparent 72%);
+}
+
+html[data-visual-theme='night'] .ambient-grid {
+  background-image:
+    linear-gradient(rgba(225,231,233,.075) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(225,231,233,.075) 1px, transparent 1px);
+}
+
+html[data-visual-theme='night'] .ambient-grid::after {
+  background: linear-gradient(105deg, transparent 0 44%, rgba(255,255,255,.09) 49%, transparent 54%);
+}
+
+html[data-visual-theme='night'] .ambient-beam {
+  border-color: rgba(226,233,235,.14);
+}
+
+html[data-visual-theme='night'] .cursor-aura {
+  background: radial-gradient(circle, rgba(211,220,224,.08), rgba(255,255,255,.018) 30%, transparent 69%);
+}
+
+html[data-visual-theme='night'] .drag-region {
+  border-bottom-color: rgba(231,236,238,.08);
+}
+
+/* Fixed chrome and the floating navigation object. */
+html[data-visual-theme='night'] .industrial-chrome,
+html[data-visual-theme='night'] .spatial-floating-brand {
+  color: #edf0f1;
+}
+
+html[data-visual-theme='night'] .spatial-floating-brand {
+  text-shadow: 0 8px 20px rgba(0,0,0,.48);
+}
+
+html[data-visual-theme='night'] .spatial-nav-avatar {
+  border-color: rgba(229,235,237,.28);
+  background: linear-gradient(145deg, rgba(57,66,72,.97), rgba(20,25,29,.97));
+  box-shadow: 0 14px 32px rgba(0,0,0,.42), inset 0 1px rgba(255,255,255,.11);
+}
+
+html[data-visual-theme='night'] .spatial-nav-avatar i {
+  border-color: #1c2327;
+  background: #eef1f2;
+}
+
+html[data-visual-theme='night'] .spatial-nav-item {
+  border-color: rgba(225,232,234,.14);
+  color: #abb4b9;
+  background: linear-gradient(145deg, rgba(45,53,58,.98), rgba(18,23,26,.98));
+  box-shadow: 0 9px 20px rgba(0,0,0,.26), inset 0 1px rgba(255,255,255,.07);
+}
+
+html[data-visual-theme='night'] .spatial-nav-item:hover {
+  color: #f4f6f6;
+  background: linear-gradient(145deg, #3a444a, #20272b);
+}
+
+html[data-visual-theme='night'] .spatial-nav-item.active,
+html[data-visual-theme='night'] .spatial-nav-item[aria-current='page'] {
+  color: #111518;
+  border-color: #e4e9ea;
+  background: #e4e9ea;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.16), 0 11px 25px rgba(0,0,0,.34);
+}
+
+html[data-visual-theme='night'] .spatial-nav-more-panel {
+  border-color: rgba(229,235,237,.16);
+  color: #dfe5e7;
+  background: linear-gradient(145deg, rgba(35,42,47,.99), rgba(15,19,22,.99));
+  box-shadow: 0 24px 56px rgba(0,0,0,.48);
+}
+
+html[data-visual-theme='night'] .spatial-nav-more-panel button {
+  color: #aeb7bc;
+}
+
+html[data-visual-theme='night'] .spatial-nav-more-panel button:hover,
+html[data-visual-theme='night'] .spatial-nav-more-panel button[aria-current='page'] {
+  color: #111518;
+  background: #e4e9ea;
+}
+
+html[data-visual-theme='night'] .spatial-nav-avatar:focus-visible,
+html[data-visual-theme='night'] .spatial-nav-item:focus-visible,
+html[data-visual-theme='night'] .spatial-nav-more-panel button:focus-visible {
+  outline-color: #eef2f3;
+}
+
+/* Landing and model gallery keep the sparse editor layout in low light. */
+html[data-visual-theme='night'] .scene-header {
+  border-bottom-color: rgba(229,235,237,.16);
+}
+
+html[data-visual-theme='night'] .scene-header-title > span,
+html[data-visual-theme='night'] .scene-header-title > button {
+  border-color: rgba(229,235,237,.2);
+  color: #edf0f1;
+}
+
+html[data-visual-theme='night'] .scene-header-title > button:hover {
+  color: #111518;
+  background: #e7ebec;
+}
+
+html[data-visual-theme='night'] .scene-header-title small,
+html[data-visual-theme='night'] .launchpad-primary-copy span,
+html[data-visual-theme='night'] .launchpad-primary-copy small,
+html[data-visual-theme='night'] .launchpad-secondary > small,
+html[data-visual-theme='night'] .model-gallery-label small {
+  color: #8f999f;
+}
+
+html[data-visual-theme='night'] .scene-header-title strong,
+html[data-visual-theme='night'] .scene-header-index,
+html[data-visual-theme='night'] .launchpad-grid button,
+html[data-visual-theme='night'] .model-gallery-card {
+  color: #edf0f1;
+}
+
+html[data-visual-theme='night'] .launchpad-grid button {
+  border-color: rgba(229,235,237,.16);
+  background: rgba(237,241,242,.018);
+}
+
+html[data-visual-theme='night'] .launchpad-grid button:hover {
+  background: rgba(237,241,242,.055);
+  box-shadow: 9px 10px 0 rgba(0,0,0,.16), 0 22px 42px rgba(0,0,0,.2);
+}
+
+html[data-visual-theme='night'] .launchpad-primary {
+  background:
+    radial-gradient(ellipse 43% 36% at 57% 48%, rgba(206,215,219,.055), transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,.012), rgba(0,0,0,.025)) !important;
+}
+
+html[data-visual-theme='night'] .launchpad-primary::before {
+  background-image:
+    linear-gradient(rgba(226,232,234,.09) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(226,232,234,.09) 1px,transparent 1px);
+}
+
+html[data-visual-theme='night'] .launchpad-grid .launchpad-primary:hover {
+  background:
+    radial-gradient(ellipse at var(--launch-pointer-x) var(--launch-pointer-y),rgba(221,228,230,.09),transparent 40%),
+    linear-gradient(180deg,rgba(255,255,255,.018),rgba(0,0,0,.03)) !important;
+}
+
+html[data-visual-theme='night'] .launchpad-secondary:not(.launchpad-automation),
+html[data-visual-theme='night'] .launchpad-automation {
+  color: #edf0f1 !important;
+  background:
+    radial-gradient(ellipse at 68% 30%,rgba(216,224,227,.04),transparent 54%),
+    linear-gradient(180deg,rgba(255,255,255,.014),rgba(0,0,0,.025)) !important;
+}
+
+html[data-visual-theme='night'] .launchpad-automation small {
+  color: #849097;
+}
+
+html[data-visual-theme='night'] .launchpad-automation-clock {
+  color: #111518;
+  background: #e4e9ea;
+  box-shadow: 8px 9px 0 rgba(0,0,0,.28);
+}
+
+html[data-visual-theme='night'] .launchpad-quota-value sup {
+  color: #a4aeb3;
+}
+
+html[data-visual-theme='night'] .launchpad-secondary > .launchpad-quota-track {
+  background: rgba(231,236,238,.16);
+  box-shadow: none;
+}
+
+html[data-visual-theme='night'] .launchpad-quota-track i {
+  background: linear-gradient(90deg,#e7ebec,#77858c);
+}
+
+html[data-visual-theme='night'] .model-gallery-card {
+  border-color: rgba(229,235,237,.16);
+  background:
+    radial-gradient(ellipse at 58% 38%,rgba(216,224,227,.04),transparent 52%),
+    linear-gradient(180deg,rgba(255,255,255,.012),rgba(0,0,0,.025));
+}
+
+html[data-visual-theme='night'] .model-gallery-card::before {
+  background-image:
+    linear-gradient(rgba(226,232,234,.11) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(226,232,234,.11) 1px,transparent 1px);
+}
+
+html[data-visual-theme='night'] .model-gallery-card:hover {
+  border-color: rgba(238,242,243,.34);
+  background:
+    radial-gradient(ellipse at var(--pointer-x) var(--pointer-y),rgba(222,229,231,.09),transparent 46%),
+    linear-gradient(180deg,rgba(255,255,255,.018),rgba(0,0,0,.03));
+  box-shadow: 8px 10px 0 rgba(0,0,0,.18), 0 24px 44px rgba(0,0,0,.22);
+}
+
+html[data-visual-theme='night'] .model-gallery-label {
+  border-top-color: rgba(229,235,237,.17);
+}
+
+html[data-visual-theme='night'] .model-gallery-card:focus-visible {
+  outline-color: #eef2f3;
+}
+
+/* Invert only structural wirework; the faceted materials retain their depth. */
+html[data-visual-theme='night'] .geometry-orbit-ring,
+html[data-visual-theme='night'] .geometry-orbit-accent,
+html[data-visual-theme='night'] .geometry-orbit-ticks,
+html[data-visual-theme='night'] .geometry-outer-wire,
+html[data-visual-theme='night'] .geometry-offset-wire,
+html[data-visual-theme='night'] .emblem-wire,
+html[data-visual-theme='night'] .emblem-antigravity-orbits,
+html[data-visual-theme='night'] .emblem-antigravity-base {
+  stroke: #d5dce0;
+}
+
+html[data-visual-theme='night'] .geometry-orbit-nodes,
+html[data-visual-theme='night'] .geometry-offset-wire circle,
+html[data-visual-theme='night'] .emblem-antigravity-orbits circle {
+  fill: #dbe1e3;
+}
+
+html[data-visual-theme='night'] .geometry-outer-wire { opacity: .38; }
+html[data-visual-theme='night'] .geometry-offset-wire { opacity: .2; }
+html[data-visual-theme='night'] .geometry-ground,
+html[data-visual-theme='night'] .model-emblem-shadow { fill: rgba(0,0,0,.5); }
+html[data-visual-theme='night'] .facet { stroke: #dce2e4; }
+html[data-visual-theme='night'] .facet-cut { stroke: #e4e9ea; }
+html[data-visual-theme='night'] .geometry-core-mark circle:first-child { stroke: #111719; }
+
+/* Model studio and the rest of the application. */
+html[data-visual-theme='night'] .spatial-command-hero {
+  border-color: rgba(229,235,237,.16);
+  background:
+    radial-gradient(circle at var(--card-x,62%) var(--card-y,36%),rgba(218,225,228,.07),transparent 27%),
+    linear-gradient(120deg,rgba(31,38,43,.72),rgba(11,15,18,.58));
+  box-shadow: 0 26px 58px rgba(0,0,0,.28), inset 0 1px rgba(255,255,255,.06);
+}
+
+html[data-visual-theme='night'] .spatial-command-hero::before {
+  background-image:
+    linear-gradient(rgba(226,232,234,.08) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(226,232,234,.08) 1px,transparent 1px);
+}
+
+html[data-visual-theme='night'] .spatial-kicker,
+html[data-visual-theme='night'] .spatial-hero-copy h1 span,
+html[data-visual-theme='night'] .spatial-hero-copy p,
+html[data-visual-theme='night'] .spatial-hero-metrics span,
+html[data-visual-theme='night'] .ai-model-caption span,
+html[data-visual-theme='night'] .spatial-palette-group > label,
+html[data-visual-theme='night'] .spatial-light-dock > label {
+  color: #929ca1;
+}
+
+html[data-visual-theme='night'] .spatial-hero-copy h1,
+html[data-visual-theme='night'] .spatial-hero-metrics strong,
+html[data-visual-theme='night'] .ai-model-caption strong,
+html[data-visual-theme='night'] .spatial-hero-index,
+html[data-visual-theme='night'] .spatial-tool-palette,
+html[data-visual-theme='night'] .spatial-light-dock,
+html[data-visual-theme='night'] .spatial-rotation-readout strong {
+  color: #edf0f1;
+}
+
+html[data-visual-theme='night'] .spatial-stage-label,
+html[data-visual-theme='night'] .ai-model-picker,
+html[data-visual-theme='night'] .spatial-control-dock {
+  border-color: rgba(229,235,237,.17);
+  color: #dce2e4;
+  background: rgba(20,26,30,.68);
+  box-shadow: 0 14px 32px rgba(0,0,0,.28), inset 0 1px rgba(255,255,255,.06);
+}
+
+html[data-visual-theme='night'] .spatial-model-list button,
+html[data-visual-theme='night'] .spatial-tools-group > button,
+html[data-visual-theme='night'] .ai-model-picker button,
+html[data-visual-theme='night'] .spatial-control-group button {
+  color: #9da7ac;
+}
+
+html[data-visual-theme='night'] .spatial-tools-group > button:hover,
+html[data-visual-theme='night'] .ai-model-picker button:hover,
+html[data-visual-theme='night'] .spatial-control-group button:hover {
+  color: #f1f4f4;
+  background: rgba(235,240,241,.07);
+}
+
+html[data-visual-theme='night'] .spatial-model-list button.active,
+html[data-visual-theme='night'] .spatial-tools-group > button.active,
+html[data-visual-theme='night'] .ai-model-picker button.active,
+html[data-visual-theme='night'] .spatial-control-group button.active {
+  color: #111518;
+  background: #e4e9ea;
+}
+
+html[data-visual-theme='night'] .spatial-light-modes button {
+  border-color: rgba(229,235,237,.24);
+  color: #bdc5c9;
+  background: rgba(234,239,240,.025);
+}
+
+html[data-visual-theme='night'] .spatial-light-modes button.active {
+  color: #111518;
+  background: #e4e9ea;
+}
+
+html[data-visual-theme='night'] .stat-card,
+html[data-visual-theme='night'] .main-card,
+html[data-visual-theme='night'] .account-card,
+html[data-visual-theme='night'] .settings-card,
+html[data-visual-theme='night'] .codex-api-service-panel,
+html[data-visual-theme='night'] .modal,
+html[data-visual-theme='night'] .qs-modal {
+  border-color: rgba(229,235,237,.16) !important;
+  color: #e7ebec;
+  background:
+    radial-gradient(circle at var(--card-x,85%) var(--card-y,5%),rgba(219,226,228,.055),transparent 30%),
+    linear-gradient(145deg,rgba(31,38,43,.78),rgba(12,16,19,.68)) !important;
+  box-shadow: 8px 9px 0 rgba(0,0,0,.17), inset 0 1px rgba(255,255,255,.055) !important;
+}
+
+html[data-visual-theme='night'] input,
+html[data-visual-theme='night'] textarea,
+html[data-visual-theme='night'] select,
+html[data-visual-theme='night'] .search-box {
+  color: #eef1f2 !important;
+  border-color: rgba(229,235,237,.15) !important;
+  background: rgba(17,22,26,.7) !important;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.3) !important;
+}
+
+html[data-visual-theme='night'] .page-tabs-label,
+html[data-visual-theme='night'] .dashboard-title-label,
+html[data-visual-theme='night'] .page-heading h1 {
+  color: #edf0f1;
+}
+
+html[data-visual-theme='night'] .page-tabs-label::before {
+  background: #dce2e4;
+}
+
+html[data-visual-theme='night'] .card-footer-action {
+  background: rgba(234,239,240,.035) !important;
+}
+
+html[data-visual-theme='night'] .btn-primary,
+html[data-visual-theme='night'] .filter-tab.active,
+html[data-visual-theme='night'] .view-btn.active {
+  color: #111518 !important;
+  border-color: #e4e9ea !important;
+  background: #e4e9ea !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .industrial-theme-track,
+  .industrial-theme-stars,
+  .industrial-theme-core {
+    transition: none;
+  }
+}

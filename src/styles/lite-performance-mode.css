@@ -1,0 +1,60 @@
+/* Low-overhead presentation mode. Functional controls remain intact while
+   GPU contexts, continuous animation and expensive compositing are removed. */
+html[data-performance-mode='lite'] *,
+html[data-performance-mode='lite'] *::before,
+html[data-performance-mode='lite'] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+html[data-performance-mode='lite'] body {
+  background: linear-gradient(180deg, var(--fog-0), var(--fog-2)) !important;
+}
+
+html[data-performance-mode='lite'] :is(
+  .ambient-interaction-layer,
+  .startup-greeting,
+  .spatial-orbit,
+  .ambient-grain,
+  .ambient-beam,
+  .cursor-aura,
+  .webgl-core-ambient
+) {
+  display: none !important;
+}
+
+html[data-performance-mode='lite'] :is(
+  .spatial-command-hero,
+  .main-card,
+  .stat-card,
+  .account-card,
+  .codex-account-card,
+  .settings-card,
+  .launchpad-grid button,
+  .model-gallery-card
+) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  filter: none !important;
+  box-shadow: 2px 3px 0 color-mix(in srgb, var(--text-primary) 8%, transparent) !important;
+}
+
+html[data-performance-mode='lite'] :is(.account-card, .codex-account-card, .main-card) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 340px;
+}
+
+html[data-performance-mode='lite'] .webgl-geometric-core-canvas {
+  display: none !important;
+}
+
+html[data-performance-mode='lite'] .webgl-core-fallback {
+  filter: none !important;
+}
+
+html[data-performance-mode='lite'] .launchpad-primary::after,
+html[data-performance-mode='lite'] .model-gallery-card::after {
+  display: none !important;
+}
