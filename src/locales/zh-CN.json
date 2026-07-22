@@ -277,6 +277,7 @@
     "gemini": "Gemini Cli",
     "dashboard": "仪表盘",
     "morePlatforms": "更多平台",
+    "multiModelApiService": "多模型 API 代理",
     "collapseSidebar": "收起侧边栏",
     "expandSidebar": "展开侧边栏",
     "logs": "日志",

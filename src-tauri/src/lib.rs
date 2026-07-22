@@ -11,9 +11,8 @@ use std::sync::{
 };
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
-use tauri::RunEvent;
-use tauri::WindowEvent;
 use tauri::Manager;
+use tauri::WindowEvent;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tracing::info;
 
@@ -143,11 +142,7 @@ fn should_hide_startup_minimized_window(
     config.startup_minimized && is_macos && config.hide_dock_icon
 }
 
-fn should_show_status_window(
-    was_minimized: bool,
-    is_minimized: bool,
-    is_restoring: bool,
-) -> bool {
+fn should_show_status_window(was_minimized: bool, is_minimized: bool, is_restoring: bool) -> bool {
     !is_restoring && is_minimized && !was_minimized
 }
 
@@ -357,6 +352,10 @@ pub fn run() {
                 modules::codex_local_access::restore_local_access_gateway().await;
             });
 
+            tauri::async_runtime::spawn(async {
+                modules::multi_model_api::restore().await;
+            });
+
             {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -504,9 +503,7 @@ pub fn run() {
                         if should_show_status_window(was_minimized, is_minimized, false) {
                             match modules::status_window::show_status_window(window.app_handle()) {
                                 Ok(()) => match window.hide() {
-                                    Ok(()) => info!(
-                                        "[Window] 主窗口最小化，已切换到紧凑状态窗口"
-                                    ),
+                                    Ok(()) => info!("[Window] 主窗口最小化，已切换到紧凑状态窗口"),
                                     Err(err) => logger::log_warn(&format!(
                                         "[Window] 紧凑状态窗口已显示，但隐藏主窗口失败: {}",
                                         err
@@ -519,10 +516,9 @@ pub fn run() {
                             }
                         }
                     }
-                    Err(err) => logger::log_warn(&format!(
-                        "[Window] 无法读取主窗口最小化状态: {}",
-                        err
-                    )),
+                    Err(err) => {
+                        logger::log_warn(&format!("[Window] 无法读取主窗口最小化状态: {}", err))
+                    }
                 }
             }
             WindowEvent::CloseRequested { .. } => {
@@ -822,6 +818,14 @@ pub fn run() {
             commands::codex::codex_local_access_test,
             commands::codex::codex_local_access_chat_test,
             commands::codex::codex_local_access_chat_test_stream,
+            // Multi-model API proxy service
+            commands::multi_model_api::multi_model_api_get_state,
+            commands::multi_model_api::multi_model_api_save_config,
+            commands::multi_model_api::multi_model_api_set_enabled,
+            commands::multi_model_api::multi_model_api_sync_managed_accounts,
+            commands::multi_model_api::multi_model_api_test_chat,
+            commands::multi_model_api::multi_model_api_generic_oauth_start,
+            commands::multi_model_api::multi_model_api_generic_oauth_exchange,
             // GitHub Copilot Commands
             commands::github_copilot::list_github_copilot_accounts,
             commands::github_copilot::delete_github_copilot_account,
@@ -1173,15 +1177,6 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
-        match &event {
-            RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-                tauri::async_runtime::spawn(async {
-                    modules::codex_local_access::shutdown_local_access_gateway_for_app_exit().await;
-                });
-            }
-            _ => {}
-        }
-
         #[cfg(target_os = "macos")]
         {
             match event {

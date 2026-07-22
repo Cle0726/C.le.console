@@ -1056,8 +1056,8 @@ fn build_new_api_profile_url(account: &CodexAccount) -> Result<String, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or("Cle Api 账号缺少 Base URL")?;
-    let mut parsed = reqwest::Url::parse(base_url)
-        .map_err(|err| format!("Cle Api Base URL 无效: {}", err))?;
+    let mut parsed =
+        reqwest::Url::parse(base_url).map_err(|err| format!("Cle Api Base URL 无效: {}", err))?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("Cle Api Base URL 仅支持 http/https".to_string());
     }

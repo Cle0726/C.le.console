@@ -12,7 +12,7 @@ import (
 
 func TestBuildAuthorizeURLIncludesXAIRequiredParameters(t *testing.T) {
 	authURL, err := BuildAuthorizeURL(AuthorizeURLParams{
-		AuthorizationEndpoint: "https://auth.x.ai/oauth/authorize",
+		AuthorizationEndpoint: "https://auth.x.ai/oauth2/authorize",
 		RedirectURI:           "http://127.0.0.1:56121/callback",
 		CodeChallenge:         "challenge",
 		State:                 "state-123",
@@ -26,7 +26,7 @@ func TestBuildAuthorizeURLIncludesXAIRequiredParameters(t *testing.T) {
 	if errParse != nil {
 		t.Fatalf("parse authorize URL: %v", errParse)
 	}
-	if parsed.Scheme != "https" || parsed.Host != "auth.x.ai" || parsed.Path != "/oauth/authorize" {
+	if parsed.Scheme != "https" || parsed.Host != "auth.x.ai" || parsed.Path != "/oauth2/authorize" {
 		t.Fatalf("authorize URL endpoint = %s://%s%s", parsed.Scheme, parsed.Host, parsed.Path)
 	}
 
@@ -51,10 +51,10 @@ func TestBuildAuthorizeURLIncludesXAIRequiredParameters(t *testing.T) {
 }
 
 func TestValidateOAuthEndpointRejectsNonXAIOrigin(t *testing.T) {
-	if _, err := ValidateOAuthEndpoint("https://auth.x.ai/oauth/token", "token_endpoint"); err != nil {
+	if _, err := ValidateOAuthEndpoint("https://auth.x.ai/oauth2/token", "token_endpoint"); err != nil {
 		t.Fatalf("ValidateOAuthEndpoint(xai) error = %v", err)
 	}
-	if _, err := ValidateOAuthEndpoint("http://auth.x.ai/oauth/token", "token_endpoint"); err == nil {
+	if _, err := ValidateOAuthEndpoint("http://auth.x.ai/oauth2/token", "token_endpoint"); err == nil {
 		t.Fatal("expected non-HTTPS endpoint to be rejected")
 	}
 	if _, err := ValidateOAuthEndpoint("https://evil.example/oauth/token", "token_endpoint"); err == nil {

@@ -115,6 +115,9 @@ func (e *GeminiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	reporter := helps.NewUsageReporter(ctx, e.Identifier(), baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 
+	action := geminiExecutorAction(req)
+	rawLongRunning := action == "predictLongRunning"
+
 	// Official Gemini API via API key or OAuth bearer
 	from := opts.SourceFormat
 	to := sdktranslator.FromString("gemini")
@@ -122,27 +125,25 @@ func (e *GeminiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	if len(opts.OriginalRequest) > 0 {
 		originalPayloadSource = opts.OriginalRequest
 	}
-	originalPayload := originalPayloadSource
-	originalTranslated := sdktranslator.TranslateRequest(from, to, baseModel, originalPayload, false)
-	body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, false)
+	var body []byte
+	if rawLongRunning {
+		body = req.Payload
+	} else {
+		originalPayload := originalPayloadSource
+		originalTranslated := sdktranslator.TranslateRequest(from, to, baseModel, originalPayload, false)
+		body = sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, false)
 
-	body, err = thinking.ApplyThinking(body, req.Model, from.String(), to.String(), e.Identifier())
-	if err != nil {
-		return resp, err
-	}
-
-	body = fixGeminiImageAspectRatio(baseModel, body)
-	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
-	requestPath := helps.PayloadRequestPath(opts)
-	body = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), from.String(), "", body, originalTranslated, requestedModel, requestPath, opts.Headers)
-	body, _ = sjson.SetBytes(body, "model", baseModel)
-	body = capGeminiMaxOutputTokens(body, baseModel)
-
-	action := "generateContent"
-	if req.Metadata != nil {
-		if a, _ := req.Metadata["action"].(string); a == "countTokens" {
-			action = "countTokens"
+		body, err = thinking.ApplyThinking(body, req.Model, from.String(), to.String(), e.Identifier())
+		if err != nil {
+			return resp, err
 		}
+
+		body = fixGeminiImageAspectRatio(baseModel, body)
+		requestedModel := helps.PayloadRequestedModel(opts, req.Model)
+		requestPath := helps.PayloadRequestPath(opts)
+		body = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), from.String(), "", body, originalTranslated, requestedModel, requestPath, opts.Headers)
+		body, _ = sjson.SetBytes(body, "model", baseModel)
+		body = capGeminiMaxOutputTokens(body, baseModel)
 	}
 	baseURL := resolveGeminiBaseURL(auth)
 	url := fmt.Sprintf("%s/%s/models/%s:%s", baseURL, glAPIVersion, baseModel, action)
@@ -207,10 +208,26 @@ func (e *GeminiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	}
 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
 	reporter.Publish(ctx, helps.ParseGeminiUsage(data))
+	if rawLongRunning {
+		resp = cliproxyexecutor.Response{Payload: data, Headers: httpResp.Header.Clone()}
+		return resp, nil
+	}
 	var param any
 	out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, opts.OriginalRequest, body, data, &param)
 	resp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
 	return resp, nil
+}
+
+func geminiExecutorAction(req cliproxyexecutor.Request) string {
+	if req.Metadata != nil {
+		if action, _ := req.Metadata["action"].(string); action != "" {
+			switch action {
+			case "countTokens", "predictLongRunning":
+				return action
+			}
+		}
+	}
+	return "generateContent"
 }
 
 // ExecuteStream performs a streaming request to the Gemini API.

@@ -158,7 +158,13 @@ func buildXAIVideosCreateRequest(rawJSON []byte, model string) ([]byte, xaiVideo
 		return nil, xaiVideoCreateMetadata{}, fmt.Errorf("prompt is required")
 	}
 
-	seconds, duration, err := normalizeXAIVideosSeconds(gjson.GetBytes(rawJSON, "seconds").String())
+	secondsRaw := gjson.GetBytes(rawJSON, "seconds").String()
+	if strings.TrimSpace(secondsRaw) == "" {
+		// Grok/xAI's native video endpoint uses duration; expose it as the
+		// OpenAI-style seconds field while still accepting native payloads.
+		secondsRaw = gjson.GetBytes(rawJSON, "duration").String()
+	}
+	seconds, duration, err := normalizeXAIVideosSeconds(secondsRaw)
 	if err != nil {
 		return nil, xaiVideoCreateMetadata{}, err
 	}
@@ -448,7 +454,10 @@ func (h *OpenAIAPIHandler) VideosCreate(c *gin.Context) {
 }
 
 func (h *OpenAIAPIHandler) XAIVideosGenerations(c *gin.Context) {
-	h.handleXAIVideosNativePost(c)
+	// /v1/videos/generations is the public standard wrapper: accept an
+	// OpenAI-style request, call Grok/xAI's native endpoint, and normalize the
+	// create response into an OpenAI-compatible video object.
+	h.VideosCreate(c)
 }
 
 func (h *OpenAIAPIHandler) XAIVideosEdits(c *gin.Context) {

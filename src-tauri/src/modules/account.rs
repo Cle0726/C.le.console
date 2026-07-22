@@ -26,6 +26,7 @@ const LIST_ACCOUNTS_CACHE_TTL_MS: u64 = 800;
 // 使用与 AntigravityCle 插件相同的数据目录
 const DATA_DIR: &str = ".antigravity_cle";
 const DEV_DATA_DIR: &str = ".antigravity_cle_dev";
+const LEGACY_COCKPIT_DATA_DIR: &str = ".antigravity_cockpit";
 const DATA_DIR_ENV: &str = "CLE_CONSOLE_DATA_DIR";
 const PROFILE_ENV: &str = "CLE_CONSOLE_PROFILE";
 
@@ -92,12 +93,198 @@ pub fn resolve_data_dir() -> Result<PathBuf, String> {
     Ok(home.join(dir_name))
 }
 
+fn account_index_has_entries(path: &std::path::Path) -> bool {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+
+    value
+        .get("accounts")
+        .and_then(|accounts| accounts.as_array())
+        .is_some_and(|accounts| !accounts.is_empty())
+}
+
+fn has_managed_account_data(data_dir: &std::path::Path) -> bool {
+    const INDEX_FILES: &[&str] = &[
+        "accounts.json",
+        "claude_accounts.json",
+        "codebuddy_accounts.json",
+        "codebuddy_cn_accounts.json",
+        "codex_accounts.json",
+        "cursor_accounts.json",
+        "gemini_accounts.json",
+        "github_copilot_accounts.json",
+        "kiro_accounts.json",
+        "qoder_accounts.json",
+        "trae_accounts.json",
+        "windsurf_accounts.json",
+        "workbuddy_accounts.json",
+        "zed_accounts.json",
+    ];
+
+    INDEX_FILES
+        .iter()
+        .any(|name| account_index_has_entries(&data_dir.join(name)))
+}
+
+fn copy_directory_missing(
+    source: &std::path::Path,
+    target: &std::path::Path,
+) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(target)
+        .map_err(|error| format!("创建迁移目录失败 {}: {}", target.display(), error))?;
+
+    for entry in fs::read_dir(source)
+        .map_err(|error| format!("读取旧账号目录失败 {}: {}", source.display(), error))?
+    {
+        let entry = entry.map_err(|error| format!("读取旧账号文件失败: {}", error))?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "读取旧账号文件类型失败 {}: {}",
+                source_path.display(),
+                error
+            )
+        })?;
+
+        if file_type.is_dir() {
+            copy_directory_missing(&source_path, &target_path)?;
+        } else if file_type.is_file() && !target_path.exists() {
+            fs::copy(&source_path, &target_path).map_err(|error| {
+                format!(
+                    "迁移旧账号文件失败 {} -> {}: {}",
+                    source_path.display(),
+                    target_path.display(),
+                    error
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn migrate_legacy_cockpit_accounts(data_dir: &std::path::Path) -> Result<(), String> {
+    if is_dev_profile()
+        || std::env::var(DATA_DIR_ENV)
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+        || has_managed_account_data(data_dir)
+    {
+        return Ok(());
+    }
+
+    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+    let legacy_dir = home.join(LEGACY_COCKPIT_DATA_DIR);
+    if !legacy_dir.exists() || !has_managed_account_data(&legacy_dir) {
+        return Ok(());
+    }
+
+    const ACCOUNT_DIRECTORIES: &[&str] = &[
+        "accounts",
+        "claude_accounts",
+        "claude_desktop_backups",
+        "claude_desktop_login",
+        "claude_desktop_profiles",
+        "codebuddy_accounts",
+        "codebuddy_cn_accounts",
+        "codex_accounts",
+        "codex_batch_delete_jobs",
+        "codex_batch_import_sessions",
+        "codex_local_access_sidecar",
+        "cursor_accounts",
+        "gemini_accounts",
+        "github_copilot_accounts",
+        "kiro_accounts",
+        "oauth_pending",
+        "qoder_accounts",
+        "trae_accounts",
+        "windsurf_accounts",
+        "workbuddy_accounts",
+        "zed_accounts",
+    ];
+
+    for directory in ACCOUNT_DIRECTORIES {
+        copy_directory_missing(&legacy_dir.join(directory), &data_dir.join(directory))?;
+    }
+
+    for entry in fs::read_dir(&legacy_dir).map_err(|error| {
+        format!(
+            "读取旧 C.le. 数据目录失败 {}: {}",
+            legacy_dir.display(),
+            error
+        )
+    })? {
+        let entry = entry.map_err(|error| format!("读取旧 C.le. 数据文件失败: {}", error))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("读取旧 C.le. 数据文件类型失败: {}", error))?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_account_index = name == "accounts.json"
+            || name == "accounts.json.bak"
+            || name.ends_with("_accounts.json")
+            || name.ends_with("_accounts.json.bak");
+        let is_account_runtime = matches!(
+            name.as_str(),
+            "current_account.json"
+                | "provider_current_accounts.json"
+                | "provider_current_accounts.json.bak"
+                | "codex_instances.json"
+                | "codex_instances.json.bak"
+                | "codex_local_access.json"
+                | "codex_local_access.json.bak"
+                | "codex_local_access_stats.json"
+                | "codex_local_access_stats.json.bak"
+                | "codex_local_access_takeover_backups.json"
+        );
+        if !is_account_index && !is_account_runtime {
+            continue;
+        }
+
+        let source = entry.path();
+        let target = data_dir.join(&name);
+        let should_copy = !target.exists()
+            || (is_account_index
+                && !account_index_has_entries(&target)
+                && account_index_has_entries(&source));
+        if should_copy {
+            fs::copy(&source, &target).map_err(|error| {
+                format!(
+                    "迁移旧 C.le. 账号索引失败 {} -> {}: {}",
+                    source.display(),
+                    target.display(),
+                    error
+                )
+            })?;
+        }
+    }
+
+    fs::write(
+        data_dir.join(".legacy_cockpit_accounts_migrated_v1"),
+        format!("source={}\n", legacy_dir.display()),
+    )
+    .map_err(|error| format!("写入旧账号迁移标记失败: {}", error))?;
+
+    Ok(())
+}
+
 pub fn get_data_dir() -> Result<PathBuf, String> {
     let data_dir = resolve_data_dir()?;
 
     if !data_dir.exists() {
         fs::create_dir_all(&data_dir).map_err(|e| format!("创建数据目录失败: {}", e))?;
     }
+
+    migrate_legacy_cockpit_accounts(&data_dir)?;
 
     Ok(data_dir)
 }

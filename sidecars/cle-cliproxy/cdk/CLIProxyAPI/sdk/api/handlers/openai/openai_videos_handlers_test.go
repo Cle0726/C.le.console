@@ -93,6 +93,28 @@ func TestBuildXAIVideosCreateRequestAllowsCustomSeconds(t *testing.T) {
 	}
 }
 
+func TestBuildXAIVideosCreateRequestAcceptsNativeDuration(t *testing.T) {
+	rawJSON := []byte(`{"model":"grok-imagine-video","prompt":"a cat playing piano","duration":7,"aspect_ratio":"16:9","resolution":"480p"}`)
+
+	req, meta, err := buildXAIVideosCreateRequest(rawJSON, "grok-imagine-video")
+	if err != nil {
+		t.Fatalf("buildXAIVideosCreateRequest() error = %v", err)
+	}
+
+	if got := gjson.GetBytes(req, "duration").Int(); got != 7 {
+		t.Fatalf("duration = %d, want 7", got)
+	}
+	if got := gjson.GetBytes(req, "aspect_ratio").String(); got != "16:9" {
+		t.Fatalf("aspect_ratio = %q, want 16:9", got)
+	}
+	if got := gjson.GetBytes(req, "resolution").String(); got != "480p" {
+		t.Fatalf("resolution = %q, want 480p", got)
+	}
+	if meta.Seconds != "7" {
+		t.Fatalf("meta seconds = %q, want 7", meta.Seconds)
+	}
+}
+
 func TestBuildXAIVideosCreateRequestRejectsFileIDReference(t *testing.T) {
 	rawJSON := []byte(`{"prompt":"animate","input_reference":{"file_id":"file_123"}}`)
 
@@ -170,7 +192,7 @@ func TestVideosCreateRejectsUnsupportedModel(t *testing.T) {
 	}
 }
 
-func TestXAIVideosNativeRejectsUnsupportedModel(t *testing.T) {
+func TestXAIVideosGenerationsUsesStandardWrapperValidation(t *testing.T) {
 	handler := &OpenAIAPIHandler{}
 	body := strings.NewReader(`{"model":"sora-2","prompt":"make a video"}`)
 
@@ -180,7 +202,7 @@ func TestXAIVideosNativeRejectsUnsupportedModel(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", resp.Code, http.StatusBadRequest, resp.Body.String())
 	}
 	message := gjson.GetBytes(resp.Body.Bytes(), "error.message").String()
-	expectedMessage := "Model sora-2 is not supported on " + xaiVideosGenerationsAPI + ", " + xaiVideosEditsAPI + ", or " + xaiVideosExtensionsAPI + ". Use " + defaultXAIVideosModel + "."
+	expectedMessage := "Model sora-2 is not supported on " + videosPath + ". Use " + defaultXAIVideosModel + "."
 	if message != expectedMessage {
 		t.Fatalf("error message = %q, want %q", message, expectedMessage)
 	}

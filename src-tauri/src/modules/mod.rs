@@ -54,6 +54,7 @@ pub mod kiro_instance;
 pub mod kiro_oauth;
 pub mod logger;
 pub mod macos_native_menu;
+pub mod multi_model_api;
 pub mod network_egress;
 pub mod oauth;
 pub mod oauth_pending_state;
@@ -68,8 +69,8 @@ pub mod qoder_instance;
 pub mod qoder_oauth;
 pub mod quota;
 pub mod quota_cache;
-pub mod sync_settings;
 pub mod status_window;
+pub mod sync_settings;
 #[cfg(test)]
 pub mod test_support;
 pub mod trae_account;

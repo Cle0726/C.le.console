@@ -309,10 +309,16 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 	reporter := helps.NewUsageReporter(ctx, e.Identifier(), baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 
+	action := geminiVertexExecutorAction(req)
+	rawLongRunning := action == "predictLongRunning"
+
 	var body []byte
 
-	// Handle Imagen models with special request format
-	if isImagenModel(baseModel) {
+	// Handle raw long-running media requests before the standard Gemini chat
+	// translation pipeline.
+	if rawLongRunning {
+		body = req.Payload
+	} else if isImagenModel(baseModel) {
 		imagenBody, errImagen := convertToImagenRequest(req.Payload)
 		if errImagen != nil {
 			return resp, errImagen
@@ -344,11 +350,8 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 		body = helps.StripVertexOpenAIResponsesToolCallIDs(body, from.String())
 	}
 
-	action := getVertexAction(baseModel, false)
-	if req.Metadata != nil {
-		if a, _ := req.Metadata["action"].(string); a == "countTokens" {
-			action = "countTokens"
-		}
+	if action == "" {
+		action = getVertexAction(baseModel, false)
 	}
 	baseURL := vertexBaseURL(location)
 	url := fmt.Sprintf("%s/%s/projects/%s/locations/%s/publishers/google/models/%s:%s", baseURL, vertexAPIVersion, projectID, location, baseModel, action)
@@ -420,6 +423,11 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
 	reporter.Publish(ctx, helps.ParseGeminiUsage(data))
 
+	if rawLongRunning {
+		resp = cliproxyexecutor.Response{Payload: data, Headers: httpResp.Header.Clone()}
+		return resp, nil
+	}
+
 	// For Imagen models, convert response to Gemini format before translation
 	// This ensures Imagen responses use the same format as gemini-3-pro-image-preview
 	if isImagenModel(baseModel) {
@@ -442,34 +450,37 @@ func (e *GeminiVertexExecutor) executeWithAPIKey(ctx context.Context, auth *clip
 	reporter := helps.NewUsageReporter(ctx, e.Identifier(), baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 
+	action := geminiVertexExecutorAction(req)
+	rawLongRunning := action == "predictLongRunning"
 	from := opts.SourceFormat
 	to := sdktranslator.FromString("gemini")
 
-	originalPayloadSource := req.Payload
-	if len(opts.OriginalRequest) > 0 {
-		originalPayloadSource = opts.OriginalRequest
-	}
-	originalPayload := originalPayloadSource
-	originalTranslated := sdktranslator.TranslateRequest(from, to, baseModel, originalPayload, false)
-	body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, false)
-
-	body, err = thinking.ApplyThinking(body, req.Model, from.String(), to.String(), e.Identifier())
-	if err != nil {
-		return resp, err
-	}
-
-	body = fixGeminiImageAspectRatio(baseModel, body)
-	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
-	requestPath := helps.PayloadRequestPath(opts)
-	body = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), from.String(), "", body, originalTranslated, requestedModel, requestPath, opts.Headers)
-	body, _ = sjson.SetBytes(body, "model", baseModel)
-	body = helps.StripVertexOpenAIResponsesToolCallIDs(body, from.String())
-
-	action := getVertexAction(baseModel, false)
-	if req.Metadata != nil {
-		if a, _ := req.Metadata["action"].(string); a == "countTokens" {
-			action = "countTokens"
+	var body []byte
+	if rawLongRunning {
+		body = req.Payload
+	} else {
+		originalPayloadSource := req.Payload
+		if len(opts.OriginalRequest) > 0 {
+			originalPayloadSource = opts.OriginalRequest
 		}
+		originalPayload := originalPayloadSource
+		originalTranslated := sdktranslator.TranslateRequest(from, to, baseModel, originalPayload, false)
+		body = sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, false)
+
+		body, err = thinking.ApplyThinking(body, req.Model, from.String(), to.String(), e.Identifier())
+		if err != nil {
+			return resp, err
+		}
+
+		body = fixGeminiImageAspectRatio(baseModel, body)
+		requestedModel := helps.PayloadRequestedModel(opts, req.Model)
+		requestPath := helps.PayloadRequestPath(opts)
+		body = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), from.String(), "", body, originalTranslated, requestedModel, requestPath, opts.Headers)
+		body, _ = sjson.SetBytes(body, "model", baseModel)
+		body = helps.StripVertexOpenAIResponsesToolCallIDs(body, from.String())
+	}
+	if action == "" {
+		action = getVertexAction(baseModel, false)
 	}
 
 	// For API key auth, use simpler URL format without project/location
@@ -541,10 +552,26 @@ func (e *GeminiVertexExecutor) executeWithAPIKey(ctx context.Context, auth *clip
 	}
 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
 	reporter.Publish(ctx, helps.ParseGeminiUsage(data))
+	if rawLongRunning {
+		resp = cliproxyexecutor.Response{Payload: data, Headers: httpResp.Header.Clone()}
+		return resp, nil
+	}
 	var param any
 	out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, opts.OriginalRequest, body, data, &param)
 	resp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
 	return resp, nil
+}
+
+func geminiVertexExecutorAction(req cliproxyexecutor.Request) string {
+	if req.Metadata != nil {
+		if action, _ := req.Metadata["action"].(string); action != "" {
+			switch action {
+			case "countTokens", "predictLongRunning":
+				return action
+			}
+		}
+	}
+	return ""
 }
 
 // executeStreamWithServiceAccount handles streaming authentication using service account credentials.

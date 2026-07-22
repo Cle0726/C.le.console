@@ -10,6 +10,7 @@ const targetExe = path.join(repoRoot, 'target', 'debug', 'cle_console.exe');
 const escapedTarget = targetExe.replace(/'/g, "''").toLowerCase();
 
 const script = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 $target = '${escapedTarget}'
 try {

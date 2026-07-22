@@ -1,4 +1,4 @@
-import { Settings, GaugeCircle, LayoutGrid, SlidersHorizontal, FileText, ChevronDown, PanelLeftClose, PanelLeftOpen, ShieldCheck } from 'lucide-react';
+import { Settings, GaugeCircle, LayoutGrid, SlidersHorizontal, FileText, ChevronDown, PanelLeftClose, PanelLeftOpen, ShieldCheck, Network } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   useState,
@@ -64,6 +64,7 @@ const PAGE_PLATFORM_MAP: Partial<Record<Page, PlatformId>> = {
   'codex-api-service': 'codex',
   claude: 'claude_manager',
   'claude-cli': 'claude_manager',
+  'claude-web-api': 'claude_manager',
   zed: 'zed',
   'github-copilot': 'github-copilot',
   windsurf: 'windsurf',
@@ -899,6 +900,18 @@ export function SideNav({
               <div className="spatial-nav-wing spatial-nav-wing-right">
                 {spatialRightEntries.map(renderSpatialEntry)}
                 <button
+                  className={`spatial-nav-item${page === 'multi-model-api-service' ? ' active' : ''}`}
+                  onClick={() => {
+                    closeSpatialNavigation(true);
+                    setPage('multi-model-api-service');
+                  }}
+                  title={t('nav.multiModelApiService', '多模型 API 代理')}
+                  aria-current={page === 'multi-model-api-service' ? 'page' : undefined}
+                >
+                  <Network size={18} />
+                  <span className="spatial-nav-tooltip">{t('nav.multiModelApiService', '多模型 API 代理')}</span>
+                </button>
+                <button
                   className={`spatial-nav-item${page === '2fa' ? ' active' : ''}`}
                   onClick={() => {
                     closeSpatialNavigation(true);
@@ -1083,6 +1096,19 @@ export function SideNav({
             </button>
           );
         })}
+
+        <button
+          className={`nav-item ${page === 'multi-model-api-service' ? 'active' : ''}`}
+          onClick={() => setPage('multi-model-api-service')}
+          title={t('nav.multiModelApiService', '多模型 API 代理')}
+        >
+          <Network size={isClassicLayout ? classicMainIconSize : 20} />
+          {showClassicLabels ? (
+            <span className="nav-item-text">{t('nav.multiModelApiService', '多模型 API 代理')}</span>
+          ) : !isClassicLayout ? (
+            <span className="tooltip">{t('nav.multiModelApiService', '多模型 API 代理')}</span>
+          ) : null}
+        </button>
 
         <button
           ref={moreButtonRef}

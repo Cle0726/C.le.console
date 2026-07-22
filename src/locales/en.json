@@ -277,6 +277,7 @@
     "gemini": "Gemini Cli",
     "dashboard": "Dashboard",
     "morePlatforms": "More Platforms",
+    "multiModelApiService": "Multi-model API Proxy",
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
     "logs": "Logs",

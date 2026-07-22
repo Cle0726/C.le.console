@@ -31,6 +31,7 @@ import (
 	responsesconverter "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/openai/openai/responses"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher/synthesizer"
+	sdkhandlers "github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	sdkopenai "github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/openai"
 	sdkauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
@@ -59,6 +60,10 @@ const defaultImagesMainModel = "gpt-5.4-mini"
 const defaultImagesToolModel = "gpt-image-2"
 const imagesGenerationsPath = "/v1/images/generations"
 const imagesEditsPath = "/v1/images/edits"
+const videosCreatePath = "/v1/videos"
+const videosGenerationsPath = "/v1/videos/generations"
+const videosEditsPath = "/v1/videos/edits"
+const videosExtensionsPath = "/v1/videos/extensions"
 const anthropicMessagesPath = "/v1/messages"
 const anthropicCountTokensPath = "/v1/messages/count_tokens"
 const geminiModelsPath = "/v1beta/models"
@@ -78,14 +83,16 @@ var (
 )
 
 type manifest struct {
-	APIKeys            []apiKeySpec        `json:"apiKeys"`
-	Accounts           []accountSpec       `json:"accounts"`
-	ModelIDs           []string            `json:"modelIds"`
-	ModelAliases       []modelAliasSpec    `json:"modelAliases"`
-	ExcludedModels     []string            `json:"excludedModels"`
-	RoutingStrategy    string              `json:"routingStrategy"`
-	CustomRoutingRules []customRoutingRule `json:"customRoutingRules"`
-	DebugLogs          *bool               `json:"debugLogs,omitempty"`
+	APIKeys             []apiKeySpec        `json:"apiKeys"`
+	Accounts            []accountSpec       `json:"accounts"`
+	ModelIDs            []string            `json:"modelIds"`
+	ModelAliases        []modelAliasSpec    `json:"modelAliases"`
+	ExcludedModels      []string            `json:"excludedModels"`
+	RoutingStrategy     string              `json:"routingStrategy"`
+	CustomRoutingRules  []customRoutingRule `json:"customRoutingRules"`
+	DebugLogs           *bool               `json:"debugLogs,omitempty"`
+	Providers           []string            `json:"providers,omitempty"`
+	NativeModelRegistry bool                `json:"nativeModelRegistry,omitempty"`
 
 	apiKeyByValue     map[string]*apiKeySpec
 	accountByID       map[string]*accountSpec
@@ -103,6 +110,7 @@ type apiKeySpec struct {
 	ModelPrefix     string               `json:"modelPrefix,omitempty"`
 	AllowedModels   []string             `json:"allowedModels"`
 	ExcludedModels  []string             `json:"excludedModels"`
+	AccountIDs      []string             `json:"accountIds,omitempty"`
 	Enabled         bool                 `json:"enabled"`
 }
 
@@ -122,13 +130,15 @@ type providerGatewayModelCapability struct {
 }
 
 type accountSpec struct {
-	ID                   string `json:"id"`
-	Email                string `json:"email"`
-	AuthID               string `json:"authId,omitempty"`
-	UpstreamAPIKey       string `json:"upstreamApiKey,omitempty"`
-	PlanRank             *int   `json:"planRank,omitempty"`
-	RemainingQuota       *int   `json:"remainingQuota,omitempty"`
-	SubscriptionExpiryMS *int64 `json:"subscriptionExpiryMs,omitempty"`
+	ID                   string   `json:"id"`
+	Email                string   `json:"email"`
+	AuthID               string   `json:"authId,omitempty"`
+	UpstreamAPIKey       string   `json:"upstreamApiKey,omitempty"`
+	Provider             string   `json:"provider,omitempty"`
+	Models               []string `json:"models,omitempty"`
+	PlanRank             *int     `json:"planRank,omitempty"`
+	RemainingQuota       *int     `json:"remainingQuota,omitempty"`
+	SubscriptionExpiryMS *int64   `json:"subscriptionExpiryMs,omitempty"`
 }
 
 type modelAliasSpec struct {
@@ -436,6 +446,7 @@ func loadManifest(path string) (*manifest, error) {
 	}
 	m.ModelIDs = normalizeStringList(m.ModelIDs)
 	m.ExcludedModels = normalizeStringList(m.ExcludedModels)
+	m.Providers = normalizeStringList(m.Providers)
 	return &m, nil
 }
 
@@ -1026,6 +1037,9 @@ func visibleModelsForAPIKey(m *manifest, spec *apiKeySpec) []string {
 }
 
 func clientCatalogModelsForAPIKey(m *manifest, spec *apiKeySpec) []string {
+	if m != nil && m.NativeModelRegistry {
+		return visibleModelsForAPIKey(m, spec)
+	}
 	return appendCodexInternalModels(visibleModelsForAPIKey(m, spec))
 }
 
@@ -1353,6 +1367,12 @@ func requestKindFromPath(path string) string {
 		return "image_generation"
 	case strings.Contains(path, "/images/edits"):
 		return "image_edit"
+	case strings.Contains(path, "/videos/edits"):
+		return "video_edit"
+	case strings.Contains(path, "/videos/extensions"):
+		return "video_extension"
+	case strings.Contains(path, "/videos"):
+		return "video_generation"
 	case strings.Contains(path, "/chat/completions"),
 		strings.Contains(path, "/responses"),
 		strings.Contains(path, "/v1/messages"),
@@ -1372,18 +1392,26 @@ type cleSelector struct {
 }
 
 func (s *cleSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*coreauth.Auth) (*coreauth.Auth, error) {
-	_ = ctx
 	_ = provider
 	_ = opts
+	var allowedAccounts map[string]struct{}
+	if spec, _ := ctx.Value(clientAPIKeyContextKey).(*apiKeySpec); spec != nil && len(spec.AccountIDs) > 0 {
+		allowedAccounts = make(map[string]struct{}, len(spec.AccountIDs))
+		for _, id := range spec.AccountIDs {
+			if id = strings.ToLower(strings.TrimSpace(id)); id != "" {
+				allowedAccounts[id] = struct{}{}
+			}
+		}
+	}
 	now := time.Now()
 	available := make([]*coreauth.Auth, 0, len(auths))
 	for _, auth := range auths {
-		if authAvailable(auth, model, now) {
+		if authAvailable(auth, model, now) && s.authAllowedForAccounts(auth, allowedAccounts) {
 			available = append(available, auth)
 		}
 	}
 	if len(available) == 0 {
-		return nil, fmt.Errorf("no auth available")
+		return nil, fmt.Errorf("no auth available (candidates=%d, scoped_accounts=%d)", len(auths), len(allowedAccounts))
 	}
 
 	s.mu.Lock()
@@ -1398,6 +1426,28 @@ func (s *cleSelector) Pick(ctx context.Context, provider, model string, opts cli
 	selected := ordered[0]
 	s.emitAuthSelected(ctx, selected, provider, model, len(auths), len(available))
 	return selected, nil
+}
+
+func (s *cleSelector) authAllowedForAccounts(auth *coreauth.Auth, allowed map[string]struct{}) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	if auth == nil {
+		return false
+	}
+	if _, ok := allowed[strings.ToLower(strings.TrimSpace(auth.ID))]; ok {
+		return true
+	}
+	account := s.accountForAuth(auth)
+	if account == nil {
+		return false
+	}
+	for _, candidate := range []string{account.ID, account.AuthID} {
+		if _, ok := allowed[strings.ToLower(strings.TrimSpace(candidate))]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func authAvailable(auth *coreauth.Auth, model string, now time.Time) bool {
@@ -1625,11 +1675,7 @@ func (s *cleSelector) accountForAuth(auth *coreauth.Auth) *accountSpec {
 		return nil
 	}
 	if auth.ID != "" {
-		if account := s.manifest.accountByAuthID[strings.ToLower(auth.ID)]; account != nil {
-			return account
-		}
-		base := strings.TrimSuffix(filepath.Base(auth.ID), filepath.Ext(auth.ID))
-		if account := s.manifest.accountByID[base]; account != nil {
+		if account := manifestAccountByAuthID(s.manifest, auth.ID); account != nil {
 			return account
 		}
 	}
@@ -1755,11 +1801,7 @@ func (p *usagePlugin) accountForRecord(record coreusage.Record) *accountSpec {
 		return nil
 	}
 	if record.AuthID != "" {
-		if account := p.manifest.accountByAuthID[strings.ToLower(record.AuthID)]; account != nil {
-			return account
-		}
-		base := strings.TrimSuffix(filepath.Base(record.AuthID), filepath.Ext(record.AuthID))
-		if account := p.manifest.accountByID[base]; account != nil {
+		if account := manifestAccountByAuthID(p.manifest, record.AuthID); account != nil {
 			return account
 		}
 	}
@@ -1914,11 +1956,7 @@ func (h *authHook) accountForAuthID(authID string) *accountSpec {
 	if authID == "" {
 		return nil
 	}
-	if account := h.manifest.accountByAuthID[strings.ToLower(authID)]; account != nil {
-		return account
-	}
-	base := strings.TrimSuffix(filepath.Base(authID), filepath.Ext(authID))
-	return h.manifest.accountByID[base]
+	return manifestAccountByAuthID(h.manifest, authID)
 }
 
 func (h *authHook) emit(eventType string, auth *coreauth.Auth) {
@@ -2022,12 +2060,12 @@ func newSidecarRuntime(ctx context.Context, configPath string, cfg *config.Confi
 		return nil, fmt.Errorf("runtime startup timeout")
 	}
 
-	if err := registerConfigCodexAPIKeyAuths(runtimeCtx, service, cfg, m); err != nil {
+	if err := registerConfigAPIKeyAuths(runtimeCtx, service, manager, cfg, m); err != nil {
 		cancel()
 		return nil, err
 	}
 	for _, auth := range manager.List() {
-		if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
+		if auth == nil {
 			continue
 		}
 		linkManifestAccountForAuth(m, auth)
@@ -2038,7 +2076,7 @@ func newSidecarRuntime(ctx context.Context, configPath string, cfg *config.Confi
 	return &sidecarRuntime{manager: manager, service: service, cancel: cancel, done: done}, nil
 }
 
-func registerConfigCodexAPIKeyAuths(ctx context.Context, service *cliproxy.Service, cfg *config.Config, m *manifest) error {
+func registerConfigAPIKeyAuths(ctx context.Context, service *cliproxy.Service, manager *coreauth.Manager, cfg *config.Config, m *manifest) error {
 	if service == nil || cfg == nil {
 		return nil
 	}
@@ -2052,7 +2090,7 @@ func registerConfigCodexAPIKeyAuths(ctx context.Context, service *cliproxy.Servi
 		return fmt.Errorf("synthesize config auths: %w", err)
 	}
 	for _, auth := range auths {
-		if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
+		if auth == nil || (!m.NativeModelRegistry && !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex")) {
 			continue
 		}
 		if auth.Attributes == nil || strings.TrimSpace(auth.Attributes["api_key"]) == "" {
@@ -2060,9 +2098,10 @@ func registerConfigCodexAPIKeyAuths(ctx context.Context, service *cliproxy.Servi
 		}
 		registered, err := service.UpsertRuntimeAuth(coreauth.WithSkipPersist(ctx), auth)
 		if err != nil {
-			return fmt.Errorf("register codex api key auth %s: %w", auth.ID, err)
+			return fmt.Errorf("register api key auth %s: %w", auth.ID, err)
 		}
 		linkManifestAccountForAuth(m, registered)
+		registerManifestModelsForAuth(manager, m, registered)
 	}
 	return nil
 }
@@ -2134,19 +2173,102 @@ func linkManifestAccountForAuth(m *manifest, auth *coreauth.Auth) {
 	}
 }
 
+func manifestAccountForAuth(m *manifest, auth *coreauth.Auth) *accountSpec {
+	if m == nil || auth == nil {
+		return nil
+	}
+	if auth.ID != "" {
+		if account := manifestAccountByAuthID(m, auth.ID); account != nil {
+			return account
+		}
+	}
+	if auth.Attributes != nil {
+		if key := strings.TrimSpace(auth.Attributes["api_key"]); key != "" {
+			return m.accountByAPIKey[key]
+		}
+	}
+	return nil
+}
+
+func manifestAccountByAuthID(m *manifest, authID string) *accountSpec {
+	if m == nil {
+		return nil
+	}
+	normalized := strings.ToLower(strings.TrimSpace(authID))
+	if normalized == "" {
+		return nil
+	}
+	if account := m.accountByAuthID[normalized]; account != nil {
+		return account
+	}
+	// Gemini CLI can fan one file credential out into runtime-only project
+	// credentials named "<auth-file>::<project>". They still belong to the
+	// manifest account that owns the parent auth file.
+	if index := strings.Index(normalized, "::"); index > 0 {
+		if account := m.accountByAuthID[normalized[:index]]; account != nil {
+			return account
+		}
+		normalized = normalized[:index]
+	}
+	base := strings.TrimSuffix(filepath.Base(normalized), filepath.Ext(normalized))
+	return m.accountByID[base]
+}
+
 func registerManifestModelsForAuth(manager *coreauth.Manager, m *manifest, auth *coreauth.Auth) {
 	if manager == nil || m == nil || auth == nil || strings.TrimSpace(auth.ID) == "" {
 		return
 	}
-	models := manifestRegistryModels(m)
+	account := manifestAccountForAuth(m, auth)
+	provider := strings.TrimSpace(auth.Provider)
+	models := manifestRegistryModelsForAccount(m, account, provider)
 	if len(models) == 0 {
-		cliproxy.GlobalModelRegistry().UnregisterClient(auth.ID)
-		manager.RefreshSchedulerEntry(auth.ID)
+		// Keep the native registry result when the account was not generated by
+		// the C.le manifest.  Unregistering here would erase provider discovery.
 		return
 	}
-	cliproxy.GlobalModelRegistry().RegisterClient(auth.ID, "codex", models)
+	if account != nil && strings.TrimSpace(account.Provider) != "" {
+		provider = strings.TrimSpace(account.Provider)
+	}
+	if provider == "" {
+		return
+	}
+	cliproxy.GlobalModelRegistry().RegisterClient(auth.ID, provider, models)
 	manager.ReconcileRegistryModelStates(context.Background(), auth.ID)
 	manager.RefreshSchedulerEntry(auth.ID)
+}
+
+func manifestRegistryModelsForAccount(m *manifest, account *accountSpec, provider string) []*cliproxy.ModelInfo {
+	if account == nil || len(account.Models) == 0 {
+		if m != nil && !m.NativeModelRegistry && strings.EqualFold(strings.TrimSpace(provider), "codex") {
+			return manifestRegistryModels(m)
+		}
+		return nil
+	}
+	seen := make(map[string]struct{}, len(account.Models))
+	models := make([]*cliproxy.ModelInfo, 0, len(account.Models))
+	now := time.Now().Unix()
+	for _, id := range account.Models {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		key := strings.ToLower(id)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		models = append(models, manifestRegistryModelInfoForProvider(id, provider, now))
+	}
+	return models
+}
+
+func manifestRegistryModelInfoForProvider(id string, provider string, created int64) *cliproxy.ModelInfo {
+	info := manifestRegistryModelInfo(id, "", created)
+	if normalized := strings.TrimSpace(provider); normalized != "" {
+		info.Type = normalized
+		info.OwnedBy = normalized
+	}
+	return info
 }
 
 func manifestRegistryModels(m *manifest) []*cliproxy.ModelInfo {
@@ -2261,6 +2383,111 @@ type relayServer struct {
 	manifest *manifest
 	emitter  *eventEmitter
 	policy   *requestPolicy
+	openAI   *sdkopenai.OpenAIAPIHandler
+}
+
+func (s *relayServer) providersForModel(ctx context.Context, model string) []string {
+	if s == nil || s.manifest == nil || !s.manifest.NativeModelRegistry {
+		return []string{"codex"}
+	}
+	configured := normalizeStringList(s.manifest.Providers)
+	if spec, _ := ctx.Value(clientAPIKeyContextKey).(*apiKeySpec); spec != nil && len(spec.AccountIDs) > 0 {
+		allowed := make(map[string]struct{}, len(spec.AccountIDs))
+		for _, id := range spec.AccountIDs {
+			if id = strings.ToLower(strings.TrimSpace(id)); id != "" {
+				allowed[id] = struct{}{}
+			}
+		}
+		providers := make([]string, 0, len(spec.AccountIDs))
+		for i := range s.manifest.Accounts {
+			account := &s.manifest.Accounts[i]
+			_, idAllowed := allowed[strings.ToLower(strings.TrimSpace(account.ID))]
+			_, authAllowed := allowed[strings.ToLower(strings.TrimSpace(account.AuthID))]
+			if idAllowed || authAllowed {
+				providers = append(providers, account.Provider)
+			}
+		}
+		if providers = normalizeStringList(providers); len(providers) > 0 {
+			return providers
+		}
+	}
+	available := internalregistry.GetGlobalRegistry().GetModelProviders(strings.TrimSpace(model))
+	if len(configured) == 0 {
+		if len(available) > 0 {
+			return available
+		}
+		return []string{"codex", "claude", "gemini", "gemini-cli", "xai", "openai-compatibility"}
+	}
+	if len(available) == 0 {
+		return configured
+	}
+	allowed := make(map[string]struct{}, len(configured))
+	for _, provider := range configured {
+		allowed[strings.ToLower(provider)] = struct{}{}
+	}
+	providers := make([]string, 0, len(available))
+	for _, provider := range available {
+		if _, ok := allowed[strings.ToLower(provider)]; ok {
+			providers = append(providers, provider)
+		}
+	}
+	if len(providers) > 0 {
+		return providers
+	}
+	return configured
+}
+
+// claudeWebGatewayForModel exposes the loopback Claude Web helper as a
+// chat-completions provider gateway.  Routing Anthropic-format requests through
+// the generic openai-compat executor can select a cooled auth entry and can also
+// apply the global proxy to 127.0.0.1.  The provider-gateway bridge already has
+// the exact Claude <-> OpenAI request, response and stream translations needed
+// here, while keeping the loopback hop direct.
+func (s *relayServer) claudeWebGatewayForModel(model string) *providerGatewaySpec {
+	if s == nil || s.manifest == nil || s.cfg == nil {
+		return nil
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	allowed := false
+	for i := range s.manifest.Accounts {
+		account := &s.manifest.Accounts[i]
+		if !strings.EqualFold(strings.TrimSpace(account.Provider), "claude-web") {
+			continue
+		}
+		if stringSliceContainsFold(account.Models, model) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return nil
+	}
+	for i := range s.cfg.OpenAICompatibility {
+		entry := &s.cfg.OpenAICompatibility[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Name), "claude-web") || entry.Disabled {
+			continue
+		}
+		baseURL := strings.TrimSpace(entry.BaseURL)
+		if baseURL == "" || len(entry.APIKeyEntries) == 0 {
+			return nil
+		}
+		apiKey := strings.TrimSpace(entry.APIKeyEntries[0].APIKey)
+		if apiKey == "" {
+			return nil
+		}
+		return &providerGatewaySpec{
+			BaseURL:        baseURL,
+			APIKey:         apiKey,
+			UpstreamModel:  model,
+			UpstreamModels: []string{model},
+			WireAPI:        "chat_completions",
+			SupportsVision: true,
+		}
+	}
+	return nil
 }
 
 func (s *relayServer) router() *gin.Engine {
@@ -2279,6 +2506,11 @@ func (s *relayServer) router() *gin.Engine {
 	router.POST(geminiModelsPath+"/*action", s.handleGeminiAction)
 	router.POST(imagesGenerationsPath, s.handleImagesGenerations)
 	router.POST(imagesEditsPath, s.handleImagesEdits)
+	router.POST(videosCreatePath, s.handleVideosCreate)
+	router.POST(videosGenerationsPath, s.handleVideosGenerations)
+	router.POST(videosEditsPath, s.handleVideosEdits)
+	router.POST(videosExtensionsPath, s.handleVideosExtensions)
+	router.GET(videosCreatePath+"/:video_id", s.handleVideosRetrieve)
 	router.GET(ollamaVersionPath, s.handleOllamaVersion)
 	router.GET(ollamaTagsPath, s.handleOllamaTags)
 	router.POST(ollamaShowPath, s.handleOllamaShow)
@@ -2400,12 +2632,21 @@ func (s *relayServer) handleGeminiAction(c *gin.Context) {
 }
 
 func (s *relayServer) handleImagesGenerations(c *gin.Context) {
-	if _, ok := s.requireAPIKey(c); !ok {
+	spec, ok := s.requireAPIKey(c)
+	if !ok {
 		return
 	}
-	rawJSON, err := c.GetRawData()
+	rawJSON, err := readAndRestoreBody(c.Request)
 	if err != nil {
 		writeAPIError(c, http.StatusBadRequest, "failed to read request body", "invalid_request")
+		return
+	}
+	if isNativeGeminiImageModel(requestBodyModel(rawJSON)) {
+		s.handleNativeGeminiImageGeneration(c, spec, rawJSON)
+		return
+	}
+	if s.manifest != nil && s.manifest.NativeModelRegistry && s.openAI != nil {
+		s.openAI.ImagesGenerations(c)
 		return
 	}
 	imageReq, err := buildImageGenerationRelayRequest(rawJSON)
@@ -2417,7 +2658,37 @@ func (s *relayServer) handleImagesGenerations(c *gin.Context) {
 }
 
 func (s *relayServer) handleImagesEdits(c *gin.Context) {
-	if _, ok := s.requireAPIKey(c); !ok {
+	spec, ok := s.requireAPIKey(c)
+	if !ok {
+		return
+	}
+	contentType := strings.ToLower(strings.TrimSpace(c.GetHeader("Content-Type")))
+	if strings.HasPrefix(contentType, "application/json") {
+		rawJSON, err := readAndRestoreBody(c.Request)
+		if err != nil {
+			writeAPIError(c, http.StatusBadRequest, "failed to read request body", "invalid_request")
+			return
+		}
+		if isNativeGeminiImageModel(requestBodyModel(rawJSON)) {
+			s.handleNativeGeminiImageEditJSON(c, spec, rawJSON)
+			return
+		}
+	} else if strings.HasPrefix(contentType, "multipart/form-data") || contentType == "" {
+		body, err := readAndRestoreBody(c.Request)
+		if err != nil {
+			writeAPIError(c, http.StatusBadRequest, "failed to read request body", "invalid_request")
+			return
+		}
+		modelName := strings.TrimSpace(c.PostForm("model"))
+		c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+		if isNativeGeminiImageModel(modelName) {
+			s.handleNativeGeminiImageEditMultipart(c, spec)
+			return
+		}
+	}
+	if s.manifest != nil && s.manifest.NativeModelRegistry && s.openAI != nil {
+		s.openAI.ImagesEdits(c)
 		return
 	}
 	imageReq, err := buildImageEditRelayRequest(c)
@@ -2426,6 +2697,631 @@ func (s *relayServer) handleImagesEdits(c *gin.Context) {
 		return
 	}
 	s.handleImagesRelayRequest(c, imageReq)
+}
+
+// Native Gemini image models are exposed by Antigravity/Gemini as multimodal
+// chat models rather than OpenAI's /images endpoints. Bridge the OpenAI Images
+// contract to the already registered OpenAI chat translator so callers can use
+// one downstream key and one media route for every account pool.
+func isNativeGeminiImageModel(model string) bool {
+	base := modelBase(model)
+	return strings.HasPrefix(base, "gemini-") && (strings.Contains(base, "-image") || strings.Contains(base, "imagen"))
+}
+
+func isNativeGeminiVideoModel(model string) bool {
+	base := modelBase(model)
+	return strings.HasPrefix(base, "veo-") || strings.Contains(base, "-veo-") || strings.HasPrefix(base, "gemini-omni")
+}
+
+func (s *relayServer) handleNativeGeminiImageGeneration(c *gin.Context, spec *apiKeySpec, rawJSON []byte) {
+	var payload map[string]any
+	if err := json.Unmarshal(rawJSON, &payload); err != nil || payload == nil {
+		writeAPIError(c, http.StatusBadRequest, "body must be a valid JSON object", "invalid_request")
+		return
+	}
+	prompt := strings.TrimSpace(stringField(payload, "prompt"))
+	if prompt == "" {
+		writeAPIError(c, http.StatusBadRequest, "prompt is required", "invalid_request")
+		return
+	}
+	s.handleNativeGeminiImage(c, spec, payload, prompt, nil)
+}
+
+func (s *relayServer) handleNativeGeminiImageEditJSON(c *gin.Context, spec *apiKeySpec, rawJSON []byte) {
+	var payload map[string]any
+	if err := json.Unmarshal(rawJSON, &payload); err != nil || payload == nil {
+		writeAPIError(c, http.StatusBadRequest, "body must be a valid JSON object", "invalid_request")
+		return
+	}
+	prompt := strings.TrimSpace(stringField(payload, "prompt"))
+	if prompt == "" {
+		writeAPIError(c, http.StatusBadRequest, "prompt is required", "invalid_request")
+		return
+	}
+	images := jsonImageURLs(payload)
+	if len(images) == 0 {
+		writeAPIError(c, http.StatusBadRequest, "image is required", "invalid_request")
+		return
+	}
+	s.handleNativeGeminiImage(c, spec, payload, prompt, images)
+}
+
+func (s *relayServer) handleNativeGeminiImageEditMultipart(c *gin.Context, spec *apiKeySpec) {
+	form, err := c.MultipartForm()
+	if err != nil {
+		writeAPIError(c, http.StatusBadRequest, err.Error(), "invalid_request")
+		return
+	}
+	prompt := strings.TrimSpace(c.PostForm("prompt"))
+	if prompt == "" {
+		writeAPIError(c, http.StatusBadRequest, "prompt is required", "invalid_request")
+		return
+	}
+	imageFiles := form.File["image[]"]
+	if len(imageFiles) == 0 {
+		imageFiles = form.File["image"]
+	}
+	if len(imageFiles) == 0 {
+		writeAPIError(c, http.StatusBadRequest, "image is required", "invalid_request")
+		return
+	}
+	images := make([]string, 0, len(imageFiles))
+	for _, file := range imageFiles {
+		dataURL, readErr := multipartFileToDataURL(file)
+		if readErr != nil {
+			writeAPIError(c, http.StatusBadRequest, readErr.Error(), "invalid_request")
+			return
+		}
+		images = append(images, dataURL)
+	}
+	payload := map[string]any{
+		"model":           strings.TrimSpace(c.PostForm("model")),
+		"response_format": strings.TrimSpace(c.PostForm("response_format")),
+		"size":            strings.TrimSpace(c.PostForm("size")),
+		"aspect_ratio":    strings.TrimSpace(c.PostForm("aspect_ratio")),
+		"resolution":      strings.TrimSpace(c.PostForm("resolution")),
+		"stream":          parseBoolString(c.PostForm("stream")),
+		"n":               parseIntString(c.PostForm("n")),
+	}
+	s.handleNativeGeminiImage(c, spec, payload, prompt, images)
+}
+
+func (s *relayServer) handleNativeGeminiImage(c *gin.Context, spec *apiKeySpec, source map[string]any, prompt string, images []string) {
+	validatedSource, err := json.Marshal(source)
+	if err != nil {
+		writeAPIError(c, http.StatusBadRequest, err.Error(), "invalid_request")
+		return
+	}
+	validatedSource, model, ok := s.bodyWithValidatedModel(c, spec, validatedSource, "", nil)
+	if !ok {
+		return
+	}
+	if !isNativeGeminiImageModel(model) {
+		writeAPIError(c, http.StatusBadRequest, fmt.Sprintf("model %s is not a native Gemini image model", model), "invalid_request")
+		return
+	}
+	_ = json.Unmarshal(validatedSource, &source)
+
+	content := make([]any, 0, len(images)+1)
+	content = append(content, map[string]any{"type": "text", "text": prompt})
+	for _, image := range images {
+		if image = strings.TrimSpace(image); image != "" {
+			content = append(content, map[string]any{
+				"type":      "image_url",
+				"image_url": map[string]any{"url": image},
+			})
+		}
+	}
+	chatBody := map[string]any{
+		"model":      model,
+		"messages":   []any{map[string]any{"role": "user", "content": content}},
+		"modalities": []string{"image", "text"},
+		"stream":     false,
+	}
+	if n, exists := numericField(source["n"]); exists && n > 0 {
+		chatBody["n"] = n
+	}
+	if generationConfig, exists := source["generationConfig"]; exists {
+		chatBody["generationConfig"] = generationConfig
+	}
+	if imageConfig := nativeGeminiImageConfig(source); len(imageConfig) > 0 {
+		chatBody["image_config"] = imageConfig
+	}
+	chatJSON, err := json.Marshal(chatBody)
+	if err != nil {
+		writeAPIError(c, http.StatusBadRequest, err.Error(), "invalid_request")
+		return
+	}
+
+	req, opts := buildExecutorRequest(c, chatJSON, model, sdktranslator.FormatOpenAI, "", false)
+	startedAt := time.Now()
+	s.emitExecutorDiagnostic(c, "executor_started", model, "native_image_execute", startedAt, "")
+	stopWaitLogger := s.startExecutorWaitLogger(c, model, "native_image_execute", startedAt)
+	resp, err := s.runtime.Execute(relayContext(c), s.providersForModel(relayContext(c), model), req, opts)
+	stopWaitLogger()
+	if err != nil {
+		s.emitExecutorDiagnostic(c, "executor_failed", model, "native_image_execute", startedAt, err.Error())
+		s.writeExecutorError(c, err)
+		return
+	}
+	out, err := buildImagesAPIResponseFromNativeChat(resp.Payload, normalizeImageResponseFormat(stringField(source, "response_format")))
+	if err != nil {
+		s.emitExecutorDiagnostic(c, "executor_failed", model, "native_image_convert", startedAt, err.Error())
+		s.writeExecutorError(c, relayStatusError{status: http.StatusBadGateway, message: err.Error()})
+		return
+	}
+	s.emitExecutorDiagnostic(c, "executor_completed", model, "native_image_execute", startedAt, "")
+	writeUpstreamHeaders(c.Writer.Header(), resp.Headers)
+	if boolField(source, "stream") {
+		writeNativeImageCompletedEvent(c, out, requestKindFromPath(requestPath(c.Request)))
+		return
+	}
+	c.Data(http.StatusOK, "application/json", out)
+}
+
+func nativeGeminiImageConfig(source map[string]any) map[string]any {
+	config := map[string]any{}
+	if existing, ok := source["image_config"].(map[string]any); ok {
+		for key, value := range existing {
+			config[key] = value
+		}
+	}
+	aspectRatio := strings.TrimSpace(stringField(source, "aspect_ratio"))
+	size := strings.ToLower(strings.TrimSpace(stringField(source, "size")))
+	if aspectRatio == "" {
+		switch size {
+		case "1024x1024", "2048x2048", "1:1":
+			aspectRatio = "1:1"
+		case "1792x1024", "16:9":
+			aspectRatio = "16:9"
+		case "1024x1792", "9:16":
+			aspectRatio = "9:16"
+		case "1536x1024", "3:2":
+			aspectRatio = "3:2"
+		case "1024x1536", "2:3":
+			aspectRatio = "2:3"
+		}
+	}
+	if aspectRatio != "" {
+		config["aspect_ratio"] = aspectRatio
+	}
+	imageSize := strings.ToUpper(strings.TrimSpace(stringField(source, "resolution")))
+	if imageSize == "" {
+		if strings.Contains(size, "2048") {
+			imageSize = "2K"
+		} else if size != "" {
+			imageSize = "1K"
+		}
+	}
+	if imageSize != "" {
+		config["image_size"] = imageSize
+	}
+	return config
+}
+
+func buildImagesAPIResponseFromNativeChat(payload []byte, responseFormat string) ([]byte, error) {
+	var response map[string]any
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return nil, fmt.Errorf("upstream returned invalid image response JSON")
+	}
+	data := make([]any, 0)
+	choices, _ := response["choices"].([]any)
+	for _, rawChoice := range choices {
+		choice, _ := rawChoice.(map[string]any)
+		message, _ := choice["message"].(map[string]any)
+		revisedPrompt := strings.TrimSpace(stringField(message, "content"))
+		images, _ := message["images"].([]any)
+		for _, rawImage := range images {
+			image, _ := rawImage.(map[string]any)
+			imageURL := strings.TrimSpace(stringField(image, "url"))
+			if nested, ok := image["image_url"].(map[string]any); ok {
+				if url := strings.TrimSpace(stringField(nested, "url")); url != "" {
+					imageURL = url
+				}
+			}
+			if imageURL == "" {
+				continue
+			}
+			item := map[string]any{}
+			if responseFormat == "url" {
+				item["url"] = imageURL
+			} else if encoded, ok := base64FromDataURL(imageURL); ok {
+				item["b64_json"] = encoded
+			} else {
+				item["url"] = imageURL
+			}
+			if revisedPrompt != "" {
+				item["revised_prompt"] = revisedPrompt
+			}
+			data = append(data, item)
+		}
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("upstream did not return image output")
+	}
+	out := map[string]any{"created": time.Now().Unix(), "data": data}
+	if usage, ok := response["usage"].(map[string]any); ok && len(usage) > 0 {
+		out["usage"] = usage
+	}
+	return json.Marshal(out)
+}
+
+func base64FromDataURL(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(strings.ToLower(value), "data:") {
+		return "", false
+	}
+	comma := strings.Index(value, ",")
+	if comma <= 0 || !strings.Contains(strings.ToLower(value[:comma]), ";base64") {
+		return "", false
+	}
+	encoded := strings.TrimSpace(value[comma+1:])
+	return encoded, encoded != ""
+}
+
+func writeNativeImageCompletedEvent(c *gin.Context, payload []byte, requestKind string) {
+	eventName := "image_generation.completed"
+	if requestKind == "image_edit" {
+		eventName = "image_edit.completed"
+	}
+	setEventStreamHeaders(c.Writer.Header())
+	c.Status(http.StatusOK)
+	_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventName, payload)
+	_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
+	if flusher, ok := c.Writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+type geminiVideoCreateMetadata struct {
+	Model     string
+	Prompt    string
+	Seconds   string
+	Size      string
+	CreatedAt int64
+}
+
+func (s *relayServer) handleNativeGeminiVideoGeneration(c *gin.Context, spec *apiKeySpec, rawJSON []byte) {
+	var payload map[string]any
+	if err := json.Unmarshal(rawJSON, &payload); err != nil || payload == nil {
+		writeAPIError(c, http.StatusBadRequest, "body must be a valid JSON object", "invalid_request")
+		return
+	}
+	prompt := strings.TrimSpace(stringField(payload, "prompt"))
+	if prompt == "" {
+		writeAPIError(c, http.StatusBadRequest, "prompt is required", "invalid_request")
+		return
+	}
+	validatedSource, err := json.Marshal(payload)
+	if err != nil {
+		writeAPIError(c, http.StatusBadRequest, err.Error(), "invalid_request")
+		return
+	}
+	validatedSource, model, ok := s.bodyWithValidatedModel(c, spec, validatedSource, "", nil)
+	if !ok {
+		return
+	}
+	if !isNativeGeminiVideoModel(model) {
+		writeAPIError(c, http.StatusBadRequest, fmt.Sprintf("model %s is not a native Gemini/Veo video model", model), "invalid_request")
+		return
+	}
+	_ = json.Unmarshal(validatedSource, &payload)
+	geminiReq, meta, err := buildGeminiVideosPredictRequest(payload, model)
+	if err != nil {
+		writeAPIError(c, http.StatusBadRequest, err.Error(), "invalid_request")
+		return
+	}
+
+	req, opts := buildExecutorRequest(c, geminiReq, model, sdktranslator.FormatGemini, "", false)
+	req.Metadata["action"] = "predictLongRunning"
+	startedAt := time.Now()
+	s.emitExecutorDiagnostic(c, "executor_started", model, "native_video_execute", startedAt, "")
+	stopWaitLogger := s.startExecutorWaitLogger(c, model, "native_video_execute", startedAt)
+	resp, err := s.runtime.Execute(relayContext(c), s.providersForModel(relayContext(c), model), req, opts)
+	stopWaitLogger()
+	if err != nil {
+		s.emitExecutorDiagnostic(c, "executor_failed", model, "native_video_execute", startedAt, err.Error())
+		s.writeExecutorError(c, err)
+		return
+	}
+	out, err := buildVideosAPIResponseFromGeminiOperation(resp.Payload, meta)
+	if err != nil {
+		s.emitExecutorDiagnostic(c, "executor_failed", model, "native_video_convert", startedAt, err.Error())
+		s.writeExecutorError(c, relayStatusError{status: http.StatusBadGateway, message: err.Error()})
+		return
+	}
+	s.emitExecutorDiagnostic(c, "executor_completed", model, "native_video_execute", startedAt, "")
+	writeUpstreamHeaders(c.Writer.Header(), resp.Headers)
+	c.Data(http.StatusOK, "application/json", out)
+}
+
+func buildGeminiVideosPredictRequest(source map[string]any, model string) ([]byte, geminiVideoCreateMetadata, error) {
+	prompt := strings.TrimSpace(stringField(source, "prompt"))
+	if prompt == "" {
+		return nil, geminiVideoCreateMetadata{}, fmt.Errorf("prompt is required")
+	}
+	seconds := geminiVideoSeconds(source)
+	size, aspectRatio := geminiVideoAspectRatio(source)
+	instance := map[string]any{"prompt": prompt}
+	if image := geminiVideoImageObject(source); len(image) > 0 {
+		instance["image"] = image
+	}
+	if video := geminiVideoVideoObject(source); len(video) > 0 {
+		instance["video"] = video
+	}
+	if refs := geminiVideoReferenceImages(source); len(refs) > 0 {
+		instance["referenceImages"] = refs
+	}
+	parameters := map[string]any{}
+	if aspectRatio != "" {
+		parameters["aspectRatio"] = aspectRatio
+	}
+	if seconds != "" {
+		if duration, err := strconv.ParseInt(seconds, 10, 64); err == nil && duration > 0 {
+			parameters["durationSeconds"] = duration
+		}
+	}
+	if resolution := strings.TrimSpace(firstStringField(source, "resolution", "quality")); resolution != "" {
+		parameters["resolution"] = resolution
+	}
+	if value := strings.TrimSpace(firstStringField(source, "person_generation", "personGeneration")); value != "" {
+		parameters["personGeneration"] = value
+	}
+	if seed, ok := numericField(source["seed"]); ok {
+		parameters["seed"] = seed
+	}
+	if n, ok := numericField(source["n"]); ok && n > 0 {
+		parameters["sampleCount"] = n
+	}
+	if existing, ok := source["parameters"].(map[string]any); ok {
+		for key, value := range existing {
+			parameters[key] = value
+		}
+	}
+	req := map[string]any{
+		"instances":  []any{instance},
+		"parameters": parameters,
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return nil, geminiVideoCreateMetadata{}, err
+	}
+	return raw, geminiVideoCreateMetadata{
+		Model:     model,
+		Prompt:    prompt,
+		Seconds:   seconds,
+		Size:      size,
+		CreatedAt: time.Now().Unix(),
+	}, nil
+}
+
+func geminiVideoSeconds(source map[string]any) string {
+	for _, key := range []string{"seconds", "duration", "duration_seconds", "durationSeconds"} {
+		if value, ok := numericField(source[key]); ok && value > 0 {
+			return strconv.FormatInt(value, 10)
+		}
+		if raw := strings.TrimSpace(stringField(source, key)); raw != "" {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+				return strconv.FormatInt(parsed, 10)
+			}
+		}
+	}
+	return ""
+}
+
+func geminiVideoAspectRatio(source map[string]any) (string, string) {
+	size := strings.TrimSpace(stringField(source, "size"))
+	aspectRatio := strings.TrimSpace(firstStringField(source, "aspect_ratio", "aspectRatio"))
+	if aspectRatio == "" {
+		switch size {
+		case "1280x720", "1792x1024", "16:9":
+			aspectRatio = "16:9"
+		case "720x1280", "1024x1792", "9:16":
+			aspectRatio = "9:16"
+		case "1024x1024", "1:1":
+			aspectRatio = "1:1"
+		}
+	}
+	return size, aspectRatio
+}
+
+func firstStringField(source map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(stringField(source, key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func geminiVideoImageObject(source map[string]any) map[string]any {
+	if inputRef, ok := source["input_reference"].(map[string]any); ok {
+		if obj := geminiVideoMediaObject(firstStringField(inputRef, "image_url", "url", "gcs_uri", "gcsUri")); len(obj) > 0 {
+			return obj
+		}
+	}
+	if image, ok := source["image"].(map[string]any); ok {
+		if obj := geminiVideoMediaObject(firstStringField(image, "url", "image_url", "gcs_uri", "gcsUri")); len(obj) > 0 {
+			return obj
+		}
+		return image
+	}
+	return geminiVideoMediaObject(firstStringField(source, "image", "image_url"))
+}
+
+func geminiVideoVideoObject(source map[string]any) map[string]any {
+	if video, ok := source["video"].(map[string]any); ok {
+		if obj := geminiVideoMediaObject(firstStringField(video, "url", "video_url", "gcs_uri", "gcsUri")); len(obj) > 0 {
+			return obj
+		}
+		return video
+	}
+	return geminiVideoMediaObject(firstStringField(source, "video", "video_url"))
+}
+
+func geminiVideoReferenceImages(source map[string]any) []any {
+	out := make([]any, 0)
+	appendImage := func(value string) {
+		if image := geminiVideoMediaObject(value); len(image) > 0 {
+			out = append(out, map[string]any{"image": image})
+		}
+	}
+	for _, key := range []string{"reference_images", "reference_image_urls"} {
+		items, _ := source[key].([]any)
+		for _, item := range items {
+			switch v := item.(type) {
+			case string:
+				appendImage(v)
+			case map[string]any:
+				if obj := geminiVideoMediaObject(firstStringField(v, "url", "image_url", "gcs_uri", "gcsUri")); len(obj) > 0 {
+					out = append(out, map[string]any{"image": obj})
+				} else {
+					out = append(out, v)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func geminiVideoMediaObject(value string) map[string]any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if mimeType, data, ok := splitDataURL(value); ok {
+		return map[string]any{"mimeType": mimeType, "bytesBase64Encoded": data}
+	}
+	if strings.HasPrefix(value, "gs://") {
+		return map[string]any{"gcsUri": value}
+	}
+	return map[string]any{"url": value}
+}
+
+func splitDataURL(value string) (string, string, bool) {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "data:") {
+		return "", "", false
+	}
+	comma := strings.Index(value, ",")
+	if comma <= 5 {
+		return "", "", false
+	}
+	meta := value[5:comma]
+	mimeType := strings.TrimSpace(strings.Split(meta, ";")[0])
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	data := strings.TrimSpace(value[comma+1:])
+	return mimeType, data, data != ""
+}
+
+func buildVideosAPIResponseFromGeminiOperation(payload []byte, meta geminiVideoCreateMetadata) ([]byte, error) {
+	var op map[string]any
+	if err := json.Unmarshal(payload, &op); err != nil || op == nil {
+		return nil, fmt.Errorf("Gemini video response was not a JSON object")
+	}
+	name := strings.TrimSpace(stringField(op, "name"))
+	if name == "" {
+		name = strings.TrimSpace(stringField(op, "id"))
+	}
+	if name == "" {
+		return nil, fmt.Errorf("Gemini video response did not include operation name")
+	}
+	status := "queued"
+	if done, ok := op["done"].(bool); ok && done {
+		status = "completed"
+	}
+	out := map[string]any{
+		"id":             name,
+		"object":         "video",
+		"created_at":     meta.CreatedAt,
+		"model":          meta.Model,
+		"prompt":         meta.Prompt,
+		"status":         status,
+		"progress":       0,
+		"operation_name": name,
+		"provider":       "gemini",
+		"operation":      op,
+	}
+	if meta.Seconds != "" {
+		out["seconds"] = meta.Seconds
+	}
+	if meta.Size != "" {
+		out["size"] = meta.Size
+	}
+	return json.Marshal(out)
+}
+
+func (s *relayServer) requireNativeMedia(c *gin.Context) bool {
+	if _, ok := s.requireAPIKey(c); !ok {
+		return false
+	}
+	if s.manifest == nil || !s.manifest.NativeModelRegistry || s.openAI == nil {
+		writeAPIError(c, http.StatusNotFound, "video gateway is only available in multi-model mode", "not_found")
+		return false
+	}
+	return true
+}
+
+func (s *relayServer) handleVideosCreate(c *gin.Context) {
+	spec, ok := s.requireAPIKey(c)
+	if !ok {
+		return
+	}
+	rawJSON, err := readAndRestoreBody(c.Request)
+	if err != nil {
+		writeAPIError(c, http.StatusBadRequest, "failed to read request body", "invalid_request")
+		return
+	}
+	if isNativeGeminiVideoModel(requestBodyModel(rawJSON)) {
+		s.handleNativeGeminiVideoGeneration(c, spec, rawJSON)
+		return
+	}
+	if s.manifest == nil || !s.manifest.NativeModelRegistry || s.openAI == nil {
+		writeAPIError(c, http.StatusNotFound, "video gateway is only available in multi-model mode", "not_found")
+		return
+	}
+	s.openAI.VideosCreate(c)
+}
+
+func (s *relayServer) handleVideosGenerations(c *gin.Context) {
+	spec, ok := s.requireAPIKey(c)
+	if !ok {
+		return
+	}
+	rawJSON, err := readAndRestoreBody(c.Request)
+	if err != nil {
+		writeAPIError(c, http.StatusBadRequest, "failed to read request body", "invalid_request")
+		return
+	}
+	if isNativeGeminiVideoModel(requestBodyModel(rawJSON)) {
+		s.handleNativeGeminiVideoGeneration(c, spec, rawJSON)
+		return
+	}
+	if s.manifest == nil || !s.manifest.NativeModelRegistry || s.openAI == nil {
+		writeAPIError(c, http.StatusNotFound, "video gateway is only available in multi-model mode", "not_found")
+		return
+	}
+	s.openAI.XAIVideosGenerations(c)
+}
+
+func (s *relayServer) handleVideosEdits(c *gin.Context) {
+	if s.requireNativeMedia(c) {
+		s.openAI.XAIVideosEdits(c)
+	}
+}
+
+func (s *relayServer) handleVideosExtensions(c *gin.Context) {
+	if s.requireNativeMedia(c) {
+		s.openAI.XAIVideosExtensions(c)
+	}
+}
+
+func (s *relayServer) handleVideosRetrieve(c *gin.Context) {
+	if s.requireNativeMedia(c) {
+		s.openAI.VideosRetrieve(c)
+	}
 }
 
 type imageRelayRequest struct {
@@ -3184,9 +4080,28 @@ func (s *relayServer) handleExecutorBody(c *gin.Context, spec *apiKeySpec, body 
 		writeAPIError(c, http.StatusBadRequest, "model is required", "invalid_request")
 		return
 	}
+	if c != nil && c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/chat/completions" {
+		if endpoint := dedicatedGenerationEndpoint(model); endpoint != "" {
+			writeAPIError(
+				c,
+				http.StatusBadRequest,
+				fmt.Sprintf("model %s is not a chat model; use POST %s", model, endpoint),
+				"unsupported_endpoint",
+			)
+			return
+		}
+	}
 
 	if spec.ProviderGateway != nil {
 		s.handleProviderGatewayRequest(c, spec.ProviderGateway, body, model, sourceFormat, fixedAlt)
+		return
+	}
+	// Claude Web is a local OpenAI-compatible helper, so every supported public
+	// protocol must use the same explicit loopback bridge.  Letting OpenAI chat
+	// requests fall through to the generic mixed scheduler can apply the global
+	// proxy to 127.0.0.1 and produces a different result from /v1/messages.
+	if gateway := s.claudeWebGatewayForModel(model); gateway != nil {
+		s.handleProviderGatewayRequest(c, gateway, body, model, sourceFormat, fixedAlt)
 		return
 	}
 
@@ -3200,6 +4115,17 @@ func (s *relayServer) handleExecutorBody(c *gin.Context, spec *apiKeySpec, body 
 		return
 	}
 	s.handleNonStream(c, body, model, sourceFormat, alt)
+}
+
+func dedicatedGenerationEndpoint(model string) string {
+	switch modelBase(model) {
+	case "gpt-image-2", "grok-imagine-image", "grok-imagine-image-quality":
+		return imagesGenerationsPath
+	case "grok-imagine-video":
+		return videosGenerationsPath
+	default:
+		return ""
+	}
 }
 
 func (s *relayServer) handleProviderGatewayRequest(c *gin.Context, gateway *providerGatewaySpec, body []byte, model string, sourceFormat sdktranslator.Format, fixedAlt string) {
@@ -3644,7 +4570,7 @@ func (s *relayServer) handleNonStream(c *gin.Context, body []byte, model string,
 	startedAt := time.Now()
 	s.emitExecutorDiagnostic(c, "executor_started", model, "execute", startedAt, "")
 	stopWaitLogger := s.startExecutorWaitLogger(c, model, "execute", startedAt)
-	resp, err := s.runtime.Execute(relayContext(c), []string{"codex"}, req, opts)
+	resp, err := s.runtime.Execute(relayContext(c), s.providersForModel(relayContext(c), model), req, opts)
 	stopWaitLogger()
 	if err != nil {
 		s.emitExecutorDiagnostic(c, "executor_failed", model, "execute", startedAt, err.Error())
@@ -3668,7 +4594,7 @@ func (s *relayServer) handleStream(c *gin.Context, body []byte, model string, so
 	stopWaitLogger := s.startExecutorWaitLogger(c, model, "execute_stream", startedAt)
 	streamCtx, cancelStream := context.WithCancel(relayContext(c))
 	defer cancelStream()
-	result, err := s.executeStreamWithOpenTimeout(c, streamCtx, []string{"codex"}, req, opts, model, startedAt, timeouts.open)
+	result, err := s.executeStreamWithOpenTimeout(c, streamCtx, s.providersForModel(relayContext(c), model), req, opts, model, startedAt, timeouts.open)
 	stopWaitLogger()
 	if err != nil {
 		s.emitExecutorDiagnostic(c, "executor_failed", model, "execute_stream", startedAt, err.Error())
@@ -4402,7 +5328,7 @@ func ollamaResponseFormat(value any) map[string]any {
 
 func (s *relayServer) handleOllamaRuntimeNonStream(c *gin.Context, body []byte, model string) {
 	req, opts := buildExecutorRequest(c, body, model, sdktranslator.FormatOpenAI, "", false)
-	resp, err := s.runtime.Execute(relayContext(c), []string{"codex"}, req, opts)
+	resp, err := s.runtime.Execute(relayContext(c), s.providersForModel(relayContext(c), model), req, opts)
 	if err != nil {
 		s.writeExecutorError(c, err)
 		return
@@ -4418,7 +5344,7 @@ func (s *relayServer) handleOllamaRuntimeStream(c *gin.Context, body []byte, mod
 	timeouts := s.streamTimeoutsForRequest(c.Request, body, model)
 	streamCtx, cancelStream := context.WithCancel(relayContext(c))
 	defer cancelStream()
-	result, err := s.executeStreamWithOpenTimeout(c, streamCtx, []string{"codex"}, req, opts, model, startedAt, timeouts.open)
+	result, err := s.executeStreamWithOpenTimeout(c, streamCtx, s.providersForModel(relayContext(c), model), req, opts, model, startedAt, timeouts.open)
 	if err != nil {
 		s.writeExecutorError(c, err)
 		return
@@ -5649,6 +6575,7 @@ func main() {
 		manifest: m,
 		emitter:  emitter,
 		policy:   policy,
+		openAI:   sdkopenai.NewOpenAIAPIHandler(sdkhandlers.NewBaseAPIHandlers(&cfg.SDKConfig, coreManager)),
 	}
 	if err := runRelayHTTPServer(ctx, cfg, relay.router(), emitter); err != nil && !errors.Is(err, context.Canceled) {
 		emitter.emit(map[string]any{"type": "error", "message": err.Error()})

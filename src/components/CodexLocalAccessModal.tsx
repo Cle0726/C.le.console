@@ -58,6 +58,7 @@ import {
   isCodexLocalAccessEligibleAccount,
 } from "../utils/codexLocalAccessAccounts";
 import { isBlockingCodexQuotaError } from "../utils/codexQuotaError";
+import { isCodexChatTestModelId } from "../utils/codexModelCapabilities";
 import { AccountTagFilterDropdown } from "./AccountTagFilterDropdown";
 import {
   MultiSelectFilterDropdown,
@@ -393,6 +394,15 @@ export function CodexLocalAccessModal({
     () => modelIds.map((modelId) => ({ value: modelId, label: modelId })),
     [modelIds],
   );
+  const chatTestModelIds = useMemo(
+    () => modelIds.filter(isCodexChatTestModelId),
+    [modelIds],
+  );
+  const chatTestModelIdOptions = useMemo(
+    () =>
+      chatTestModelIds.map((modelId) => ({ value: modelId, label: modelId })),
+    [chatTestModelIds],
+  );
   const avgLatencyMs =
     selectedTotals && selectedTotals.requestCount > 0
       ? selectedTotals.totalLatencyMs / selectedTotals.requestCount
@@ -617,14 +627,14 @@ export function CodexLocalAccessModal({
   ]);
 
   useEffect(() => {
-    if (modelIds.length === 0) {
+    if (chatTestModelIds.length === 0) {
       setSelectedModelId("");
       return;
     }
     setSelectedModelId((current) =>
-      modelIds.includes(current) ? current : modelIds[0],
+      chatTestModelIds.includes(current) ? current : chatTestModelIds[0],
     );
-  }, [modelIds]);
+  }, [chatTestModelIds]);
 
   useEffect(() => {
     persistStatsRange(statsRange);
@@ -3261,9 +3271,9 @@ export function CodexLocalAccessModal({
                   <span>{t("codex.localAccess.testChatModel", "模型")}</span>
                   <SingleSelectDropdown
                     value={selectedModelId}
-                    options={modelIdOptions}
+                    options={chatTestModelIdOptions}
                     onChange={setSelectedModelId}
-                    disabled={modelIdOptions.length === 0 || testDialogBusy}
+                    disabled={chatTestModelIdOptions.length === 0 || testDialogBusy}
                     ariaLabel={t("codex.localAccess.testChatModel", "模型")}
                     placeholder={t(
                       "codex.localAccess.modelIdPlaceholder",

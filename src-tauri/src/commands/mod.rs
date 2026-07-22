@@ -21,6 +21,7 @@ pub mod instance;
 pub mod kiro;
 pub mod kiro_instance;
 pub mod logs;
+pub mod multi_model_api;
 pub mod oauth;
 pub mod provider_current;
 pub mod qoder;

@@ -290,8 +290,9 @@ pub async fn get_network_egress_snapshot() -> NetworkEgressSnapshot {
     {
         warnings.push(EgressWarning {
             code: "process_unresolved".to_string(),
-            message: "部分连接未提供进程名，且无法通过 Windows TCP 端口表解析所属进程，已归入“其他”。"
-                .to_string(),
+            message:
+                "部分连接未提供进程名，且无法通过 Windows TCP 端口表解析所属进程，已归入“其他”。"
+                    .to_string(),
         });
     }
     if public_probe.state == "failed" {
@@ -347,13 +348,8 @@ async fn cached_public_egress_probe(
             return cached.value.clone();
         }
     }
-    let value = probe_public_egress(
-        proxy_endpoint,
-        proxy_source,
-        listener_reachable,
-        pac_only,
-    )
-    .await;
+    let value =
+        probe_public_egress(proxy_endpoint, proxy_source, listener_reachable, pac_only).await;
     *guard = Some(CachedPublicProbe {
         cache_key,
         captured_at: Instant::now(),
@@ -368,9 +364,9 @@ fn detect_proxy_settings() -> ProxyDetectionInternal {
     candidates.extend(detect_winhttp_proxy());
     candidates.extend(detect_environment_proxy());
 
-    let selected = candidates
-        .iter()
-        .find(|candidate| candidate.enabled && (candidate.endpoint.is_some() || candidate.pac_url.is_some()));
+    let selected = candidates.iter().find(|candidate| {
+        candidate.enabled && (candidate.endpoint.is_some() || candidate.pac_url.is_some())
+    });
     let selected_source = selected.map(|candidate| candidate.source.clone());
     let selected_endpoint_redacted = selected.and_then(|candidate| candidate.endpoint.clone());
     let selected_endpoint = selected_endpoint_redacted
@@ -712,7 +708,10 @@ fn proxy_listener_reachable(endpoint: &str) -> Option<bool> {
     let host = url.host_str()?;
     let port = url.port_or_known_default()?;
     let is_local = host.eq_ignore_ascii_case("localhost")
-        || host.parse::<IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false);
+        || host
+            .parse::<IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false);
     if !is_local {
         return None;
     }
@@ -742,7 +741,9 @@ async fn probe_public_egress(
             proxy_source,
             scope: "backend_process".to_string(),
             provider: None,
-            error: Some("检测到 PAC 自动代理，但未解析目标 URL 的实际代理，已跳过出口探测。".to_string()),
+            error: Some(
+                "检测到 PAC 自动代理，但未解析目标 URL 的实际代理，已跳过出口探测。".to_string(),
+            ),
         };
     }
     if proxy_endpoint.is_some() && listener_reachable == Some(false) {
@@ -767,11 +768,7 @@ async fn probe_public_egress(
         match Proxy::all(endpoint) {
             Ok(proxy) => builder = builder.proxy(proxy),
             Err(error) => {
-                return failed_public_probe(
-                    proxy_source,
-                    true,
-                    format!("代理地址无效: {error}"),
-                )
+                return failed_public_probe(proxy_source, true, format!("代理地址无效: {error}"))
             }
         }
     }
@@ -912,7 +909,8 @@ async fn detect_controller() -> ControllerResult {
                         status: "connected".to_string(),
                         transport: Some(controller_transport_code(&target.transport).to_string()),
                         endpoint: Some(target.endpoint.clone()),
-                        implementation: implementation.or_else(|| Some("clash-compatible".to_string())),
+                        implementation: implementation
+                            .or_else(|| Some("clash-compatible".to_string())),
                         version: version
                             .map(|version| version.version)
                             .filter(|version| !version.is_empty()),
@@ -1001,7 +999,10 @@ fn discover_controller_targets() -> Vec<ControllerTarget> {
         let Ok(config) = serde_yaml::from_str::<ClashControllerConfig>(&contents) else {
             continue;
         };
-        let secret = config.secret.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
+        let secret = config
+            .secret
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         if let Some(secret) = secret.clone() {
             if !secrets.contains(&secret) {
                 secrets.push(secret);
@@ -1039,7 +1040,11 @@ fn discover_controller_targets() -> Vec<ControllerTarget> {
         let secrets_to_try: Vec<Option<String>> = if secrets.is_empty() {
             vec![None]
         } else {
-            secrets.into_iter().map(Some).chain(std::iter::once(None)).collect()
+            secrets
+                .into_iter()
+                .map(Some)
+                .chain(std::iter::once(None))
+                .collect()
         };
         for port in [9097_u16, 9090, 9093] {
             for secret in &secrets_to_try {
@@ -1103,7 +1108,10 @@ fn normalize_local_controller_endpoint(value: &str) -> Option<String> {
         url.set_host(Some("::1")).ok()?;
     } else {
         let local = host.eq_ignore_ascii_case("localhost")
-            || host.parse::<IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false);
+            || host
+                .parse::<IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false);
         if !local {
             return None;
         }
@@ -1365,7 +1373,11 @@ fn build_active_connection_rows(
             let protocol = if !connection.metadata.network.trim().is_empty() {
                 connection.metadata.network.trim().to_ascii_uppercase()
             } else if !connection.metadata.connection_type.trim().is_empty() {
-                connection.metadata.connection_type.trim().to_ascii_uppercase()
+                connection
+                    .metadata
+                    .connection_type
+                    .trim()
+                    .to_ascii_uppercase()
             } else {
                 "UNKNOWN".to_string()
             };
@@ -1401,7 +1413,9 @@ fn build_active_connection_rows(
 
 fn json_u16(value: &Value) -> Option<u16> {
     match value {
-        Value::Number(number) => number.as_u64().and_then(|number| u16::try_from(number).ok()),
+        Value::Number(number) => number
+            .as_u64()
+            .and_then(|number| u16::try_from(number).ok()),
         Value::String(value) => value.parse::<u16>().ok(),
         _ => None,
     }
@@ -1482,7 +1496,8 @@ fn aggregate_sources(connections: &[EgressActiveConnection]) -> Vec<EgressSource
                 .iter()
                 .filter(|connection| connection.source == *source_id)
                 .collect();
-            let process_names = unique_nonempty(matching.iter().filter_map(|item| item.process.clone()));
+            let process_names =
+                unique_nonempty(matching.iter().filter_map(|item| item.process.clone()));
             let routes = unique_nonempty(matching.iter().filter_map(|item| item.route.clone()));
             let nodes = unique_nonempty(matching.iter().filter_map(|item| item.node.clone()));
             let rules = unique_nonempty(matching.iter().filter_map(|item| item.rule.clone()));
@@ -1517,20 +1532,11 @@ fn unique_nonempty(values: impl Iterator<Item = String>) -> Vec<String> {
 
 fn process_name_map() -> HashMap<u32, String> {
     let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing(),
-    );
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     system
         .processes()
         .iter()
-        .map(|(pid, process)| {
-            (
-                pid.as_u32(),
-                process.name().to_string_lossy().into_owned(),
-            )
-        })
+        .map(|(pid, process)| (pid.as_u32(), process.name().to_string_lossy().into_owned()))
         .collect()
 }
 
@@ -1555,8 +1561,7 @@ fn tcp_port_owner_map() -> HashMap<u16, u32> {
     if first != 122 || size < 4 {
         return HashMap::new();
     }
-    let word_count = (size as usize + std::mem::size_of::<u32>() - 1)
-        / std::mem::size_of::<u32>();
+    let word_count = (size as usize + std::mem::size_of::<u32>() - 1) / std::mem::size_of::<u32>();
     let mut buffer = vec![0_u32; word_count];
     let result = unsafe {
         GetExtendedTcpTable(
@@ -1573,10 +1578,7 @@ fn tcp_port_owner_map() -> HashMap<u16, u32> {
     }
     let count = buffer[0] as usize;
     let rows = unsafe {
-        std::slice::from_raw_parts(
-            buffer.as_ptr().add(1).cast::<MIB_TCPROW_OWNER_PID>(),
-            count,
-        )
+        std::slice::from_raw_parts(buffer.as_ptr().add(1).cast::<MIB_TCPROW_OWNER_PID>(), count)
     };
     rows.iter()
         .filter_map(|row| {
@@ -1700,5 +1702,4 @@ Current WinHTTP proxy settings:
             .all(|source| source.observation_state == "not_observed"));
         assert!(sources.iter().all(|source| source.public_ip.is_none()));
     }
-
 }

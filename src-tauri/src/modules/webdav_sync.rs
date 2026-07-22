@@ -346,8 +346,8 @@ pub fn is_backup_file_name(file_name: &str) -> bool {
     if trimmed != file_name || trimmed.contains('/') || trimmed.contains('\\') {
         return false;
     }
-    let matches_prefix = trimmed.starts_with("cle_auto_backup_")
-        || trimmed.starts_with("cle_manual_backup_");
+    let matches_prefix =
+        trimmed.starts_with("cle_auto_backup_") || trimmed.starts_with("cle_manual_backup_");
     let matches_suffix = trimmed.ends_with(".json") || trimmed.ends_with(".zip");
     matches_prefix && matches_suffix
 }

@@ -160,7 +160,6 @@ const DEFAULT_CODEX_MODELS: &[&str] = &[
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
-    "gpt-5.6",
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
@@ -650,7 +649,7 @@ fn macos_proxy_url_from_scutil_map(
 }
 
 #[cfg(target_os = "macos")]
-fn system_proxy_url_for_target(target_url: &str) -> Option<String> {
+pub(crate) fn system_proxy_url_for_target(target_url: &str) -> Option<String> {
     let output = StdCommand::new("scutil").arg("--proxy").output().ok()?;
     if !output.status.success() {
         return None;
@@ -728,7 +727,7 @@ fn windows_proxy_url_from_server(proxy_server: &str, target_scheme: &str) -> Opt
 }
 
 #[cfg(target_os = "windows")]
-fn system_proxy_url_for_target(target_url: &str) -> Option<String> {
+pub(crate) fn system_proxy_url_for_target(target_url: &str) -> Option<String> {
     let mut command = StdCommand::new("reg");
     {
         use std::os::windows::process::CommandExt;
@@ -755,7 +754,7 @@ fn system_proxy_url_for_target(target_url: &str) -> Option<String> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn system_proxy_url_for_target(_target_url: &str) -> Option<String> {
+pub(crate) fn system_proxy_url_for_target(_target_url: &str) -> Option<String> {
     None
 }
 
@@ -4559,7 +4558,6 @@ fn default_model_pricing_presets() -> Vec<CodexLocalAccessModelPricing> {
         model_pricing("gpt-5.6-sol", 1.25, Some(0.125), 10.0),
         model_pricing("gpt-5.6-terra", 1.25, Some(0.125), 10.0),
         model_pricing("gpt-5.6-luna", 0.25, Some(0.025), 2.0),
-        model_pricing("gpt-5.6", 1.25, Some(0.125), 10.0),
         model_pricing("gpt-5.5", 1.25, Some(0.125), 10.0),
         model_pricing("gpt-5.4", 1.25, Some(0.125), 10.0),
         model_pricing("gpt-5.4-mini", 0.25, Some(0.025), 2.0),
@@ -6493,7 +6491,7 @@ fn sidecar_binary_candidates() -> Result<Vec<PathBuf>, String> {
     Ok(candidates)
 }
 
-fn sidecar_binary_path() -> Result<PathBuf, String> {
+pub(crate) fn sidecar_binary_path() -> Result<PathBuf, String> {
     let candidates = sidecar_binary_candidates()?;
     candidates
         .iter()
@@ -9982,6 +9980,23 @@ async fn ensure_gateway_matches_runtime_locked() -> Result<(), String> {
     }
 
     let launch_config = prepare_sidecar_launch_config(&collection).await?;
+    if !running
+        && probe_sidecar_ready_once(&collection, Duration::from_millis(500))
+            .await
+            .is_ok()
+    {
+        let mut runtime = gateway_runtime().lock().await;
+        runtime.running = true;
+        runtime.actual_port = Some(collection.port);
+        runtime.actual_bind_host = Some(bind_host.to_string());
+        runtime.sidecar_config_fingerprint = Some(launch_config.fingerprint.clone());
+        runtime.last_error = None;
+        runtime.shutdown_sender = None;
+        runtime.task = None;
+        runtime.sidecar_child = None;
+        logger::log_codex_api_info("[CodexLocalAccess][sidecar] 宸查噰鐢ㄧ嫭绔嬪悗鍙?API sidecar");
+        return Ok(());
+    }
     if running
         && actual_port == Some(collection.port)
         && actual_bind_host.as_deref() == Some(bind_host)
@@ -10058,8 +10073,6 @@ async fn ensure_gateway_matches_runtime_locked() -> Result<(), String> {
         .arg(&launch_config.config_path)
         .arg("--manifest")
         .arg(&launch_config.manifest_path)
-        .arg("--parent-pid")
-        .arg(std::process::id().to_string())
         .current_dir(
             launch_config
                 .config_path
@@ -12127,8 +12140,6 @@ async fn spawn_provider_gateway_sidecar(
         .arg(&launch_config.config_path)
         .arg("--manifest")
         .arg(&launch_config.manifest_path)
-        .arg("--parent-pid")
-        .arg(std::process::id().to_string())
         .current_dir(
             launch_config
                 .config_path
@@ -19000,23 +19011,23 @@ mod tests {
         build_codex_client_models_response, build_collection_base_url, build_images_api_payload,
         build_local_access_api_key, build_local_models_response,
         build_model_provider_gateway_test_collection, build_model_provider_test_request_payload,
-        count_valid_model_provider_test_images, build_ordered_account_ids,
-        build_request_routing_hint, build_upstream_websocket_url, calculate_usage_cost_usd,
-        canonical_model_for_client_model, classify_upstream_error_category,
-        cleanup_profile_takeover_without_backup, cleanup_provider_gateway_profile_model_overrides,
+        build_ordered_account_ids, build_request_routing_hint, build_upstream_websocket_url,
+        calculate_usage_cost_usd, canonical_model_for_client_model,
+        classify_upstream_error_category, cleanup_profile_takeover_without_backup,
+        cleanup_provider_gateway_profile_model_overrides,
         collect_local_access_profile_takeover_dirs_from_store, compare_routing_candidates,
-        extract_usage_capture, insert_local_access_usage_event,
-        inspect_local_access_profile_config, is_codex_local_access_auth_text,
-        is_codex_local_access_config_for_api_key, is_image_generation_capability_error,
-        is_local_access_eligible_account, is_provider_gateway_eligible_account,
-        is_responses_completion_event, is_stream_incomplete_error_message,
-        is_upstream_response_failed_error_message, legacy_stream_error_category,
-        local_access_chat_completions_url, macos_proxy_url_from_scutil_map,
-        max_credential_attempts_for_strategy, merge_collection_and_account_excluded_models,
-        model_pricing, model_provider_direct_test_client_model,
-        model_provider_test_uses_provider_gateway, normalize_account_model_rules,
-        normalize_custom_routing_rules, normalized_sidecar_error_category,
-        open_local_access_logs_db_once, parse_codex_retry_after,
+        count_valid_model_provider_test_images, extract_usage_capture,
+        insert_local_access_usage_event, inspect_local_access_profile_config,
+        is_codex_local_access_auth_text, is_codex_local_access_config_for_api_key,
+        is_image_generation_capability_error, is_local_access_eligible_account,
+        is_provider_gateway_eligible_account, is_responses_completion_event,
+        is_stream_incomplete_error_message, is_upstream_response_failed_error_message,
+        legacy_stream_error_category, local_access_chat_completions_url,
+        macos_proxy_url_from_scutil_map, max_credential_attempts_for_strategy,
+        merge_collection_and_account_excluded_models, model_pricing,
+        model_provider_direct_test_client_model, model_provider_test_uses_provider_gateway,
+        normalize_account_model_rules, normalize_custom_routing_rules,
+        normalized_sidecar_error_category, open_local_access_logs_db_once, parse_codex_retry_after,
         parse_responses_payload_from_upstream, parse_websocket_upstream_error,
         prepare_gateway_request, prepare_gateway_request_with_default_service_tier,
         prepare_sidecar_launch_config_in_dir, prepare_websocket_initial_request,
@@ -19046,7 +19057,7 @@ mod tests {
         SidecarUsageEvent, UsageCapture, CODEX_AUTO_REVIEW_MODEL_ID,
         CODEX_LOCAL_ACCESS_TEST_DISABLE_IMAGE_GENERATION_HEADER, CODEX_PROFILE_AUTH_FILE,
         CODEX_PROFILE_CONFIG_FILE, CODEX_PROVIDER_MODEL_BACKUP_FILE,
-        CODEX_PROVIDER_MODEL_CATALOG_FILE, DEFAULT_MAX_RETRY_INTERVAL_MS,
+        CODEX_PROVIDER_MODEL_CATALOG_FILE, DEFAULT_CODEX_MODELS, DEFAULT_MAX_RETRY_INTERVAL_MS,
         DEFAULT_MODEL_PRICING_VERSION, DEFAULT_SESSION_AFFINITY_TTL_MS, MAX_HTTP_REQUEST_BYTES,
     };
     use crate::models::codex::{CodexAccount, CodexApiProviderMode, CodexAppSpeed, CodexTokens};
@@ -19074,6 +19085,12 @@ mod tests {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::Message;
     use toml_edit::{value, Document};
+
+    #[test]
+    fn default_codex_catalog_excludes_unsupported_generic_gpt_5_6_alias() {
+        assert!(!DEFAULT_CODEX_MODELS.contains(&"gpt-5.6"));
+        assert!(DEFAULT_CODEX_MODELS.contains(&"gpt-5.6-sol"));
+    }
 
     #[tokio::test]
     async fn read_http_request_rejects_declared_request_above_limit() {
@@ -22855,11 +22872,8 @@ data: {"error":{"code":"server_error","type":"upstream","message":"stream aborte
         let mut request = model_provider_chat_test_request("responses");
         request.model_id = "gpt-image-2".to_string();
 
-        let (path, body) = build_model_provider_test_request_payload(
-            &request,
-            "gpt-image-2",
-            "client-request-1",
-        );
+        let (path, body) =
+            build_model_provider_test_request_payload(&request, "gpt-image-2", "client-request-1");
 
         assert_eq!(path, "/v1/images/generations");
         assert_eq!(body.get("model"), Some(&json!("gpt-image-2")));
@@ -22879,7 +22893,10 @@ data: {"error":{"code":"server_error","type":"upstream","message":"stream aborte
 
     #[test]
     fn model_provider_image_test_requires_decodable_image_data() {
-        assert_eq!(count_valid_model_provider_test_images(&json!({"data": [{}]})), 0);
+        assert_eq!(
+            count_valid_model_provider_test_images(&json!({"data": [{}]})),
+            0
+        );
         assert_eq!(
             count_valid_model_provider_test_images(&json!({"data": [{"b64_json": "not-base64"}]})),
             0
@@ -22919,13 +22936,9 @@ data: {"error":{"code":"server_error","type":"upstream","message":"stream aborte
             Some("Relay".to_string()),
             vec!["gpt-image-2".to_string()],
         );
-        let collection = build_model_provider_gateway_test_collection(
-            &request,
-            &account,
-            None,
-            "gpt-image-2",
-        )
-        .expect("image collection should build");
+        let collection =
+            build_model_provider_gateway_test_collection(&request, &account, None, "gpt-image-2")
+                .expect("image collection should build");
 
         assert_eq!(collection.api_keys[0].allowed_models, vec!["gpt-image-2"]);
         assert!(collection.model_aliases.iter().any(|alias| {

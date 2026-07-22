@@ -68,6 +68,12 @@ const CodexAccountsPage = lazy(() =>
 const CodexApiServicePage = lazy(() =>
   import('./pages/CodexApiServicePage').then((module) => ({ default: module.CodexApiServicePage })),
 );
+const MultiModelApiServicePage = lazy(() =>
+  import('./pages/MultiModelApiServicePage').then((module) => ({ default: module.MultiModelApiServicePage })),
+);
+const ClaudeWebApiPage = lazy(() =>
+  import('./pages/ClaudeWebApiPage').then((module) => ({ default: module.ClaudeWebApiPage })),
+);
 const ClaudeAccountsPage = lazy(() =>
   import('./pages/ClaudeAccountsPage').then((module) => ({ default: module.ClaudeAccountsPage })),
 );
@@ -1568,6 +1574,8 @@ function MainApp() {
             case 'overview':
             case 'codex':
             case 'codex-api-service':
+            case 'multi-model-api-service':
+            case 'claude-web-api':
             case 'claude':
             case 'claude-cli':
             case 'github-copilot':
@@ -2051,6 +2059,8 @@ function MainApp() {
           {page === 'claude' && <ClaudeAccountsPage subPlatform="desktop" />}
           {page === 'claude-cli' && <ClaudeAccountsPage subPlatform="cli" />}
           {page === 'codex-api-service' && <CodexApiServicePage />}
+          {page === 'multi-model-api-service' && <MultiModelApiServicePage />}
+          {page === 'claude-web-api' && <ClaudeWebApiPage />}
           {page === 'github-copilot' && <GitHubCopilotAccountsPage />}
           {page === 'windsurf' && <WindsurfAccountsPage />}
           {page === 'kiro' && <KiroAccountsPage />}

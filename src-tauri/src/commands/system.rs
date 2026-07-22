@@ -3482,20 +3482,67 @@ pub async fn delete_corrupted_file(path: String) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn start_configured_windows_tool(env_key: &str, display_name: &str) -> Result<(), String> {
+fn start_configured_windows_tool(
+    env_key: &str,
+    display_name: &str,
+    executable_names: &[&str],
+    extra_candidates: &[&str],
+) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
-    let configured = std::env::var_os(env_key).ok_or_else(|| {
-        format!(
-            "未配置 {display_name}。请将其可执行文件完整路径写入环境变量 {env_key}。"
-        )
-    })?;
-    let executable = std::path::PathBuf::from(configured);
-    if !executable.is_file() {
-        return Err(format!(
-            "{display_name} 可执行文件不存在：{}",
-            executable.display()
-        ));
+    let mut candidates = Vec::<std::path::PathBuf>::new();
+    if let Some(configured) = std::env::var_os(env_key) {
+        candidates.push(configured.into());
+    }
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(app_dir) = current_exe.parent() {
+            for name in executable_names {
+                candidates.push(app_dir.join(name));
+            }
+        }
+    }
+    for root in [
+        std::env::var_os("LOCALAPPDATA"),
+        std::env::var_os("APPDATA"),
+        std::env::var_os("ProgramFiles"),
+        std::env::var_os("USERPROFILE"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let root = std::path::PathBuf::from(root);
+        for name in executable_names {
+            candidates.push(root.join(display_name).join(name));
+            candidates.push(root.join(name));
+        }
+    }
+    candidates.extend(extra_candidates.iter().map(std::path::PathBuf::from));
+
+    let executable = candidates
+        .iter()
+        .find(|path| path.is_file())
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "未找到 {display_name} 可执行文件。可通过环境变量 {env_key} 指定；已检查：{}",
+                candidates
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            )
+        })?;
+
+    let executable_name = executable.file_name();
+    if sysinfo::System::new_all()
+        .processes()
+        .values()
+        .any(|process| {
+            process.exe().is_some_and(|path| path == executable)
+                || executable_name.is_some_and(|name| process.name().eq_ignore_ascii_case(name))
+        })
+    {
+        return Ok(());
     }
 
     let working_directory = executable
@@ -3516,7 +3563,15 @@ fn start_configured_windows_tool(env_key: &str, display_name: &str) -> Result<()
 pub async fn start_chat2api() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        return start_configured_windows_tool("CLE_CHAT2API_PATH", "Chat2API");
+        return start_configured_windows_tool(
+            "CLE_CHAT2API_PATH",
+            "Chat2API",
+            &["chat2api.exe"],
+            &[
+                r"F:\自动注册\chat2api\chat2api.exe",
+                r"F:\tmp_chat2api\dist\chat2api.exe",
+            ],
+        );
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -3527,7 +3582,12 @@ pub async fn start_chat2api() -> Result<(), String> {
 pub async fn start_aurora() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        return start_configured_windows_tool("CLE_AURORA_PATH", "AuroraProxy");
+        return start_configured_windows_tool(
+            "CLE_AURORA_PATH",
+            "AuroraProxy",
+            &["aurora.exe", "AuroraProxy.exe"],
+            &[r"F:\自动注册\AuroraProxy\aurora.exe"],
+        );
     }
 
     #[cfg(not(target_os = "windows"))]

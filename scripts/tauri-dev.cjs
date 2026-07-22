@@ -11,6 +11,7 @@ const extraArgs = process.argv.slice(2);
 const syncResult = spawnSync('npm', ['run', 'sync-version'], {
   stdio: 'inherit',
   env,
+  shell: true,
 });
 
 if (syncResult.status !== 0) {
@@ -18,11 +19,12 @@ if (syncResult.status !== 0) {
 }
 
 const tauriResult = spawnSync(
-  'tauri',
-  ['dev', '--config', 'src-tauri/tauri.dev.conf.json', ...extraArgs],
+  'npx',
+  ['tauri', 'dev', '--config', 'src-tauri/tauri.dev.conf.json', ...extraArgs],
   {
     stdio: 'inherit',
     env,
+    shell: true,
   },
 );
 

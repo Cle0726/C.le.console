@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
@@ -30,6 +32,11 @@ const (
 	openAICompatImagesGenerationsPath       = "/images/generations"
 	openAICompatImagesEditsPath             = "/images/edits"
 	openAICompatDefaultImageEndpoint        = openAICompatImagesGenerationsPath
+	openAICompatVideoHandlerType            = "openai-video"
+	openAICompatVideosGenerationsPath       = "/videos/generations"
+	openAICompatVideosEditsPath             = "/videos/edits"
+	openAICompatVideosExtensionsPath        = "/videos/extensions"
+	openAICompatVideosPath                  = "/videos"
 	openAICompatMultipartMemory       int64 = 32 << 20
 )
 
@@ -85,6 +92,9 @@ func (e *OpenAICompatExecutor) HttpRequest(ctx context.Context, auth *cliproxyau
 func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
 	if endpointPath := openAICompatImageEndpointPath(opts); endpointPath != "" {
 		return e.executeImages(ctx, auth, req, opts, endpointPath)
+	}
+	if openAICompatIsVideoRequest(opts) {
+		return e.executeVideos(ctx, auth, req, opts)
 	}
 
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
@@ -193,6 +203,84 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, opts.OriginalRequest, translated, body, &param)
 	resp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
 	return resp, nil
+}
+
+// executeVideos preserves the video endpoint selected by the public gateway.
+// Previously compatible xAI accounts incorrectly sent video payloads to
+// /chat/completions, which could return a misleading HTTP 200 response.
+func (e *OpenAICompatExecutor) executeVideos(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+	baseURL, apiKey := e.resolveCredentials(auth)
+	if baseURL == "" {
+		return resp, statusErr{code: http.StatusUnauthorized, msg: "missing provider baseURL"}
+	}
+
+	method := http.MethodPost
+	endpointPath := openAICompatVideosGenerationsPath
+	var body io.Reader = bytes.NewReader(req.Payload)
+	switch path := openAICompatVideoEndpointPath(opts); path {
+	case openAICompatVideosGenerationsPath, openAICompatVideosEditsPath, openAICompatVideosExtensionsPath:
+		endpointPath = path
+	default:
+		if requestID := strings.TrimSpace(gjson.GetBytes(req.Payload, "request_id").String()); requestID != "" {
+			method = http.MethodGet
+			endpointPath = openAICompatVideosPath + "/" + url.PathEscape(requestID)
+			body = nil
+		}
+	}
+
+	requestURL := strings.TrimSuffix(baseURL, "/") + endpointPath
+	httpReq, err := http.NewRequestWithContext(ctx, method, requestURL, body)
+	if err != nil {
+		return resp, err
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	if method == http.MethodPost {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	var attrs map[string]string
+	if auth != nil {
+		attrs = auth.Attributes
+	}
+	util.ApplyCustomHeadersFromAttrs(httpReq, attrs)
+
+	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
+	httpResp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return resp, err
+	}
+	defer httpResp.Body.Close()
+	payload, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return resp, err
+	}
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		return resp, statusErr{code: httpResp.StatusCode, msg: string(payload)}
+	}
+	return cliproxyexecutor.Response{Payload: payload, Headers: httpResp.Header.Clone()}, nil
+}
+
+func openAICompatIsVideoRequest(opts cliproxyexecutor.Options) bool {
+	return opts.SourceFormat.String() == openAICompatVideoHandlerType
+}
+
+func openAICompatVideoEndpointPath(opts cliproxyexecutor.Options) string {
+	if !openAICompatIsVideoRequest(opts) {
+		return ""
+	}
+	path := strings.TrimSpace(fmt.Sprint(opts.Metadata[cliproxyexecutor.RequestPathMetadataKey]))
+	if strings.HasSuffix(path, "/videos/edits") {
+		return openAICompatVideosEditsPath
+	}
+	if strings.HasSuffix(path, "/videos/extensions") {
+		return openAICompatVideosExtensionsPath
+	}
+	if strings.HasSuffix(path, "/videos/generations") {
+		return openAICompatVideosGenerationsPath
+	}
+	return ""
 }
 
 func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, endpointPath string) (resp cliproxyexecutor.Response, err error) {

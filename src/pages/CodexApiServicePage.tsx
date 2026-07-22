@@ -77,6 +77,7 @@ import {
   summarizeCodexQuotaPool,
 } from "../utils/codexQuotaPool";
 import { filterCodexLocalAccessAccountIds } from "../utils/codexLocalAccessAccounts";
+import { isCodexChatTestModelId } from "../utils/codexModelCapabilities";
 import { SingleSelectDropdown } from "../components/SingleSelectDropdown";
 import { CodexLocalAccessModal } from "../components/CodexLocalAccessModal";
 import { PaginationControls } from "../components/PaginationControls";
@@ -672,7 +673,11 @@ export function CodexApiServicePage() {
   const routingStrategy = collection?.routingStrategy ?? "auto";
   const gatewayMode = collection?.gatewayMode ?? "sidecar";
   const modelIds = state?.modelIds ?? [];
-  const exampleModelId = modelIds[0] ?? "gpt-5.5";
+  const chatTestModelIds = useMemo(
+    () => modelIds.filter(isCodexChatTestModelId),
+    [modelIds],
+  );
+  const exampleModelId = chatTestModelIds[0] ?? "gpt-5.5";
   const exampleApiKey = collection?.apiKey || "<api-key>";
   const compatibilityExamples = useMemo(
     () => [
@@ -1051,14 +1056,14 @@ export function CodexApiServicePage() {
   ]);
 
   useEffect(() => {
-    if (modelIds.length === 0) {
+    if (chatTestModelIds.length === 0) {
       setSelectedModelId("");
       return;
     }
     setSelectedModelId((current) =>
-      modelIds.includes(current) ? current : modelIds[0],
+      chatTestModelIds.includes(current) ? current : chatTestModelIds[0],
     );
-  }, [modelIds]);
+  }, [chatTestModelIds]);
 
   useEffect(() => {
     if (!testDialogOpen) return;
@@ -4964,12 +4969,12 @@ export function CodexApiServicePage() {
                   <span>{t("codex.localAccess.testChatModel", "模型")}</span>
                   <SingleSelectDropdown
                     value={selectedModelId}
-                    options={modelIds.map((modelId) => ({
+                    options={chatTestModelIds.map((modelId) => ({
                       value: modelId,
                       label: modelId,
                     }))}
                     onChange={setSelectedModelId}
-                    disabled={modelIds.length === 0 || testDialogRunning}
+                    disabled={chatTestModelIds.length === 0 || testDialogRunning}
                     ariaLabel={t("codex.localAccess.testChatModel", "模型")}
                     placeholder={t(
                       "codex.localAccess.modelIdPlaceholder",

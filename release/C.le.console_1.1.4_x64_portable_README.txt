@@ -1,0 +1,18 @@
+﻿C.le.console 1.1.4 Portable (Windows x64)
+
+1. Extract the whole archive. Do not run the application inside the ZIP.
+2. Keep all files and subfolders together.
+3. Run the console executable whose filename starts with C.le.
+4. Existing account data remains under %USERPROFILE%\.antigravity_cle.
+
+Independent API services
+- Run scripts\Start-CleApiServices.ps1 to start ports 1466, 1467, and 4479 independently.
+- Closing the console does not stop these independent API processes.
+- Run scripts\Stop-CleApiServices.ps1 when you explicitly want to stop them.
+
+Integrity
+Verify this archive with the SHA256SUMS.txt published with the release.
+
+Notes
+- cle-cliproxy.exe and cockpit-cliproxy.exe are required sidecars; do not delete them.
+- Installation package: C.le.console_1.1.4_x64_setup.exe

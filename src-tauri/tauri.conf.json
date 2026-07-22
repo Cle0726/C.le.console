@@ -6,7 +6,7 @@
   "identifier": "com.cle0726.cle-console",
   "build": {
     "beforeDevCommand": "node scripts/prepare-tauri.cjs && npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "node scripts/prepare-tauri.cjs && npm run build",
     "frontendDist": "../dist"
   },
@@ -71,7 +71,8 @@
     ],
     "createUpdaterArtifacts": false,
     "externalBin": [
-      "../sidecars/cle-cliproxy/bin/cle-cliproxy"
+      "../sidecars/cle-cliproxy/bin/cle-cliproxy",
+      "../sidecars/cockpit-cliproxy/bin/cockpit-cliproxy"
     ],
     "icon": [
       "icons/48x48.png",

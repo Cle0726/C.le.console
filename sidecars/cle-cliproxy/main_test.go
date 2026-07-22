@@ -59,6 +59,57 @@ func TestCodexClientModelsResponseShape(t *testing.T) {
 	}
 }
 
+func TestSelectorMapsGeminiVirtualAuthToParentManifestAccount(t *testing.T) {
+	account := accountSpec{ID: "cle-gemini-1", AuthID: "cle-gemini-1.json"}
+	m := &manifest{
+		Accounts:        []accountSpec{account},
+		accountByID:     map[string]*accountSpec{},
+		accountByAuthID: map[string]*accountSpec{},
+	}
+	m.accountByID[account.ID] = &m.Accounts[0]
+	m.accountByAuthID[strings.ToLower(account.AuthID)] = &m.Accounts[0]
+	selector := &cleSelector{manifest: m}
+	auth := &coreauth.Auth{ID: "cle-gemini-1.json::project-a", Provider: "gemini-cli"}
+	if got := selector.accountForAuth(auth); got == nil || got.ID != account.ID {
+		t.Fatalf("virtual auth did not map to parent account: %#v", got)
+	}
+	allowed := map[string]struct{}{strings.ToLower(account.AuthID): {}}
+	if !selector.authAllowedForAccounts(auth, allowed) {
+		t.Fatal("virtual auth should be allowed when its parent auth ID is scoped")
+	}
+}
+
+func TestClaudeWebGatewayForModelUsesLoopbackCompatibilityEntry(t *testing.T) {
+	server := &relayServer{
+		manifest: &manifest{Accounts: []accountSpec{{
+			ID:       "claude-web-1",
+			Provider: "claude-web",
+			Models:   []string{"claude-3-5-haiku-latest"},
+		}}},
+		cfg: &config.Config{OpenAICompatibility: []config.OpenAICompatibility{{
+			Name:    "claude-web",
+			BaseURL: "http://127.0.0.1:1467/v1",
+			APIKeyEntries: []config.OpenAICompatibilityAPIKey{{
+				APIKey: "local-only-key",
+			}},
+		}}},
+	}
+
+	gateway := server.claudeWebGatewayForModel("claude-3-5-haiku-latest")
+	if gateway == nil {
+		t.Fatal("expected Claude Web model to resolve to the loopback gateway")
+	}
+	if gateway.BaseURL != "http://127.0.0.1:1467/v1" || gateway.APIKey != "local-only-key" {
+		t.Fatalf("unexpected Claude Web gateway: %#v", gateway)
+	}
+	if gateway.WireAPI != "chat_completions" || gateway.UpstreamModel != "claude-3-5-haiku-latest" {
+		t.Fatalf("unexpected Claude Web wire mapping: %#v", gateway)
+	}
+	if got := server.claudeWebGatewayForModel("claude-sonnet-4-6"); got != nil {
+		t.Fatalf("unlisted model must not be captured by Claude Web gateway: %#v", got)
+	}
+}
+
 func findCodexClientModelForTest(models []map[string]any, slug string) map[string]any {
 	for _, model := range models {
 		if model["slug"] == slug {
@@ -1552,6 +1603,88 @@ data: {"type":"response.completed","response":{"created_at":1710000000,"output":
 	}
 }
 
+func TestRelayServerRejectsImageModelOnChatEndpointWithoutCallingUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	runtime := &fakeRuntime{}
+	router := testRelayRouter(runtime)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-image-2","messages":[{"role":"user","content":"draw"}]}`))
+	req.Header.Set("Authorization", "Bearer client-key")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d body=%s", w.Code, w.Body.String())
+	}
+	if runtime.executeCalls != 0 || runtime.streamCalls != 0 {
+		t.Fatalf("endpoint mismatch must not reach upstream: execute=%d stream=%d", runtime.executeCalls, runtime.streamCalls)
+	}
+	if !strings.Contains(w.Body.String(), "/v1/images/generations") || !strings.Contains(w.Body.String(), "unsupported_endpoint") {
+		t.Fatalf("response should direct clients to the image endpoint: %s", w.Body.String())
+	}
+}
+
+func TestRelayServerHandlesGeminiVideosGenerationsEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	runtime := &fakeRuntime{
+		response: cliproxyexecutor.Response{
+			Headers: http.Header{"Content-Type": []string{"application/json"}},
+			Payload: []byte(`{"name":"operations/veo-test-123"}`),
+		},
+	}
+	m := &manifest{
+		NativeModelRegistry: true,
+		Providers:           []string{"gemini"},
+		ModelIDs:            []string{"veo-3.1-generate-preview"},
+		APIKeys:             []apiKeySpec{{ID: "key_1", Label: "Test key", Key: "client-key", Enabled: true}},
+		apiKeyByValue: map[string]*apiKeySpec{
+			"client-key": {ID: "key_1", Label: "Test key", Key: "client-key", Enabled: true},
+		},
+	}
+	router := (&relayServer{
+		runtime:  runtime,
+		cfg:      &config.Config{},
+		manifest: m,
+		policy:   &requestPolicy{manifest: m},
+	}).router()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/videos/generations", strings.NewReader(`{"model":"veo-3.1-generate-preview","prompt":"cinematic ocean storm","seconds":8,"size":"1280x720"}`))
+	req.Header.Set("Authorization", "Bearer client-key")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", w.Code, w.Body.String())
+	}
+	if runtime.executeCalls != 1 || runtime.streamCalls != 0 {
+		t.Fatalf("unexpected runtime calls: execute=%d stream=%d", runtime.executeCalls, runtime.streamCalls)
+	}
+	if runtime.lastReq.Model != "veo-3.1-generate-preview" || runtime.lastReq.Format != sdktranslator.FormatGemini {
+		t.Fatalf("unexpected request model/format: req=%#v", runtime.lastReq)
+	}
+	if action, _ := runtime.lastReq.Metadata["action"].(string); action != "predictLongRunning" {
+		t.Fatalf("expected predictLongRunning action, got %#v", runtime.lastReq.Metadata)
+	}
+	var upstream map[string]any
+	if err := json.Unmarshal(runtime.lastReq.Payload, &upstream); err != nil {
+		t.Fatalf("upstream request should be JSON: %v body=%s", err, string(runtime.lastReq.Payload))
+	}
+	instances, _ := upstream["instances"].([]any)
+	parameters, _ := upstream["parameters"].(map[string]any)
+	if len(instances) != 1 || parameters["aspectRatio"] != "16:9" || parameters["durationSeconds"] != float64(8) {
+		t.Fatalf("unexpected Gemini video payload: %#v", upstream)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response should be json: %v body=%s", err, w.Body.String())
+	}
+	if body["id"] != "operations/veo-test-123" || body["status"] != "queued" || body["provider"] != "gemini" {
+		t.Fatalf("unexpected video response: %#v", body)
+	}
+}
+
 func TestRelayServerRetriesWhenStreamDoesNotOpen(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	oldTimeout := streamOpenTimeout
@@ -1932,4 +2065,91 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatalf("read stdout pipe: %v", err)
 	}
 	return string(data)
+}
+
+func TestRequestKindRecognizesVideoGatewayRoutes(t *testing.T) {
+	tests := map[string]string{
+		"/v1/videos":             "video_generation",
+		"/v1/videos/generations": "video_generation",
+		"/v1/videos/edits":       "video_edit",
+		"/v1/videos/extensions":  "video_extension",
+	}
+	for path, want := range tests {
+		if got := requestKindFromPath(path); got != want {
+			t.Fatalf("requestKindFromPath(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestProvidersForModelKeepsCodexCompatibilityAndNativeFallback(t *testing.T) {
+	legacy := &relayServer{manifest: &manifest{}}
+	if got := legacy.providersForModel(context.Background(), "gpt-5.4"); len(got) != 1 || got[0] != "codex" {
+		t.Fatalf("legacy providers = %#v", got)
+	}
+
+	native := &relayServer{manifest: &manifest{
+		NativeModelRegistry: true,
+		Providers:           []string{"xai", "claude"},
+	}}
+	got := native.providersForModel(context.Background(), "cle-test-model-that-is-not-registered")
+	if len(got) != 2 || got[0] != "xai" || got[1] != "claude" {
+		t.Fatalf("native fallback providers = %#v", got)
+	}
+
+	account := accountSpec{ID: "gemini-account", AuthID: "gemini-account.json", Provider: "gemini-cli"}
+	native.manifest.Accounts = []accountSpec{account}
+	spec := &apiKeySpec{AccountIDs: []string{account.AuthID}}
+	ctx := context.WithValue(context.Background(), clientAPIKeyContextKey, spec)
+	got = native.providersForModel(ctx, "gemini-2.5-flash")
+	if len(got) != 1 || got[0] != "gemini-cli" {
+		t.Fatalf("scoped providers = %#v", got)
+	}
+}
+
+func TestNativeGeminiImageModelRecognition(t *testing.T) {
+	for _, model := range []string{"gemini-3.1-flash-image", "antigravity/gemini-3.1-flash-image", "gemini-imagen-4"} {
+		if !isNativeGeminiImageModel(model) {
+			t.Fatalf("expected %q to be recognized as a native Gemini image model", model)
+		}
+	}
+	for _, model := range []string{"gemini-2.5-flash", "gpt-image-2", "grok-imagine-image"} {
+		if isNativeGeminiImageModel(model) {
+			t.Fatalf("did not expect %q to be recognized as a native Gemini image model", model)
+		}
+	}
+}
+
+func TestNativeGeminiImageConfigMapsOpenAIOptions(t *testing.T) {
+	config := nativeGeminiImageConfig(map[string]any{
+		"size":       "1792x1024",
+		"resolution": "2k",
+	})
+	if config["aspect_ratio"] != "16:9" || config["image_size"] != "2K" {
+		t.Fatalf("unexpected Gemini image config: %#v", config)
+	}
+}
+
+func TestBuildImagesAPIResponseFromNativeChat(t *testing.T) {
+	payload := []byte(`{
+		"choices":[{"message":{"content":"revised","images":[
+			{"type":"image_url","image_url":{"url":"data:image/png;base64,aGVsbG8="}}
+		]}}],
+		"usage":{"total_tokens":7}
+	}`)
+	out, err := buildImagesAPIResponseFromNativeChat(payload, "b64_json")
+	if err != nil {
+		t.Fatalf("convert native image response: %v", err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(out, &response); err != nil {
+		t.Fatalf("unmarshal converted response: %v", err)
+	}
+	data, _ := response["data"].([]any)
+	if len(data) != 1 {
+		t.Fatalf("expected one image, got %#v", response)
+	}
+	item, _ := data[0].(map[string]any)
+	if item["b64_json"] != "aGVsbG8=" || item["revised_prompt"] != "revised" {
+		t.Fatalf("unexpected converted image: %#v", item)
+	}
 }

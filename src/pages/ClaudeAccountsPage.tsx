@@ -2813,6 +2813,7 @@ export function ClaudeAccountsPage({ subPlatform = 'desktop' }: ClaudeAccountsPa
         </div>
         <div className="page-tabs-trailing" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', paddingRight: '16px' }}>
           <button
+            type="button"
             className="btn btn-primary"
             style={{ padding: '6px 12px', fontSize: '13px' }}
             onClick={() => {

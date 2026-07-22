@@ -1,0 +1,52 @@
+.claude-web-api-page .mm-api-title-icon.claude {
+  background: color-mix(in srgb, #d97757 14%, var(--bg-card));
+  border-color: color-mix(in srgb, #d97757 30%, var(--border-light));
+}
+
+.claude-api-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--mm-border);
+  border-radius: 9px;
+  background: var(--mm-surface);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.claude-api-back:hover { border-color: color-mix(in srgb, var(--primary) 35%, var(--mm-border)); color: var(--primary); }
+.claude-api-back > svg { width: 13px; height: 13px; }
+.claude-api-back img { width: 16px; height: 16px; }
+
+.claude-api-shared {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, #d97757 24%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, #d97757 9%, transparent);
+  color: #d97757;
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.claude-api-config-list { display: grid; gap: 8px; }
+.claude-api-config-list > label { display: grid; grid-template-columns: 122px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 37px; padding: 6px 8px; border: 1px solid var(--mm-border); border-radius: 8px; background: color-mix(in srgb, var(--bg-primary) 82%, transparent); }
+.claude-api-config-list > label > span { color: var(--text-secondary); font-size: 9.5px; font-weight: 680; }
+.claude-api-config-list > label > div { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.claude-api-config-list code { flex: 1; overflow: hidden; color: var(--text-primary); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.claude-api-config-list button { display: grid; place-items: center; width: 25px; height: 25px; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.claude-api-config-list button:hover { color: var(--primary); }
+.claude-api-config-list svg { width: 12px; height: 12px; }
+.claude-api-create-key { margin-top: 9px; min-height: 30px; font-size: 11px; }
+.claude-api-create-key svg { width: 13px; height: 13px; }
+
+.claude-api-account-modal { width: min(650px, calc(100vw - 32px)); }
+
+@media (max-width: 720px) {
+  .claude-api-config-list > label { grid-template-columns: 1fr; }
+}

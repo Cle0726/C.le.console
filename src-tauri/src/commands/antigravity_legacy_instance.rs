@@ -26,7 +26,9 @@ fn resolve_local_account_id() -> Option<String> {
         use modules::antigravity_legacy_instance::{resolve_auth_mode, AntigravityDesktopAuthMode};
         match resolve_auth_mode() {
             AntigravityDesktopAuthMode::SystemCredential => {
-                if let Ok(Some(system_credential)) = modules::antigravity_credential::read_antigravity_system_credential() {
+                if let Ok(Some(system_credential)) =
+                    modules::antigravity_credential::read_antigravity_system_credential()
+                {
                     if let Ok(accounts) = modules::list_accounts() {
                         for account in accounts {
                             if account.token.refresh_token == system_credential.refresh_token {
@@ -37,9 +39,7 @@ fn resolve_local_account_id() -> Option<String> {
                 }
                 None
             }
-            AntigravityDesktopAuthMode::LegacyStateDb => {
-                resolve_local_account_id_from_db()
-            }
+            AntigravityDesktopAuthMode::LegacyStateDb => resolve_local_account_id_from_db(),
         }
     }
     #[cfg(not(target_os = "windows"))]

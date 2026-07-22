@@ -1410,8 +1410,7 @@ pub async fn fetch_codex_account_note_mail_url(
     if mail_url.is_empty() {
         return Err("MAIL_URL_EMPTY".to_string());
     }
-    let parsed = reqwest::Url::parse(mail_url)
-        .map_err(|_| "MAIL_URL_INVALID".to_string())?;
+    let parsed = reqwest::Url::parse(mail_url).map_err(|_| "MAIL_URL_INVALID".to_string())?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("MAIL_URL_UNSUPPORTED_SCHEME".to_string());
     }
@@ -1872,18 +1871,16 @@ fn normalize_model_provider_wire_api(value: Option<&str>, base_url: &str) -> Str
     }
 }
 
-const RESPONSES_NATIVE_CHAT_TEST_MODEL_PRIORITY: &[&str] =
-    &[
-        "gpt-5.6-sol",
-        "gpt-5.6",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "gpt-5.5",
-        "gpt-5.4",
-        "gpt-5",
-        "gpt-4.1",
-        "gpt-4o",
-    ];
+const RESPONSES_NATIVE_CHAT_TEST_MODEL_PRIORITY: &[&str] = &[
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5",
+    "gpt-4.1",
+    "gpt-4o",
+];
 
 fn is_image_generation_model_id(model_id: &str) -> bool {
     let lower = model_id.trim().to_ascii_lowercase();
@@ -2746,8 +2743,12 @@ pub async fn codex_query_model_provider_usage(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     match requested_type {
-        Some("new_api") => query_new_api_model_provider_usage(&client, &resolved_base_url, key).await,
-        Some("sub2api") => query_sub2api_model_provider_usage(&client, &resolved_base_url, key).await,
+        Some("new_api") => {
+            query_new_api_model_provider_usage(&client, &resolved_base_url, key).await
+        }
+        Some("sub2api") => {
+            query_sub2api_model_provider_usage(&client, &resolved_base_url, key).await
+        }
         Some(value) => Err(format!("PROVIDER_USAGE_TYPE_UNSUPPORTED: {}", value)),
         None => {
             let new_api_error =

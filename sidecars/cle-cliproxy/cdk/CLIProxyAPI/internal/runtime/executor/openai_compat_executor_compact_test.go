@@ -155,6 +155,45 @@ func TestOpenAICompatExecutorImagesGenerationsPassthrough(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatExecutorVideosGenerationsPreservesEndpoint(t *testing.T) {
+	var gotPath string
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"request_id":"video-1","status":"queued"}`))
+	}))
+	defer server.Close()
+
+	executor := NewOpenAICompatExecutor("xai", &config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url": server.URL + "/v1",
+		"api_key":  "test",
+	}}
+	resp, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "grok-imagine-video",
+		Payload: []byte(`{"model":"grok-imagine-video","prompt":"animate"}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FromString("openai-video"),
+		Metadata: map[string]any{
+			cliproxyexecutor.RequestPathMetadataKey: "/v1/videos/generations",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if gotPath != "/v1/videos/generations" {
+		t.Fatalf("path = %q, want /v1/videos/generations", gotPath)
+	}
+	if got := gjson.GetBytes(gotBody, "model").String(); got != "grok-imagine-video" {
+		t.Fatalf("model = %q; body=%s", got, string(gotBody))
+	}
+	if got := gjson.GetBytes(resp.Payload, "request_id").String(); got != "video-1" {
+		t.Fatalf("response payload = %s", string(resp.Payload))
+	}
+}
+
 func TestOpenAICompatExecutorImagesGenerationsStreamsUpstream(t *testing.T) {
 	var gotPath string
 	var gotBody []byte
