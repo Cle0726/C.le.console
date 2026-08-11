@@ -1,3 +1,3 @@
-83a4d7d1c4718a90e467461304d103b7cde75bfee11a1f28b017972d1d9af8e4  C.le.console_1.1.4_x64_setup.exe
-01910d73bfc064a50bce474bef9e2a48156f2681fa61f7457a3d8cb743fb2d04  C.le.console_1.1.4_x64_portable.zip
-6bf4b77a313d9396c236e45e3f735211cefae1205f15c49664623e394f74d93a  C.le.console_1.1.4_x64_portable_README.txt
+9095f80f956b2ca04c0d85a3f2716947c5fb558445128d8db3adbaf9082aed9b  C.le.console_1.1.4_x64_setup.exe
+980edf0e5ede0e69c5f69d219854913583444e16a3f66fa46e68652521c2f01a  C.le.console_1.1.4_x64_portable.zip
+de41f3650ffcb8267c5a99ddea3c2b895324426ed23184344576a231a1f65916  C.le.console_1.1.4_x64_portable_README.txt

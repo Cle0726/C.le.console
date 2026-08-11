@@ -6,7 +6,9 @@
 4. Existing account data remains under %USERPROFILE%\.antigravity_cle.
 
 Independent API services
-- Run scripts\Start-CleApiServices.ps1 to start ports 1466, 1467, and 4479 independently.
+- Run scripts\Start-CleApiServices.ps1 to start the independent API services.
+- Main multi-model gateway: http://127.0.0.1:1466/v1
+- Jimeng gateway: http://127.0.0.1:15100/v1
 - Closing the console does not stop these independent API processes.
 - Run scripts\Stop-CleApiServices.ps1 when you explicitly want to stop them.
 
@@ -14,5 +16,5 @@ Integrity
 Verify this archive with the SHA256SUMS.txt published with the release.
 
 Notes
-- cle-cliproxy.exe and cockpit-cliproxy.exe are required sidecars; do not delete them.
+- cle-cliproxy.exe, cockpit-cliproxy.exe, and jimeng-api.exe are required sidecars; do not delete them.
 - Installation package: C.le.console_1.1.4_x64_setup.exe
