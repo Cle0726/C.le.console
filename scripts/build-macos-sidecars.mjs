@@ -97,8 +97,6 @@ for (const architecture of architectures) {
     `node22-macos-${architecture.pkg}`,
     '--output',
     output,
-    '--compress',
-    'Brotli',
     '--sea',
     '--no-signature',
   ]);
