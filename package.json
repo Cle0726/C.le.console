@@ -12,6 +12,9 @@
     "preview": "vite preview",
     "tauri:dev": "node scripts/tauri-dev.cjs",
     "tauri": "node scripts/tauri.cjs",
+    "macos:check": "node scripts/check-macos-readiness.mjs",
+    "macos:sidecars": "node scripts/build-macos-sidecars.mjs",
+    "macos:build": "node scripts/build-macos.mjs",
     "posttauri": "node scripts/finalize-release-executable.cjs",
     "sync-version": "node scripts/sync-version.js"
   },

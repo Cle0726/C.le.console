@@ -170,16 +170,39 @@ $env:GOCACHE = "$PWD\target\go-cache"
 npm run tauri -- build --bundles nsis --no-sign
 ```
 
-### macOS 状态
+### macOS 预览版准备状态
 
-源码中已经包含较多 macOS 条件分支、原生菜单、Keychain、通知和应用路径处理，但当前仓库发布物仍然只有 Windows x64 版本。要生成可用的 `.app` 或 `.dmg`，还需要：
+仓库已经加入独立的 `tauri.macos.conf.json`、原生 sidecar 构建脚本和手动 GitHub Actions 工作流。预览构建目标为 **macOS 12.0+**，默认生成同时兼容 Apple Silicon 与 Intel 的 Universal `.app` 和 `.dmg`。
 
-- 在 macOS 设备上完成原生构建与运行验证。
-- 为 Apple Silicon 或 Intel Mac 编译对应 sidecar。
-- 将打包目标从 Windows `nsis` 扩展到 macOS `app`/`dmg`。
-- 完成应用签名、公证和系统权限验证。
+macOS 预览版当前包含：
 
-因此，现有 `.exe` 不能直接在 macOS 上运行。
+- Rust/Tauri 主程序及 macOS 原生菜单、Keychain、通知和应用路径处理。
+- `cle-cliproxy` 本地 API sidecar。
+- `jimeng-api` sidecar，以及对应的即梦 API 与无限画布入口。
+
+当前限制：
+
+- `cockpit-cliproxy` 暂无可重建的 macOS 源码，因此 Claude Web 辅助线路不会进入首个 macOS 预览包；其他主程序功能不因此阻塞。
+- 预览包使用 ad-hoc 签名，尚未进行 Apple Developer ID 签名和公证，不能作为正式发布包。
+- 在真实 Mac 到位前，只能完成源码、配置和 CI 构建链检查，不能声明已经通过实际启动、权限和性能验证。
+
+在 macOS 本机安装 Xcode Command Line Tools、Node.js 20+、Rust 和 Go 后执行：
+
+```bash
+npm ci
+npm run macos:check
+npm run macos:build
+```
+
+默认产物位于 `target/universal-apple-darwin/release/bundle/`。也可以在 GitHub 仓库的 **Actions → macOS preview → Run workflow** 手动生成保留 14 天的测试产物。
+
+现有 Windows `.exe` 仍不能直接在 macOS 上运行。Mac 到位后先执行以下命令确认机器真实架构与系统版本，再进行安装验证：
+
+```bash
+uname -m
+sw_vers
+system_profiler SPHardwareDataType
+```
 
 ## 构建状态
 

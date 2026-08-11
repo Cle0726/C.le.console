@@ -1,0 +1,67 @@
+name: macOS preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-universal:
+    name: Build universal app and DMG
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            third_party/jimeng-api/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sidecars/cle-cliproxy/go.mod
+          cache-dependency-path: sidecars/cle-cliproxy/go.sum
+
+      - name: Set up Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check macOS source readiness
+        run: npm run macos:check
+
+      - name: Build universal preview
+        run: npm run macos:build
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/macos
+          APP_PATH="$(find target/universal-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          DMG_PATH="$(find target/universal-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$APP_PATH"
+          test -n "$DMG_PATH"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" artifacts/macos/C.le.console-macos-universal.app.zip
+          cp "$DMG_PATH" artifacts/macos/C.le.console-macos-universal.dmg
+          shasum -a 256 artifacts/macos/* > artifacts/macos/SHA256SUMS.txt
+
+      - name: Upload preview artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: C.le.console-macos-universal-preview
+          path: artifacts/macos/*
+          if-no-files-found: error
+          retention-days: 14

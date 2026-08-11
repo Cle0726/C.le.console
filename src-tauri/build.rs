@@ -160,13 +160,17 @@ fn build_cle_cliproxy_sidecar() {
         panic!("unsupported sidecar build target: {target}");
     };
     build_go_sidecar(&sidecar_dir, &output_dir, &target, goos, goarch);
-    if cfg!(target_os = "macos") && target.contains("apple-darwin") {
+    if cfg!(target_os = "macos")
+        && target.contains("apple-darwin")
+        && std::env::var("CLE_BUILD_UNIVERSAL_SIDECAR").ok().as_deref() == Some("1")
+    {
         build_macos_universal_sidecar(&sidecar_dir, &output_dir);
     }
 }
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=CLE_BUILD_UNIVERSAL_SIDECAR");
     build_cle_cliproxy_sidecar();
 
     #[cfg(target_os = "macos")]
