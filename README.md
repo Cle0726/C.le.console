@@ -1,245 +1,219 @@
 # C.le.控制台
 
-> **C.le. Console — AI Model Operations & Route Observatory**  
-> 当前稳定版：**1.1.4** · Windows x64 · Tauri 2 + React 19 + Rust + Go
+<p align="center">
+  <img src="src-tauri/icons/128x128.png" width="96" alt="C.le.控制台图标" />
+</p>
 
-C.le.控制台是一套面向桌面 AI 工具的账户、额度、API 服务与网络出口统一控制台。项目将高密度管理能力拆分为仪表盘、模型工作台、账户页、API 服务页、出口线路页和设置页，并以昼夜双主题、动态几何模型、轻量状态窗和中英双语信息层级保持一致的视觉体验。
+<p align="center">
+  <strong>面向桌面 AI 工具的账户、额度、API 服务与运行状态控制台</strong>
+</p>
 
-本目录是可直接公开的 **1.1.4 最新完整版本**：源码、安装程序和便携运行文件均来自同一次最终构建，不包含旧版本安装包、旧版说明、历史宣传素材、测试截图、缓存、日志或本机账户数据。
+<p align="center">
+  Tauri 2 · React 19 · TypeScript · Rust · Go
+</p>
 
-## 1. 核心能力
+## 项目简介
 
-### 1.1 视觉与交互
+C.le.控制台将分散在不同 AI 客户端和命令行工具中的账户、额度、会话、代理服务与运行状态集中到一个桌面工作台中。它不是单纯的账号列表，而是一套覆盖“账户管理 → 本地 API → 模型路由 → 状态监测 → 多开与唤醒”的桌面控制层。
 
-- 默认启动页为 **仪表盘 / Dashboard**。
-- 六套独立动态几何模型随机切换，不再重复使用同一造型。
-- 几何主体、环绕轨道、粒子与鼠标位移联动；支持自动旋转与暂停策略。
-- 黑猫入口位于顶部中间，点击后展开模型与功能导航，收起时保留展示空间。
-- 白天、黑夜和简洁模式使用独立对比度体系，避免文字与控件在不同主题下失读。
-- 开屏问候、日期和时间根据系统时间动态生成，中英文字体与整体网格一致。
-- 程序与项目图片统一圆角、裁切和阴影规则，减少“贴图感”。
+项目目前支持 Codex、Claude、Antigravity、Gemini、GitHub Copilot、Windsurf、Cursor、Trae、Kiro、Qoder、Zed、CodeBuddy、WorkBuddy 等平台，并提供昼夜主题、简模式、状态浮窗和自适应界面。
 
-### 1.2 模型与账户
+> 当前稳定发布版本为 **1.1.4（Windows x64）**。`main` 分支包含 1.1.4 之后的最新源码更新；这些更新尚未重新生成正式安装包。
 
-- 支持 Codex、Claude、Antigravity、Gemini、GitHub Copilot、Windsurf、Cursor、Trae、Kiro、Qoder、Zed、CodeBuddy、WorkBuddy 等平台账户管理。
-- 展示模型当前额度、周期额度、订阅状态、到期时间与刷新结果。
-- 支持账户导入、导出、标签、分组、备注、会话管理、应用多开与唤醒操作。
-- 账户页面与仪表盘共用同一套排版、色板、网格、描边和状态语义。
+## 主要功能
 
-### 1.3 本地 API 服务
+### 账户与额度
 
-- 内置 `cle-cliproxy` Go sidecar，为本地 API 服务提供统一代理与模型路由。
-- 支持账号池、模型映射、路由策略、调用统计和服务状态管理。
-- Rust 后端负责 sidecar 生命周期、配置同步、状态查询和桌面进程集成。
-- 可选的 Chat2API、AuroraProxy 快捷启动不再绑定任何开发者电脑路径；如需使用，分别设置 `CLE_CHAT2API_PATH`、`CLE_AURORA_PATH` 为对应 EXE 的完整路径。
+- 多平台账户统一浏览、筛选、分组、标签和备注。
+- 展示周期额度、剩余时间、订阅状态、到期时间与刷新结果。
+- 支持账户导入、导出、切换、应用多开和异常状态识别。
+- 提供独立状态窗口，在不打开完整主界面的情况下查看关键额度和线路状态。
 
-### 1.4 真实出口线路监测
+### 本地 API 与模型路由
 
-- 读取本机真实代理与连接信息，不使用演示或伪造数据。
-- 重点展示 **线路 / Route** 与 **规则 / Rule**，而非堆叠无关流量指标。
-- 分类监测：本地 API 服务、桌面 ChatGPT、桌面 Claude、其他。
-- 实际出口与设定出口不一致时触发醒目的异常提示。
-- “其他”按豁免线路处理，不产生错误误报。
-- 线路数据缺失时显示“未观测 / Not observed”，不会伪装成正常数据。
+- 通过 `cle-cliproxy` Go sidecar 提供本地 API 服务。
+- 支持账号池、模型映射、路由策略、调用统计和服务生命周期管理。
+- Rust 后端负责配置同步、状态查询、进程管理及桌面应用集成。
+- 新增 Codex agent identity 处理与豆包 Seedance 请求适配。
 
-### 1.5 自适应状态窗
+### 即梦服务与无限画布
 
-- 主窗口点击最小化后自动进入状态窗，而不是退出程序。
-- 状态窗仅保留模型额度、周期进度、出口线路、异常状态和重新检测等关键数据。
-- 左右模块各占 50%，窗口内容随原生窗口尺寸连续缩放。
-- 默认逻辑尺寸 `480 × 288`，最小逻辑尺寸 `420 × 270`，可自由拖拽放大。
-- 在高 DPI 与大尺寸窗口下同步放大字体、额度球、间距和控件，而不是只扩大空白区域。
+- 内置即梦 API 服务管理页面，可管理服务状态、配置和账户连接。
+- 提供独立的 **无限画布工作区**，前后端状态链路已经接入。
+- 无限画布包含开始、读取状态等 Tauri commands，不是单纯的静态展示页。
+- 即梦 sidecar 源码与构建说明位于 `third_party/jimeng-api`。
 
-## 2. 运行架构
+### 桌面交互与视觉系统
+
+- 昼间、夜间和简模式使用独立的对比度与性能策略。
+- 开屏问候在主应用加载前直接显示，减少启动阶段的纯黑等待。
+- 开屏文字使用整句过渡，并根据当前时间选择自然问候。
+- 鱼形鼠标支持移动反馈和点击吐泡泡；简模式保留鼠标主体并减少拖尾开销。
+- 账户页选中项使用静态高光，保留悬停反馈，降低持续动画带来的掉帧。
+
+### 性能与稳定性
+
+- `frameGovernor` 根据窗口状态和性能模式控制持续渲染任务。
+- 页面隐藏、失焦或进入简模式时降低非关键动画与 WebGL 更新频率。
+- 对高成本模糊、粒子、光束和持续脉冲效果进行分层降级，而不是整体关闭视觉效果。
+- 修复额度球持续闪烁、昼间主题色不统一、浮层模糊和部分响应式布局问题。
+
+## 最近更新
+
+最新源码提交集中更新了以下内容：
+
+1. **无限画布**：新增页面、样式、前端服务和 Rust commands。
+2. **即梦 API**：新增本地服务模块、管理页面、sidecar 构建与冒烟测试脚本。
+3. **Codex 与多模型 API**：完善本地访问、模型路由、媒体端点和身份信息处理。
+4. **启动体验**：将开屏层前移到首屏入口，避免等待主应用动态加载时长时间黑屏。
+5. **界面优化**：更新液态玻璃体系、账户页布局、状态窗口和昼夜/简模式适配。
+6. **鱼形鼠标**：增加点击泡泡互动，移除高成本拖尾并接入帧率治理。
+7. **性能治理**：减少隐藏页面和非活动窗口中的持续合成与动画工作。
+
+完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 技术架构
 
 ```mermaid
 flowchart LR
-    UI[React 19 / TypeScript UI]
-    IPC[Tauri Commands / Events]
-    CORE[Rust Desktop Core]
-    SIDECAR[cle-cliproxy Go Sidecar]
-    STORE[(Local Config & SQLite)]
-    APPS[Desktop AI Apps]
-    NET[System Proxy & Network Routes]
+    UI["React 19 / TypeScript"]
+    IPC["Tauri Commands / Events"]
+    CORE["Rust Desktop Core"]
+    PROXY["cle-cliproxy / Go"]
+    JIMENG["jimeng-api Sidecar"]
+    STORE[("Local Config / SQLite")]
+    APPS["Desktop AI Apps"]
+    NET["Model Providers / Network Routes"]
 
-    UI -->|invoke / listen| IPC
+    UI --> IPC
     IPC --> CORE
     CORE <--> STORE
-    CORE -->|process / account integration| APPS
-    CORE -->|start / stop / manifest| SIDECAR
-    SIDECAR -->|local API traffic| NET
-    CORE -->|route observation| NET
-    CORE -->|quota / state events| UI
+    CORE --> APPS
+    CORE --> PROXY
+    CORE --> JIMENG
+    PROXY --> NET
+    JIMENG --> NET
+    CORE --> UI
 ```
 
-前端不直接读取系统凭据或操作外部进程。所有需要系统权限的工作都通过 Tauri command 进入 Rust 层；本地 API 协议转换由独立 Go sidecar 完成。这样可以将界面、系统集成和代理服务分开测试与维护。
+前端不直接操作系统凭据和外部进程。需要系统权限的操作通过 Tauri command 进入 Rust 层，本地协议转换与代理服务由独立 sidecar 完成，以便分别测试和维护。
 
-## 3. 代码结构
+## 代码结构
 
 ```text
 C.le.console/
-├─ src/                         # React 前端
-│  ├─ assets/                  # 应用图标、模型素材、联系二维码
-│  ├─ components/              # 通用控件、弹窗、工具栏和业务组件
-│  ├─ contexts/                # 主题、语言和应用级上下文
-│  ├─ data/                    # 平台、出口监测和界面静态定义
-│  ├─ hooks/                   # 账户页、查询和交互逻辑复用
-│  ├─ locales/                 # 多语言 JSON
-│  ├─ pages/                   # 仪表盘、账户、API、设置、状态窗等页面
-│  ├─ presentation/            # 展示层模型与格式化
-│  ├─ services/                # IPC、数据迁移与前端服务
-│  ├─ stores/                  # Zustand 状态
-│  ├─ styles/                  # 全局主题、平台页和响应式样式
-│  ├─ types/                   # TypeScript 类型
-│  ├─ utils/                   # 格式化、导入导出与辅助方法
-│  ├─ App.tsx                  # 页面路由、窗口模式和全局交互入口
-│  └─ main.tsx                 # React 启动入口
-├─ src-tauri/                   # Tauri 桌面应用
-│  ├─ capabilities/            # Tauri 权限声明
-│  ├─ icons/                   # Windows/macOS 应用图标
-│  ├─ native/                  # macOS 原生菜单桥接
-│  ├─ resources/               # 打包资源占位与运行资源
-│  ├─ src/
-│  │  ├─ commands/             # 前端可调用的 Tauri commands
-│  │  ├─ models/               # Rust 数据结构
-│  │  ├─ modules/              # 账户、额度、进程、代理、窗口等核心模块
-│  │  └─ utils/                # Rust 通用工具
-│  ├─ build.rs                 # 构建 Go sidecar 并交给 Tauri 打包
-│  ├─ Cargo.toml               # 桌面端 Rust 依赖
-│  └─ tauri.conf.json          # 产品名、窗口、资源和打包配置
-├─ crates/
-│  ├─ cle-core/                # 可复用 Rust 核心模块
-│  └─ cle-cli/                 # 命令行入口
+├─ src/                         # React / TypeScript 前端
+│  ├─ components/              # 通用组件与桌面交互层
+│  ├─ pages/                   # 仪表盘、账户、API、无限画布等页面
+│  ├─ services/                # Tauri IPC 服务封装
+│  ├─ styles/                  # 主题、液态玻璃和性能样式
+│  └─ utils/                   # 帧率治理、格式化和运行辅助
+├─ src-tauri/                   # Tauri / Rust 桌面后端
+│  └─ src/
+│     ├─ commands/             # 前端可调用命令
+│     ├─ models/               # Rust 数据结构
+│     └─ modules/              # 账户、额度、代理、窗口和服务模块
 ├─ sidecars/
-│  └─ cle-cliproxy/            # 本地 API Go sidecar
-│     ├─ cdk/CLIProxyAPI/      # 所需第三方协议实现源码
-│     ├─ main.go               # sidecar 主入口
-│     └─ go.mod                # Go 模块与本地 replace
-├─ scripts/                     # 版本同步、Tauri 启动、构建和校验脚本
-├─ release/                     # 本次 1.1.4 最终成品
-│  ├─ C.le.控制台_1.1.4_x64-setup.exe
-│  ├─ portable/                # 完整便携运行目录
-│  └─ SHA256SUMS.txt           # 文件校验值
-├─ announcements.json           # 当前公告源；默认无历史公告与推广
-├─ remote-config.json           # 远端规则配置入口
-├─ Cargo.toml / Cargo.lock      # Rust workspace
-├─ package.json / package-lock.json
-├─ vite.config.ts
-└─ README.md                    # 本说明（仓库唯一项目 Markdown 文档）
+│  └─ cle-cliproxy/            # Go 本地 API sidecar
+├─ third_party/
+│  └─ jimeng-api/              # 即梦 sidecar 源码与许可证
+├─ crates/                     # Rust workspace 公共模块与 CLI
+├─ scripts/                    # 开发、构建、测试和发布脚本
+└─ release/                    # 已确认的稳定版发布文件
 ```
 
-## 4. 关键运行流程
+## 开发环境
 
-### 启动
+### Windows
 
-1. Tauri 创建主窗口并初始化本地配置、日志和系统集成。
-2. React 完成主题、语言和首屏状态恢复。
-3. 开屏动画按当前时间生成问候，并在资源就绪后进入仪表盘。
-4. 本地 API 服务按配置决定是否启动 `cle-cliproxy`。
-
-### 最小化与恢复
-
-1. 主窗口最小化事件进入 Rust 窗口控制模块。
-2. 主窗口隐藏，状态窗以当前主题和关键数据打开。
-3. 状态窗关闭或恢复操作重新显示主窗口。
-4. 恢复保护使用状态代次与稳定等待，避免窗口在快速切换时发生竞态。
-
-### 出口监测
-
-1. Rust 读取目标桌面进程、连接与系统代理状态。
-2. 监测结果按本地 API、ChatGPT、Claude、其他归类。
-3. 前端将实际线路与设定线路逐项比较。
-4. 不一致项显示异常；没有样本的项保持“未观测”；其他线路保持豁免。
-
-## 5. 开发环境
-
-### Windows 必需项
-
-- Node.js 20 或更高版本
+- Node.js 20+
 - npm
 - Rust stable（MSVC toolchain）
-- Go 1.26 或与 `sidecars/cle-cliproxy/go.mod` 兼容的版本
-- Microsoft Visual Studio 2022 Build Tools（Desktop development with C++）
+- Go（与 `sidecars/cle-cliproxy/go.mod` 兼容）
+- Visual Studio 2022 Build Tools
 - Microsoft Edge WebView2 Runtime
-- NSIS（Tauri CLI 通常会自动准备所需工具）
 
-### 安装依赖
+安装依赖：
 
 ```powershell
 npm ci
 ```
 
-### 前端开发
+启动前端开发环境：
 
 ```powershell
 npm run dev
 ```
 
-### Tauri 开发
+启动 Tauri 开发环境：
 
 ```powershell
 $env:GOCACHE = "$PWD\target\go-cache"
 npm run tauri -- dev
 ```
 
-### 静态检查
+执行主要检查：
 
 ```powershell
-npm run typecheck
-$env:GOCACHE = "$PWD\target\go-cache"
-cargo check --workspace
+npm run build
+cargo check --manifest-path src-tauri/Cargo.toml
+
 Push-Location sidecars\cle-cliproxy
 go test ./...
 Pop-Location
 ```
 
-### 生产构建
+构建 Windows 安装包：
 
 ```powershell
 $env:GOCACHE = "$PWD\target\go-cache"
 npm run tauri -- build --bundles nsis --no-sign
 ```
 
-主要输出：
+### macOS 状态
 
-```text
-target/release/C.le.控制台.exe
-target/release/cle-cliproxy.exe
-target/release/bundle/nsis/C.le.控制台_1.1.4_x64-setup.exe
-```
+源码中已经包含较多 macOS 条件分支、原生菜单、Keychain、通知和应用路径处理，但当前仓库发布物仍然只有 Windows x64 版本。要生成可用的 `.app` 或 `.dmg`，还需要：
 
-## 6. 1.1.4 成品校验
+- 在 macOS 设备上完成原生构建与运行验证。
+- 为 Apple Silicon 或 Intel Mac 编译对应 sidecar。
+- 将打包目标从 Windows `nsis` 扩展到 macOS `app`/`dmg`。
+- 完成应用签名、公证和系统权限验证。
 
-| 文件 | SHA-256 |
-|---|---|
-| `release/C.le.控制台_1.1.4_x64-setup.exe` | `927e2ba7f103d51ad5c55b21b552c865dea48ac698414e77ecfd19c6fb902c4a` |
-| `release/portable/C.le.控制台.exe` | `ac4de8ee03170d28212b95117f808eca7fe43815c270bdee2bb0a2a651fdfb6e` |
-| `release/portable/cle-cliproxy.exe` | `9d8193a15ef038953eefa65ed2cc2ed0d5a3c434820f0f64d10d6e8e5b0b2600` |
+因此，现有 `.exe` 不能直接在 macOS 上运行。
 
-完整资源校验见 `release/SHA256SUMS.txt`。
+## 构建状态
 
-## 7. 数据与隐私
+最新源码已通过：
 
-- 仓库不包含真实账户、OAuth token、API key、Cookie、日志、SQLite 数据库或本机代理记录。
+- `npm run build`
+- `cargo check --manifest-path src-tauri/Cargo.toml`
+- `go test ./...`（`sidecars/cle-cliproxy`）
+
+前端构建仍会提示部分大型资源块超过 Vite 默认警戒值，这是性能优化的后续工作，不影响本次编译通过。
+
+## 数据与隐私
+
+- 仓库不包含真实账户、OAuth token、API key、Cookie、日志或本机数据库。
 - 运行数据写入用户本机应用数据目录，不进入源码目录。
-- `announcements.json` 已清空历史公告、推广、旧版本跳转与旧资源。
-- `node_modules`、`dist`、`target`、调试 profile、测试截图和安装备份均已排除。
-- 提交前建议再次执行凭据扫描，并核对 `git status` 中只有预期文件。
+- `node_modules`、`dist`、`target`、测试截图、调试 profile 和安装备份均不应提交。
+- 本地调试脚本和未经验证的构建产物不会随普通源码更新发布。
 
-## 8. 发布约定
+## 发布说明
 
-- 仓库只保留当前稳定版源码和当前稳定版可执行文件。
-- 后续版本通过 Git tag 与 GitHub Release 保存，不在主分支堆放多代安装包。
-- `release/portable` 必须整体移动，不能只复制其中的主程序 EXE。
-- 当前仓库未配置远程地址，也没有执行上传；可由维护者自行绑定 GitHub 仓库。
+- 当前稳定发布版本：`v1.1.4`。
+- `main` 是最新源码分支，可能领先于稳定安装包。
+- 正式版本应通过 Git tag 与 GitHub Release 发布。
+- 不要将未经完整 Tauri 构建和验证的安装包作为正式版本上传。
 
-## 9. 联系方式
+## 联系方式
 
 - GitHub: [Cle0726](https://github.com/Cle0726)
 - QQ: `3478658158`
-- 电话: `15678144635`
 - 微信二维码：应用内进入 **设置 → 关于 / About** 查看
 
-## 10. 许可
+## 许可证
 
-项目代码按 **CC BY-NC-SA 4.0** 提供；详见根目录 `LICENSE`。`sidecars/cle-cliproxy/cdk/CLIProxyAPI` 使用其目录内的 MIT License。第三方依赖分别遵循各自许可证。
+项目代码按 **CC BY-NC-SA 4.0** 提供，详见 [LICENSE](LICENSE)。第三方目录遵循其各自许可证：
+
+- `sidecars/cle-cliproxy/cdk/CLIProxyAPI`：目录内 MIT License
+- `third_party/jimeng-api`：目录内独立许可证
