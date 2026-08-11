@@ -12,6 +12,8 @@ use std::sync::{
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
 use tauri::Manager;
+#[cfg(target_os = "macos")]
+use tauri::RunEvent;
 use tauri::WindowEvent;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tracing::info;
