@@ -33,6 +33,19 @@ function run(command, args, options = {}) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
+function removeEmbeddedMacSignature(filePath) {
+  const result = spawnSync('codesign', ['--remove-signature', filePath], {
+    cwd: repoRoot,
+    stdio: ['ignore', 'ignore', 'pipe'],
+    shell: false,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const message = result.stderr?.toString().trim();
+    console.log(`No removable signature on ${path.basename(filePath)}${message ? `: ${message}` : ''}`);
+  }
+}
+
 const architectures = requestedTarget === 'universal-apple-darwin'
   ? [
       { rust: 'aarch64-apple-darwin', go: 'arm64', pkg: 'arm64' },
@@ -102,6 +115,9 @@ for (const architecture of architectures) {
     'Brotli',
     '--no-signature',
   ]);
+  // pkg base binaries can retain a stale LC_CODE_SIGNATURE even with
+  // --no-signature. Strip it before lipo so Tauri can ad-hoc sign the final app.
+  removeEmbeddedMacSignature(output);
   fs.chmodSync(output, 0o755);
 }
 
@@ -114,6 +130,7 @@ if (requestedTarget === 'universal-apple-darwin') {
     const x64 = path.join(outputDir, `${name}-x86_64-apple-darwin`);
     const universal = path.join(outputDir, `${name}-universal-apple-darwin`);
     run('lipo', ['-create', arm64, x64, '-output', universal]);
+    removeEmbeddedMacSignature(universal);
     fs.chmodSync(universal, 0o755);
   }
 }
