@@ -28,10 +28,10 @@ function handleModelCardPointerMove(event: ReactPointerEvent<HTMLButtonElement>)
   const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
   const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
 
-  card.style.setProperty('--tilt-x', `${(0.5 - y) * 7}deg`);
-  card.style.setProperty('--tilt-y', `${(x - 0.5) * 8}deg`);
-  card.style.setProperty('--parallax-x', `${(x - 0.5) * 12}px`);
-  card.style.setProperty('--parallax-y', `${(y - 0.5) * 9}px`);
+  card.style.setProperty('--tilt-x', `${(0.5 - y) * 1.2}deg`);
+  card.style.setProperty('--tilt-y', `${(x - 0.5) * 1.5}deg`);
+  card.style.setProperty('--parallax-x', `${(x - 0.5) * 4}px`);
+  card.style.setProperty('--parallax-y', `${(y - 0.5) * 3}px`);
   card.style.setProperty('--pointer-x', `${x * 100}%`);
   card.style.setProperty('--pointer-y', `${y * 100}%`);
 }
@@ -55,10 +55,10 @@ function handleLaunchpadPointerMove(event: ReactPointerEvent<HTMLElement>) {
   const bounds = card.getBoundingClientRect();
   const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
   const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
-  card.style.setProperty('--launch-tilt-x', `${(0.5 - y) * 2.8}deg`);
-  card.style.setProperty('--launch-tilt-y', `${(x - 0.5) * 3.6}deg`);
-  card.style.setProperty('--launch-shift-x', `${(x - 0.5) * 18}px`);
-  card.style.setProperty('--launch-shift-y', `${(y - 0.5) * 14}px`);
+  card.style.setProperty('--launch-tilt-x', `${(0.5 - y) * 0.7}deg`);
+  card.style.setProperty('--launch-tilt-y', `${(x - 0.5) * 0.9}deg`);
+  card.style.setProperty('--launch-shift-x', `${(x - 0.5) * 5}px`);
+  card.style.setProperty('--launch-shift-y', `${(y - 0.5) * 4}px`);
   card.style.setProperty('--launch-pointer-x', `${x * 100}%`);
   card.style.setProperty('--launch-pointer-y', `${y * 100}%`);
 }
@@ -174,7 +174,7 @@ export function DashboardLaunchpad({
               variant={activeModel.id}
               mode="texture"
               intensity={58}
-              shadow={30}
+              shadow={0}
               rotationSpeed={0.86}
             />
           </div>

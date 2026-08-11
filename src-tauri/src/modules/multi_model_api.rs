@@ -1,6 +1,6 @@
 use crate::models::claude::ClaudeAuthMode;
 use crate::models::codex::CodexAuthMode;
-use crate::modules::atomic_write::write_string_atomic;
+use crate::modules::atomic_write::{parse_json_with_auto_restore, write_string_atomic};
 use crate::modules::{
     account, claude_account, codex_account, codex_local_access, gemini_account, logger, process,
 };
@@ -10,7 +10,10 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex as StdMutex, OnceLock,
+};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -21,6 +24,11 @@ const STATE_FILE: &str = "multi_model_api_service.json";
 const SIDECAR_DIR: &str = "multi_model_api_service";
 const DEFAULT_PORT: u16 = 1466;
 const CLAUDE_WEB_HELPER_PORT_OFFSET: u16 = 1;
+const WATCHDOG_INTERVAL_SECONDS: u64 = 15;
+const WATCHDOG_RESTART_COOLDOWN_SECONDS: u64 = 30;
+const WATCHDOG_MAX_RESTART_COOLDOWN_SECONDS: u64 = 300;
+const WATCHDOG_FAILURE_THRESHOLD: u32 = 3;
+static WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,6 +129,20 @@ pub struct MultiModelApiState {
     pub base_url: String,
     pub last_error: Option<String>,
     pub catalog: Vec<MultiModelCatalogEntry>,
+    pub self_heal: MultiModelSelfHealState,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiModelSelfHealState {
+    pub status: String,
+    pub consecutive_failures: u32,
+    pub restart_attempts: u32,
+    pub restart_failures: u32,
+    pub last_success_at: Option<String>,
+    pub last_repair_at: Option<String>,
+    pub next_restart_at: Option<String>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -142,10 +164,44 @@ pub struct MultiModelApiTestResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiModelRepairCheck {
+    pub id: String,
+    pub label: String,
+    pub status: String,
+    pub detail: String,
+    pub action: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiModelRepairReport {
+    pub ok: bool,
+    pub repaired: usize,
+    pub restarted: bool,
+    pub checked_at: String,
+    pub duration_ms: u64,
+    pub checks: Vec<MultiModelRepairCheck>,
+    pub state: MultiModelApiState,
+}
+
 #[derive(Default)]
 struct RuntimeState {
     child: Option<Child>,
     helpers: Vec<Child>,
+    last_error: Option<String>,
+}
+
+#[derive(Default)]
+struct SelfHealRuntime {
+    consecutive_failures: u32,
+    restart_attempts: u32,
+    restart_failures: u32,
+    last_success_at: Option<String>,
+    last_repair_at: Option<String>,
+    next_restart_at: Option<String>,
+    next_restart_after: Option<Instant>,
     last_error: Option<String>,
 }
 
@@ -169,6 +225,16 @@ fn runtime() -> &'static Mutex<RuntimeState> {
 fn lifecycle() -> &'static Mutex<()> {
     static LIFECYCLE: OnceLock<Mutex<()>> = OnceLock::new();
     LIFECYCLE.get_or_init(|| Mutex::new(()))
+}
+
+fn repair_lifecycle() -> &'static Mutex<()> {
+    static REPAIR_LIFECYCLE: OnceLock<Mutex<()>> = OnceLock::new();
+    REPAIR_LIFECYCLE.get_or_init(|| Mutex::new(()))
+}
+
+fn self_heal_runtime() -> &'static Mutex<SelfHealRuntime> {
+    static SELF_HEAL_RUNTIME: OnceLock<Mutex<SelfHealRuntime>> = OnceLock::new();
+    SELF_HEAL_RUNTIME.get_or_init(|| Mutex::new(SelfHealRuntime::default()))
 }
 
 fn default_true() -> bool {
@@ -257,8 +323,8 @@ fn load_config() -> Result<MultiModelApiConfig, String> {
     }
     let raw = std::fs::read_to_string(&path)
         .map_err(|error| format!("读取多模型 API 配置失败: {error}"))?;
-    let mut config: MultiModelApiConfig =
-        serde_json::from_str(&raw).map_err(|error| format!("解析多模型 API 配置失败: {error}"))?;
+    let mut config: MultiModelApiConfig = parse_json_with_auto_restore(&path, &raw)
+        .map_err(|error| format!("解析多模型 API 配置失败: {error}"))?;
     normalize_config(&mut config)?;
     if let Some((marker, marker_payload)) = migrate_legacy_key_records(&mut config)? {
         // Normalize again because imported records came from older schemas.
@@ -441,6 +507,9 @@ fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
     if config.session_affinity_ttl.trim().is_empty() {
         config.session_affinity_ttl = default_session_ttl();
     }
+    // Zero disables failover in the upstream SDK, while excessive retries can
+    // duplicate paid generation work and amplify provider outages.
+    config.request_retries = config.request_retries.clamp(1, 4);
     let mut keys = BTreeSet::new();
     for item in &mut config.api_keys {
         item.id = item.id.trim().to_string();
@@ -492,6 +561,7 @@ fn normalize_provider(raw: &str) -> String {
         "anthropic" | "claude" => "claude".into(),
         "google" | "gemini" => "gemini".into(),
         "grok" | "x.ai" | "xai" => "xai".into(),
+        "seedance" | "doubao-seedance" | "doubao_seedance" => "doubao-seedance".into(),
         "openai" => "openai".into(),
         "codex" => "codex".into(),
         "" => "openai".into(),
@@ -562,6 +632,12 @@ fn builtin_catalog() -> Vec<MultiModelCatalogEntry> {
         ("gemini", "gemini-3-flash-preview", &["text", "vision"]),
         ("gemini", "veo-3.1-generate-preview", &["video"]),
         ("gemini", "veo-3.0-generate-preview", &["video"]),
+        ("doubao-seedance", "doubao-seedance-1.5-pro", &["video"]),
+        (
+            "doubao-seedance",
+            "doubao-seedance-1.0-pro-fast",
+            &["video"],
+        ),
     ];
     specs
         .iter()
@@ -679,6 +755,20 @@ fn claude_web_runtime_account(
     }))
 }
 
+fn loopback_proxy_is_available(proxy_url: &str) -> Option<bool> {
+    let parsed = url::Url::parse(proxy_url.trim()).ok()?;
+    let host = parsed.host_str()?.trim_matches(|ch| ch == '[' || ch == ']');
+    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
+        return None;
+    }
+    let port = parsed.port_or_known_default()?;
+    let address = format!("127.0.0.1:{port}").parse().ok()?;
+    Some(
+        std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(350))
+            .is_ok(),
+    )
+}
+
 fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, String> {
     let root = sidecar_dir()?;
     let auths = root.join("auths");
@@ -696,8 +786,17 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
     let mut account_auth_ids = BTreeMap::new();
     let mut expected_auth_files = BTreeSet::new();
     let effective_upstream_proxy = if config.upstream_proxy.trim().is_empty() {
-        codex_local_access::system_proxy_url_for_target("https://api.openai.com")
-            .unwrap_or_default()
+        let detected = codex_local_access::system_proxy_url_for_target("https://api.openai.com")
+            .unwrap_or_default();
+        if loopback_proxy_is_available(&detected) == Some(false) {
+            logger::log_warn(&format!(
+                "[MultiModelAPI] 检测到本机系统代理但端口不可用，已自动回退直连: {}",
+                detected
+            ));
+            String::new()
+        } else {
+            detected
+        }
     } else {
         config.upstream_proxy.trim().to_string()
     };
@@ -790,6 +889,12 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                     "headers": account.headers
                 }));
             }
+            "doubao-seedance" => {
+                // Seedance uses browser connect.sid credentials and is handled
+                // directly by the integrated Go gateway on the same 1466 port.
+                // Do not synthesize a second OpenAI-compatible upstream here.
+                providers.insert("doubao-seedance".to_string());
+            }
             _ if account.auth_mode == "oauth_json" || account.credential_json.is_some() => {
                 let credential = account.credential_json.clone().unwrap_or_else(|| json!({}));
                 let mut credential = normalize_oauth_credential(&provider, credential);
@@ -843,6 +948,10 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "authId": manifest_auth_id,
             "upstreamApiKey": if provider == "claude-web" { claude_web_internal_key.as_str() } else { key },
             "provider": manifest_provider,
+            "baseUrl": account.base_url,
+            "proxyUrl": if account.proxy_url.trim().is_empty() { effective_upstream_proxy.as_str() } else { account.proxy_url.as_str() },
+            "headers": account.headers,
+            "priority": account.priority,
             "models": models.iter().flat_map(|model| {
                 let mut ids = vec![model.id.clone()];
                 if !model.alias.trim().is_empty() {
@@ -927,6 +1036,18 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
         "api-keys": config.api_keys.iter().filter(|item| item.enabled).map(|item| item.key.clone()).collect::<Vec<_>>(),
         "proxy-url": effective_upstream_proxy,
         "request-retry": config.request_retries,
+        "nonstream-keepalive-interval": 15,
+        "streaming": {
+            "keepalive-seconds": 15,
+            "bootstrap-retries": config.request_retries.min(2),
+            "bootstrap-retry-base-delay-ms": 350,
+            "bootstrap-retry-max-delay-ms": 2500,
+            "stream-open-timeout-ms": 30000,
+            "stream-idle-timeout-ms": 90000,
+            "image-stream-open-timeout-ms": 120000,
+            "image-stream-idle-timeout-ms": 180000,
+            "stream-open-max-attempts": config.request_retries.min(2).saturating_add(1)
+        },
         "debug": config.debug_logs,
         "request-log": config.debug_logs,
         "passthrough-headers": true,
@@ -1188,7 +1309,7 @@ fn hydrate_persisted_xai_credentials(config: &mut MultiModelApiConfig) -> Result
     Ok(changed)
 }
 
-async fn refresh_due_xai_credentials(config: &mut MultiModelApiConfig) -> bool {
+async fn refresh_xai_credentials(config: &mut MultiModelApiConfig, force: bool) -> bool {
     const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
     let system_proxy = codex_local_access::system_proxy_url_for_target("https://auth.x.ai");
     let mut changed = false;
@@ -1201,18 +1322,19 @@ async fn refresh_due_xai_credentials(config: &mut MultiModelApiConfig) -> bool {
         let Some(credential) = account.credential_json.as_mut() else {
             continue;
         };
-        let due = oauth_expiration(credential)
-            .map(|expiry| {
-                expiry <= chrono::Utc::now().fixed_offset() + chrono::Duration::minutes(5)
-            })
-            .unwrap_or_else(|| {
-                credential
-                    .get("access_token")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .trim()
-                    .is_empty()
-            });
+        let due = force
+            || oauth_expiration(credential)
+                .map(|expiry| {
+                    expiry <= chrono::Utc::now().fixed_offset() + chrono::Duration::minutes(5)
+                })
+                .unwrap_or_else(|| {
+                    credential
+                        .get("access_token")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty()
+                });
         if !due {
             continue;
         }
@@ -1351,7 +1473,42 @@ async fn wait_for_port_release(port: u16) -> Result<(), String> {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    Err(format!("绔彛 {port} 鏈湪闄愭湡鍐呴噴鏀?"))
+    Err(format!("端口 {port} 未在期限内释放"))
+}
+
+/// A TCP listener alone is not enough evidence that the port belongs to our
+/// gateway: a stale helper or an unrelated local program can be bound to the
+/// configured port.  Keep this probe deliberately unauthenticated so it can
+/// be used during startup, before the model catalogue and downstream key are
+/// available.
+async fn probe_sidecar_health(port: u16) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_millis(800))
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|error| format!("创建 sidecar 健康检查客户端失败: {error}"))?;
+    let response = client
+        .get(format!("http://127.0.0.1:{port}/healthz"))
+        .send()
+        .await
+        .map_err(|error| format!("sidecar 健康端点连接失败: {error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("读取 sidecar 健康端点失败: {error}"))?;
+    if !status.is_success() {
+        return Err(format!("sidecar 健康端点返回 HTTP {}", status.as_u16()));
+    }
+    let health: Value =
+        serde_json::from_str(&body).map_err(|_| "sidecar 健康端点未返回 JSON".to_string())?;
+    if health.get("status").and_then(Value::as_str) != Some("ok")
+        || health.get("service").and_then(Value::as_str) != Some("cle-cliproxy")
+    {
+        return Err("监听端口不是 C.le. 多模型 API sidecar".to_string());
+    }
+    Ok(())
 }
 
 async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Result<(), String> {
@@ -1361,7 +1518,7 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
     let _lifecycle_guard = lifecycle().lock().await;
     let mut effective_config = config.clone();
     let mut credential_changed = hydrate_persisted_xai_credentials(&mut effective_config)?;
-    credential_changed |= refresh_due_xai_credentials(&mut effective_config).await;
+    credential_changed |= refresh_xai_credentials(&mut effective_config, false).await;
     if credential_changed {
         save_config_file(&effective_config)?;
     }
@@ -1372,7 +1529,7 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
     let launch = write_launch_files(&effective_config)?;
     let helper_port = launch.claude_web.as_ref().map(|helper| helper.port);
     if adopt_existing
-        && port_is_listening(effective_config.port).await
+        && probe_sidecar_health(effective_config.port).await.is_ok()
         && match helper_port {
             Some(port) => port_is_listening(port).await,
             None => true,
@@ -1380,13 +1537,13 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
     {
         let mut state = runtime().lock().await;
         state.last_error = None;
-        logger::log_info("[MultiModelAPI] 宸查噰鐢ㄧ嫭绔嬪悗鍙?API sidecar");
+        logger::log_info("[MultiModelAPI] 已采用独立后台 API sidecar");
         return Ok(());
     }
     for port in std::iter::once(effective_config.port).chain(helper_port) {
         if port_is_listening(port).await {
             process::kill_port_processes(port)
-                .map_err(|error| format!("鍋滄绔彛 {port} 鏃?API sidecar 澶辫触: {error}"))?;
+                .map_err(|error| format!("停止占用端口 {port} 的旧 API sidecar 失败: {error}"))?;
             wait_for_port_release(port).await?;
         }
     }
@@ -1464,9 +1621,10 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
         });
     }
 
-    // A healthy listening socket is authoritative runtime evidence.  Keep the
-    // structured stdout event as the fast path, but do not kill a working
-    // sidecar merely because the async stdout drain task was scheduled late.
+    // A successful /healthz response from *our* sidecar is authoritative
+    // runtime evidence.  A listening socket or a delayed stdout event alone
+    // must not be accepted: that previously allowed a stale foreign process
+    // on the configured port to masquerade as a ready API service.
     let address = format!("127.0.0.1:{}", effective_config.port);
     let mut ready_rx = ready_rx;
     let mut ready_channel_open = true;
@@ -1479,7 +1637,9 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
             break Err(format!("多模型 API sidecar 在就绪前退出: {status}"));
         }
 
-        if tokio::net::TcpStream::connect(&address).await.is_ok() {
+        if tokio::net::TcpStream::connect(&address).await.is_ok()
+            && probe_sidecar_health(effective_config.port).await.is_ok()
+        {
             break Ok(());
         }
         if started_at.elapsed() >= Duration::from_secs(20) {
@@ -1490,7 +1650,9 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
             tokio::select! {
                 result = &mut ready_rx => {
                     match result {
-                        Ok(()) => break Ok(()),
+                        // The ready event only shortens the next health probe;
+                        // it never bypasses the ownership check above.
+                        Ok(()) => {},
                         Err(_) => ready_channel_open = false,
                     }
                 }
@@ -1644,12 +1806,65 @@ async fn apply_config(config: &MultiModelApiConfig) -> Result<(), String> {
         ] {
             if port_is_listening(port).await {
                 process::kill_port_processes(port)
-                    .map_err(|error| format!("鍋滄绔彛 {port} 鐨?API sidecar 澶辫触: {error}"))?;
+                    .map_err(|error| format!("停止占用端口 {port} 的 API sidecar 失败: {error}"))?;
                 wait_for_port_release(port).await?;
             }
         }
         Ok(())
     }
+}
+
+fn watchdog_restart_delay(restart_failures: u32) -> Duration {
+    let exponent = restart_failures.min(4);
+    let seconds = WATCHDOG_RESTART_COOLDOWN_SECONDS
+        .saturating_mul(1_u64 << exponent)
+        .min(WATCHDOG_MAX_RESTART_COOLDOWN_SECONDS);
+    Duration::from_secs(seconds)
+}
+
+async fn self_heal_snapshot() -> MultiModelSelfHealState {
+    let state = self_heal_runtime().lock().await;
+    let status = if state.consecutive_failures == 0 {
+        if state.last_success_at.is_some() {
+            "healthy"
+        } else {
+            "idle"
+        }
+    } else if state.next_restart_after.is_some() {
+        "recovering"
+    } else {
+        "degraded"
+    };
+    MultiModelSelfHealState {
+        status: status.to_string(),
+        consecutive_failures: state.consecutive_failures,
+        restart_attempts: state.restart_attempts,
+        restart_failures: state.restart_failures,
+        last_success_at: state.last_success_at.clone(),
+        last_repair_at: state.last_repair_at.clone(),
+        next_restart_at: state.next_restart_at.clone(),
+        last_error: state.last_error.clone(),
+    }
+}
+
+async fn record_health_success(repaired: bool) {
+    let mut state = self_heal_runtime().lock().await;
+    state.consecutive_failures = 0;
+    state.restart_failures = 0;
+    state.next_restart_after = None;
+    state.next_restart_at = None;
+    state.last_error = None;
+    state.last_success_at = Some(chrono::Utc::now().to_rfc3339());
+    if repaired {
+        state.last_repair_at = state.last_success_at.clone();
+    }
+}
+
+async fn record_health_failure(error: impl Into<String>) -> u32 {
+    let mut state = self_heal_runtime().lock().await;
+    state.consecutive_failures = state.consecutive_failures.saturating_add(1);
+    state.last_error = Some(error.into());
+    state.consecutive_failures
 }
 
 pub async fn get_state() -> Result<MultiModelApiState, String> {
@@ -1682,6 +1897,657 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
         config,
         running,
         last_error,
+        self_heal: self_heal_snapshot().await,
+    })
+}
+
+fn repair_check(
+    id: &str,
+    label: &str,
+    status: &str,
+    detail: impl Into<String>,
+    action: Option<&str>,
+) -> MultiModelRepairCheck {
+    MultiModelRepairCheck {
+        id: id.to_string(),
+        label: label.to_string(),
+        status: status.to_string(),
+        detail: detail.into(),
+        action: action.map(ToOwned::to_owned),
+    }
+}
+
+async fn probe_gateway(config: &MultiModelApiConfig) -> Result<String, String> {
+    let base_url = format!("http://127.0.0.1:{}", config.port);
+    let key = config
+        .api_keys
+        .iter()
+        .find(|item| item.enabled && !item.key.trim().is_empty())
+        .map(|item| item.key.trim())
+        .ok_or("没有启用的下游 API Key")?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|error| format!("创建本地健康检查客户端失败: {error}"))?;
+
+    let health = client
+        .get(format!("{base_url}/healthz"))
+        .send()
+        .await
+        .map_err(|error| format!("健康端点连接失败: {error}"))?;
+    let health_status = health.status();
+    let health_body = health
+        .text()
+        .await
+        .map_err(|error| format!("读取健康端点失败: {error}"))?;
+    if !health_status.is_success() {
+        return Err(format!("健康端点返回 HTTP {}", health_status.as_u16()));
+    }
+    let health: Value =
+        serde_json::from_str(&health_body).map_err(|_| "健康端点未返回有效 JSON".to_string())?;
+    if health.get("status").and_then(Value::as_str) != Some("ok")
+        || health.get("service").and_then(Value::as_str) != Some("cle-cliproxy")
+    {
+        return Err("健康端点不属于 C.le. 多模型 API sidecar".to_string());
+    }
+
+    let models = client
+        .get(format!("{base_url}/v1/models"))
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|error| format!("模型目录连接失败: {error}"))?;
+    let status = models.status();
+    let body = models
+        .text()
+        .await
+        .map_err(|error| format!("读取模型目录失败: {error}"))?;
+    if !status.is_success() {
+        return Err(format!("模型目录返回 HTTP {}", status.as_u16()));
+    }
+    let count = serde_json::from_str::<Value>(&body)
+        .ok()
+        .and_then(|value| value.get("data").and_then(Value::as_array).map(Vec::len))
+        .ok_or("模型目录不是有效的 OpenAI-compatible 响应")?;
+    if count == 0 {
+        return Err("模型目录为空".into());
+    }
+    Ok(format!("健康端点正常，模型目录包含 {count} 个模型"))
+}
+
+async fn probe_route_contract(config: &MultiModelApiConfig, path: &str) -> Result<u16, String> {
+    let key = config
+        .api_keys
+        .iter()
+        .find(|item| item.enabled && !item.key.trim().is_empty())
+        .map(|item| item.key.trim())
+        .ok_or("没有启用的下游 API Key")?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client
+        .post(format!("http://127.0.0.1:{}{path}", config.port))
+        .bearer_auth(key)
+        .json(&json!({}))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status().as_u16();
+    let body = response.text().await.unwrap_or_default();
+    if matches!(status, 404 | 405) {
+        return Err(format!("端点 {path} 未注册（HTTP {status}）"));
+    }
+    if matches!(status, 401 | 403) {
+        return Err(format!("端点 {path} 拒绝本地 API Key（HTTP {status}）"));
+    }
+    if status >= 500 {
+        let summary = body
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(180)
+            .collect::<String>();
+        return Err(format!(
+            "端点 {path} 返回上游/服务错误（HTTP {status}）{}",
+            if summary.is_empty() {
+                String::new()
+            } else {
+                format!("：{summary}")
+            }
+        ));
+    }
+    Ok(status)
+}
+
+async fn local_bridge_models(
+    base_url: &str,
+    api_key: &str,
+) -> Result<Vec<MultiModelDefinition>, String> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut request = client.get(format!("{}/models", base_url.trim_end_matches('/')));
+    if !api_key.trim().is_empty() {
+        request = request.bearer_auth(api_key.trim());
+    }
+    let response = request.send().await.map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("模型目录返回 HTTP {}", response.status().as_u16()));
+    }
+    let value: Value = response.json().await.map_err(|error| error.to_string())?;
+    let models = value
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("id").and_then(Value::as_str))
+        .map(|id| model_definition(id.to_string()))
+        .collect::<Vec<_>>();
+    if models.is_empty() {
+        return Err("模型目录为空".to_string());
+    }
+    Ok(models)
+}
+
+fn local_aurora_api_key() -> String {
+    if let Ok(value) = std::env::var("CLE_AURORA_API_KEY") {
+        let value = value.trim();
+        if !value.is_empty() {
+            return value.to_string();
+        }
+    }
+    let mut candidates = Vec::new();
+    if let Ok(path) = std::env::var("CLE_AURORA_PATH") {
+        if let Some(parent) = Path::new(&path).parent() {
+            candidates.push(parent.join("new_api_key.txt"));
+        }
+    }
+    #[cfg(windows)]
+    candidates.push(PathBuf::from(r"F:\自动注册\AuroraProxy\new_api_key.txt"));
+    candidates
+        .into_iter()
+        .find_map(|path| std::fs::read_to_string(path).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "local-aurora".to_string())
+}
+
+fn upsert_local_bridge_account(
+    config: &mut MultiModelApiConfig,
+    id: &str,
+    name: &str,
+    provider: &str,
+    base_url: &str,
+    api_key: &str,
+    models: Vec<MultiModelDefinition>,
+) {
+    let account = MultiModelAccount {
+        id: id.to_string(),
+        name: name.to_string(),
+        provider: provider.to_string(),
+        auth_mode: "api_key".to_string(),
+        base_url: base_url.to_string(),
+        api_key: api_key.to_string(),
+        credential_json: None,
+        proxy_url: "direct".to_string(),
+        prefix: String::new(),
+        priority: 10,
+        headers: BTreeMap::new(),
+        models,
+        enabled: true,
+        source: "cle:local-gpt-bridge".to_string(),
+    };
+    if let Some(existing) = config.accounts.iter_mut().find(|item| item.id == id) {
+        *existing = account;
+    } else {
+        config.accounts.push(account);
+    }
+}
+
+/// Discover the locally managed Chat2API/Aurora services and expose them
+/// through the same stable OpenAI-compatible gateway and downstream keys.
+pub async fn sync_local_gpt_bridges() -> Result<MultiModelApiState, String> {
+    let _repair_guard = repair_lifecycle().lock().await;
+    let mut config = load_config()?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let chat_tokens = client
+        .get("http://127.0.0.1:5005/tokens")
+        .send()
+        .await
+        .map_err(|error| format!("Chat2API 未就绪，请先启动：{error}"))?;
+    if !chat_tokens.status().is_success() {
+        return Err(format!(
+            "Chat2API 账号管理端点返回 HTTP {}",
+            chat_tokens.status().as_u16()
+        ));
+    }
+    upsert_local_bridge_account(
+        &mut config,
+        "local-chat2api",
+        "Chat2API 免费账号池",
+        "chat2api",
+        "http://127.0.0.1:5005/v1",
+        "cle-chat2api-pool",
+        ["gpt-4o", "gpt-4o-mini", "o3-mini", "o1-mini"]
+            .into_iter()
+            .map(|id| model_definition(id.to_string()))
+            .collect(),
+    );
+
+    let aurora_key = local_aurora_api_key();
+    let aurora_models = local_bridge_models("http://127.0.0.1:8080/v1", &aurora_key)
+        .await
+        .map_err(|error| format!("Aurora 未就绪或认证失败：{error}"))?;
+    upsert_local_bridge_account(
+        &mut config,
+        "local-aurora",
+        "Aurora GPT 免费账号池",
+        "aurora",
+        "http://127.0.0.1:8080/v1",
+        &aurora_key,
+        aurora_models,
+    );
+
+    normalize_config(&mut config)?;
+    save_config_file(&config)?;
+    write_launch_files(&config)?;
+    if config.enabled {
+        start_runtime(&config, false).await?;
+        record_health_success(true).await;
+    }
+    get_state().await
+}
+
+pub async fn diagnose_and_repair(deep: bool) -> Result<MultiModelRepairReport, String> {
+    // Multiple UI clicks, startup recovery and the background watchdog must not
+    // run overlapping repair passes against the same ports and auth files.
+    let _repair_guard = repair_lifecycle().lock().await;
+    let started = Instant::now();
+    let mut checks = Vec::new();
+    let mut repaired = 0usize;
+    let mut restarted = false;
+    let mut credential_runtime_changed = false;
+    let mut config = load_config()?;
+
+    let root = sidecar_dir()?;
+    std::fs::create_dir_all(&root).map_err(|error| format!("创建 API 服务目录失败: {error}"))?;
+    let write_probe = root.join(".self-repair-write-test");
+    match std::fs::write(&write_probe, b"ok").and_then(|_| std::fs::remove_file(&write_probe)) {
+        Ok(()) => checks.push(repair_check(
+            "storage",
+            "配置与运行目录",
+            "ok",
+            format!("目录可读写：{}", root.display()),
+            None,
+        )),
+        Err(error) => checks.push(repair_check(
+            "storage",
+            "配置与运行目录",
+            "error",
+            format!("目录不可写：{error}"),
+            None,
+        )),
+    }
+
+    if config
+        .api_keys
+        .iter()
+        .all(|item| !item.enabled || item.key.trim().is_empty())
+    {
+        config.api_keys.push(MultiModelApiKey {
+            id: uuid::Uuid::new_v4().to_string(),
+            label: "自动修复 Key".into(),
+            key: random_key(),
+            allowed_models: Vec::new(),
+            excluded_models: Vec::new(),
+            account_ids: Vec::new(),
+            model_prefix: String::new(),
+            provider_gateway: None,
+            source: "cle:self-repair".into(),
+            enabled: true,
+        });
+        save_config_file(&config)?;
+        repaired += 1;
+        checks.push(repair_check(
+            "api-key",
+            "下游 API Key",
+            "repaired",
+            "未发现可用 Key，已生成新的本地下游 Key",
+            Some("生成 Key"),
+        ));
+    } else {
+        checks.push(repair_check(
+            "api-key",
+            "下游 API Key",
+            "ok",
+            "至少有一个启用的下游 Key",
+            None,
+        ));
+    }
+
+    match hydrate_persisted_xai_credentials(&mut config) {
+        Ok(hydrated) => {
+            let refreshed = refresh_xai_credentials(&mut config, true).await;
+            if hydrated || refreshed {
+                save_config_file(&config)?;
+                repaired += 1;
+                credential_runtime_changed = true;
+                checks.push(repair_check(
+                    "xai-credential",
+                    "xAI OAuth 凭据",
+                    "repaired",
+                    "已从持久化登录恢复或刷新到期的 xAI OAuth 凭据",
+                    Some("刷新 OAuth"),
+                ));
+            } else {
+                checks.push(repair_check(
+                    "xai-credential",
+                    "xAI OAuth 凭据",
+                    "ok",
+                    "已检查 xAI OAuth 持久化记录与有效期",
+                    None,
+                ));
+            }
+        }
+        Err(error) => checks.push(repair_check(
+            "xai-credential",
+            "xAI OAuth 凭据",
+            "error",
+            error,
+            Some("重新授权 xAI 账号"),
+        )),
+    }
+
+    match codex_local_access::sidecar_binary_path() {
+        Ok(path) if path.is_file() => checks.push(repair_check(
+            "binary",
+            "API sidecar 可执行文件",
+            "ok",
+            format!("已找到 {}", path.display()),
+            None,
+        )),
+        Ok(path) => checks.push(repair_check(
+            "binary",
+            "API sidecar 可执行文件",
+            "error",
+            format!("文件不存在：{}", path.display()),
+            None,
+        )),
+        Err(error) => checks.push(repair_check(
+            "binary",
+            "API sidecar 可执行文件",
+            "error",
+            error,
+            None,
+        )),
+    }
+
+    let enabled_accounts = config.accounts.iter().filter(|item| item.enabled).count();
+    let enabled_models = config
+        .accounts
+        .iter()
+        .filter(|item| item.enabled)
+        .flat_map(|item| item.models.iter())
+        .filter(|item| item.enabled)
+        .count();
+    let account_status = if enabled_accounts == 0 || enabled_models == 0 {
+        "warning"
+    } else {
+        "ok"
+    };
+    checks.push(repair_check(
+        "accounts",
+        "账号池与模型声明",
+        account_status,
+        format!("{enabled_accounts} 个启用账号，{enabled_models} 条启用模型声明"),
+        None,
+    ));
+
+    let runtime_files_were_missing = !root.join("config.json").is_file()
+        || !root.join("runtime_state.json").is_file()
+        || !root.join("auths").is_dir();
+    match write_launch_files(&config) {
+        Ok(_) => {
+            if runtime_files_were_missing {
+                repaired += 1;
+            }
+            checks.push(repair_check(
+                "runtime-files",
+                "运行配置与认证索引",
+                if runtime_files_were_missing {
+                    "repaired"
+                } else {
+                    "ok"
+                },
+                "已重新生成并校验 sidecar 配置、模型清单和认证文件",
+                runtime_files_were_missing.then_some("重建运行文件"),
+            ));
+        }
+        Err(error) => checks.push(repair_check(
+            "runtime-files",
+            "运行配置与认证索引",
+            "error",
+            error,
+            None,
+        )),
+    }
+
+    if !config.upstream_proxy.trim().is_empty()
+        && loopback_proxy_is_available(&config.upstream_proxy) == Some(false)
+    {
+        checks.push(repair_check(
+            "upstream-proxy",
+            "上游代理",
+            "warning",
+            "配置的本机代理端口当前不可连接；保留显式配置，请启动代理或改为留空自动检测",
+            None,
+        ));
+    } else {
+        checks.push(repair_check(
+            "upstream-proxy",
+            "上游代理",
+            "ok",
+            if config.upstream_proxy.trim().is_empty() {
+                "使用自动检测；无可用本机代理时自动回退直连"
+            } else {
+                "显式代理端口可连接"
+            },
+            None,
+        ));
+    }
+
+    if config.enabled {
+        let initial_probe = probe_gateway(&config).await;
+        if credential_runtime_changed || initial_probe.is_err() {
+            match start_runtime(&config, false).await {
+                Ok(()) => {
+                    restarted = true;
+                    repaired += 1;
+                    checks.push(repair_check(
+                        "runtime",
+                        "服务进程与端口",
+                        "repaired",
+                        if credential_runtime_changed {
+                            "OAuth 凭据已更新，已重新启动独立 sidecar 使其立即生效"
+                        } else {
+                            "检测到服务未就绪，已清理冲突进程并重新启动独立 sidecar"
+                        },
+                        Some("重启 sidecar"),
+                    ));
+                }
+                Err(error) => checks.push(repair_check(
+                    "runtime",
+                    "服务进程与端口",
+                    "error",
+                    format!("自动重启失败：{error}"),
+                    None,
+                )),
+            }
+        } else {
+            checks.push(repair_check(
+                "runtime",
+                "服务进程与端口",
+                "ok",
+                "独立 sidecar 正在监听配置端口",
+                None,
+            ));
+        }
+
+        match probe_gateway(&config).await {
+            Ok(detail) => {
+                record_health_success(restarted).await;
+                checks.push(repair_check(
+                    "gateway",
+                    "健康端点与模型目录",
+                    "ok",
+                    detail,
+                    None,
+                ));
+            }
+            Err(error) => {
+                record_health_failure(error.clone()).await;
+                checks.push(repair_check(
+                    "gateway",
+                    "健康端点与模型目录",
+                    "error",
+                    error,
+                    None,
+                ));
+            }
+        }
+
+        for (id, label, path) in [
+            ("chat-route", "文本生成端点", "/v1/chat/completions"),
+            ("image-route", "图片生成端点", "/v1/images/generations"),
+            ("video-route", "视频生成端点", "/v1/videos/generations"),
+        ] {
+            match probe_route_contract(&config, path).await {
+                Ok(status) => checks.push(repair_check(
+                    id,
+                    label,
+                    "ok",
+                    format!("路由已注册，空载校验返回 HTTP {status}"),
+                    None,
+                )),
+                Err(error) => checks.push(repair_check(id, label, "error", error, None)),
+            }
+        }
+
+        if deep {
+            let provider_models = provider_chat_test_models(&config);
+            if provider_models.is_empty() {
+                checks.push(repair_check(
+                    "upstream-call",
+                    "真实上游调用",
+                    "error",
+                    "账号池中没有可测试的文本模型",
+                    None,
+                ));
+            } else {
+                // Probe providers serially.  A repair action must not turn into
+                // a burst against every upstream account and trigger a shared
+                // rate-limit/cooldown window.
+                for (index, (provider, model)) in provider_models.into_iter().enumerate() {
+                    if index > 0 {
+                        tokio::time::sleep(Duration::from_millis(350)).await;
+                    }
+                    let result = test_chat(
+                        Some(model.clone()),
+                        Some("Reply with exactly: gateway-ok".into()),
+                    )
+                    .await;
+                    let check_id = format!(
+                        "upstream-{}",
+                        provider
+                            .chars()
+                            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+                            .collect::<String>()
+                    );
+                    match result {
+                        Ok(result) if result.ok => checks.push(repair_check(
+                            &check_id,
+                            &format!("{} 真实上游", provider),
+                            "ok",
+                            format!(
+                                "模型 {} 调用成功，延迟 {}ms",
+                                result.model, result.latency_ms
+                            ),
+                            None,
+                        )),
+                        Ok(result) => checks.push(repair_check(
+                            &check_id,
+                            &format!("{} 真实上游", provider),
+                            "error",
+                            format!(
+                                "模型 {} 返回 HTTP {}：{}",
+                                result.model, result.status, result.response
+                            ),
+                            Some("检查账号授权、额度或上游代理"),
+                        )),
+                        Err(error) => checks.push(repair_check(
+                            &check_id,
+                            &format!("{} 真实上游", provider),
+                            "error",
+                            format!("模型 {model} 调用失败：{error}"),
+                            Some("重新授权该供应商账号"),
+                        )),
+                    }
+                }
+            }
+        }
+    } else {
+        checks.push(repair_check(
+            "runtime",
+            "服务进程与端口",
+            "warning",
+            "服务配置为停用；已完成静态检查但未自动启动",
+            None,
+        ));
+    }
+
+    let self_heal = self_heal_snapshot().await;
+    checks.push(repair_check(
+        "self-heal-policy",
+        "后台自愈与熔断策略",
+        if self_heal.status == "degraded" {
+            "warning"
+        } else {
+            "ok"
+        },
+        format!(
+            "状态 {}，连续故障 {} 次，累计恢复 {} 次，恢复失败 {} 次；连续 {} 次探测失败后才重启，失败退避最长 {} 秒",
+            self_heal.status,
+            self_heal.consecutive_failures,
+            self_heal.restart_attempts,
+            self_heal.restart_failures,
+            WATCHDOG_FAILURE_THRESHOLD,
+            WATCHDOG_MAX_RESTART_COOLDOWN_SECONDS,
+        ),
+        None,
+    ));
+
+    let state = get_state().await?;
+    let ok = !checks.iter().any(|item| item.status == "error");
+    Ok(MultiModelRepairReport {
+        ok,
+        repaired,
+        restarted,
+        checked_at: chrono::Utc::now().to_rfc3339(),
+        duration_ms: started.elapsed().as_millis() as u64,
+        checks,
+        state,
     })
 }
 
@@ -1743,6 +2609,73 @@ fn is_chat_test_model(model: &str) -> bool {
             | "grok-imagine-image-quality"
             | "grok-imagine-video"
     )
+}
+
+fn provider_chat_test_models(config: &MultiModelApiConfig) -> Vec<(String, String)> {
+    let mut providers_by_model = BTreeMap::<String, BTreeSet<String>>::new();
+    for account in config.accounts.iter().filter(|account| account.enabled) {
+        let provider = account.provider.trim().to_ascii_lowercase();
+        for model in account.models.iter().filter(|model| model.enabled) {
+            let supports_text = model.capabilities.is_empty()
+                || model
+                    .capabilities
+                    .iter()
+                    .any(|capability| capability.eq_ignore_ascii_case("text"));
+            let client_model = if model.alias.trim().is_empty() {
+                model.id.trim()
+            } else {
+                model.alias.trim()
+            };
+            if supports_text && is_chat_test_model(client_model) && !client_model.is_empty() {
+                providers_by_model
+                    .entry(client_model.to_ascii_lowercase())
+                    .or_default()
+                    .insert(provider.clone());
+            }
+        }
+    }
+
+    let mut candidates = BTreeMap::<String, Vec<(u8, u8, String, String)>>::new();
+    for account in config.accounts.iter().filter(|account| account.enabled) {
+        let provider = account.provider.trim().to_ascii_lowercase();
+        for model in account.models.iter().filter(|model| model.enabled) {
+            let supports_text = model.capabilities.is_empty()
+                || model
+                    .capabilities
+                    .iter()
+                    .any(|capability| capability.eq_ignore_ascii_case("text"));
+            let client_model = if model.alias.trim().is_empty() {
+                model.id.trim()
+            } else {
+                model.alias.trim()
+            };
+            if !supports_text || !is_chat_test_model(client_model) || client_model.is_empty() {
+                continue;
+            }
+            let normalized = client_model.to_ascii_lowercase();
+            let shared = providers_by_model
+                .get(&normalized)
+                .map(|providers| providers.len() > 1)
+                .unwrap_or(false);
+            candidates.entry(provider.clone()).or_default().push((
+                u8::from(shared),
+                test_model_priority(client_model),
+                normalized,
+                client_model.to_string(),
+            ));
+        }
+    }
+
+    candidates
+        .into_iter()
+        .filter_map(|(provider, mut models)| {
+            models.sort();
+            models
+                .into_iter()
+                .next()
+                .map(|(_, _, _, model)| (provider, model))
+        })
+        .collect()
 }
 
 fn automatic_chat_test_models(config: &MultiModelApiConfig) -> Vec<String> {
@@ -1908,7 +2841,13 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         .retain(|account| !account.source.starts_with("cle:"));
 
     if let Ok(accounts) = account::list_accounts() {
-        for managed in accounts.into_iter().filter(|item| !item.disabled) {
+        for managed in accounts.into_iter().filter(|item| {
+            !item.disabled
+                && !item.quota.as_ref().is_some_and(|quota| quota.is_forbidden)
+                && !item.quota_error.as_ref().is_some_and(|error| {
+                    is_blocking_managed_route_error(None, Some(error.message.as_str()))
+                })
+        }) {
             if managed.token.access_token.trim().is_empty() {
                 continue;
             }
@@ -1959,6 +2898,28 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
 
     if let Ok(accounts) = codex_account::list_accounts_checked() {
         for account in accounts {
+            if account.requires_reauth
+                || (account.auth_mode == CodexAuthMode::OAuth
+                    && account
+                        .authorization_status
+                        .as_deref()
+                        .is_some_and(|status| {
+                            status.eq_ignore_ascii_case("pending")
+                                || status.eq_ignore_ascii_case("login_required")
+                        }))
+                || account.quota_error.as_ref().is_some_and(|error| {
+                    is_blocking_managed_route_error(
+                        error.code.as_deref(),
+                        Some(error.message.as_str()),
+                    )
+                })
+            {
+                logger::log_warn(&format!(
+                    "[MultiModelAPI] 跳过不可用 Codex 账号: id={}, email={}",
+                    account.id, account.email
+                ));
+                continue;
+            }
             let (auth_mode, api_key, credential_json) = match account.auth_mode {
                 CodexAuthMode::Apikey => (
                     "api_key".into(),
@@ -1998,6 +2959,13 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
     }
     if let Ok(accounts) = gemini_account::list_accounts_checked() {
         for account in accounts {
+            if is_blocking_managed_account_status(account.status.as_deref()) {
+                logger::log_warn(&format!(
+                    "[MultiModelAPI] 跳过需要验证或重新登录的 Gemini 账号: id={}, email={}",
+                    account.id, account.email
+                ));
+                continue;
+            }
             let discovered_models = gemini_account::extract_account_model_remaining(&account)
                 .into_iter()
                 .map(|(model, _remaining)| model)
@@ -2030,6 +2998,13 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
     }
     if let Ok(accounts) = claude_account::list_accounts_checked() {
         for account in accounts {
+            if is_blocking_managed_account_status(account.status.as_deref()) {
+                logger::log_warn(&format!(
+                    "[MultiModelAPI] 跳过需要验证或重新登录的 Claude 账号: id={}, email={}",
+                    account.id, account.email
+                ));
+                continue;
+            }
             if matches!(
                 account.auth_mode,
                 ClaudeAuthMode::DesktopOAuth | ClaudeAuthMode::DesktopGateway
@@ -2181,22 +3156,53 @@ fn models_or_defaults(models: Vec<String>, defaults: &[&str]) -> Vec<MultiModelD
 
 fn is_routable_antigravity_model(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
-    if normalized.is_empty()
+    !(normalized.is_empty()
         || normalized.starts_with("3p-")
         || normalized.ends_with("-weekly")
-        || normalized.ends_with("-5h")
-    {
-        return false;
-    }
-    normalized.starts_with("claude-")
-        || normalized.starts_with("gemini-")
-        || normalized.starts_with("veo-")
-        || normalized.starts_with("gpt-")
+        || normalized.ends_with("-5h"))
+}
+
+fn is_blocking_managed_account_status(status: Option<&str>) -> bool {
+    status.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "verification_required"
+                | "login_required"
+                | "reauth_required"
+                | "forbidden"
+                | "banned"
+                | "deactivated"
+        )
+    })
+}
+
+fn is_blocking_managed_route_error(code: Option<&str>, message: Option<&str>) -> bool {
+    let combined = format!(
+        "{} {}",
+        code.unwrap_or_default(),
+        message.unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    [
+        "deactivated_workspace",
+        "validation_required",
+        "verification_required",
+        "login_required",
+        "invalid_grant",
+        "workspace has been deactivated",
+        "工作区已停用",
+        "需要验证",
+    ]
+    .iter()
+    .any(|marker| combined.contains(marker))
 }
 
 fn model_definition(id: String) -> MultiModelDefinition {
     let normalized = id.to_ascii_lowercase();
-    let capabilities = if normalized.contains("video") || normalized.starts_with("veo-") {
+    let capabilities = if normalized.contains("video")
+        || normalized.starts_with("veo-")
+        || normalized.contains("seedance")
+    {
         vec!["video".into()]
     } else if normalized.contains("image") || normalized.contains("imagen") {
         vec!["image".into(), "vision".into()]
@@ -2228,6 +3234,91 @@ pub async fn restore() {
         Ok(_) => {}
         Err(error) => logger::log_warn(&format!("[MultiModelAPI] 读取配置失败: {error}")),
     }
+    start_runtime_watchdog();
+}
+
+pub fn start_runtime_watchdog() {
+    if WATCHDOG_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tokio::spawn(async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(WATCHDOG_INTERVAL_SECONDS)).await;
+            let config = match load_config() {
+                Ok(config) if config.enabled => config,
+                Ok(_) => continue,
+                Err(error) => {
+                    logger::log_warn(&format!(
+                        "[MultiModelAPI][watchdog] 读取配置失败，等待下一轮自动恢复: {error}"
+                    ));
+                    continue;
+                }
+            };
+            let probe_error = match probe_gateway(&config).await {
+                Ok(_) => {
+                    record_health_success(false).await;
+                    continue;
+                }
+                Err(error) => error,
+            };
+            let consecutive_failures = record_health_failure(probe_error.clone()).await;
+            logger::log_warn(&format!(
+                "[MultiModelAPI][watchdog] 健康检查失败 {consecutive_failures}/{WATCHDOG_FAILURE_THRESHOLD}: {probe_error}"
+            ));
+            if consecutive_failures < WATCHDOG_FAILURE_THRESHOLD {
+                continue;
+            }
+
+            let should_restart = {
+                let mut state = self_heal_runtime().lock().await;
+                if state
+                    .next_restart_after
+                    .is_some_and(|deadline| deadline > Instant::now())
+                {
+                    false
+                } else {
+                    let delay = watchdog_restart_delay(state.restart_failures);
+                    state.restart_attempts = state.restart_attempts.saturating_add(1);
+                    state.next_restart_after = Some(Instant::now() + delay);
+                    state.next_restart_at = Some(
+                        (chrono::Utc::now() + chrono::Duration::seconds(delay.as_secs() as i64))
+                            .to_rfc3339(),
+                    );
+                    true
+                }
+            };
+            if !should_restart {
+                continue;
+            }
+
+            let _repair_guard = repair_lifecycle().lock().await;
+            logger::log_warn(
+                "[MultiModelAPI][watchdog] 连续健康检查失败，正在串行自动恢复 sidecar",
+            );
+            match start_runtime(&config, false).await {
+                Ok(()) => {
+                    record_health_success(true).await;
+                    logger::log_info("[MultiModelAPI][watchdog] sidecar 已自动恢复并重新监听");
+                }
+                Err(error) => {
+                    logger::log_warn(&format!("[MultiModelAPI][watchdog] 自动恢复失败: {error}"));
+                    {
+                        let mut heal = self_heal_runtime().lock().await;
+                        heal.restart_failures = heal.restart_failures.saturating_add(1);
+                        heal.last_error = Some(error.clone());
+                        let delay = watchdog_restart_delay(heal.restart_failures);
+                        heal.next_restart_after = Some(Instant::now() + delay);
+                        heal.next_restart_at = Some(
+                            (chrono::Utc::now()
+                                + chrono::Duration::seconds(delay.as_secs() as i64))
+                            .to_rfc3339(),
+                        );
+                    }
+                    runtime().lock().await.last_error = Some(error);
+                }
+            }
+        }
+    });
 }
 
 pub async fn shutdown() {
@@ -2239,10 +3330,79 @@ pub async fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::{
-        automatic_chat_test_models, default_config, normalize_oauth_credential, MultiModelAccount,
-        MultiModelDefinition,
+        automatic_chat_test_models, builtin_catalog, default_config,
+        is_blocking_managed_account_status, is_blocking_managed_route_error,
+        is_routable_antigravity_model, model_definition, normalize_config,
+        normalize_oauth_credential, normalize_provider, provider_chat_test_models,
+        watchdog_restart_delay, MultiModelAccount, MultiModelDefinition,
     };
     use serde_json::json;
+    use std::time::Duration;
+
+    #[test]
+    fn clamps_retry_budget_to_safe_failover_range() {
+        let mut disabled = default_config();
+        disabled.request_retries = 0;
+        normalize_config(&mut disabled).expect("normalize zero retries");
+        assert_eq!(disabled.request_retries, 1);
+
+        let mut excessive = default_config();
+        excessive.request_retries = u8::MAX;
+        normalize_config(&mut excessive).expect("normalize excessive retries");
+        assert_eq!(excessive.request_retries, 4);
+    }
+
+    #[test]
+    fn seedance_is_a_native_video_provider_in_the_unified_gateway() {
+        assert_eq!(normalize_provider("doubao_seedance"), "doubao-seedance");
+        let models = builtin_catalog()
+            .into_iter()
+            .filter(|item| item.provider == "doubao-seedance")
+            .collect::<Vec<_>>();
+        assert_eq!(models.len(), 2);
+        assert!(models.iter().all(|item| item.capabilities == ["video"]));
+    }
+
+    #[test]
+    fn antigravity_sync_keeps_new_official_models_but_rejects_aggregate_buckets() {
+        assert!(is_routable_antigravity_model("imagen-4-ultra"));
+        assert!(is_routable_antigravity_model("future-provider-model-v1"));
+        assert!(!is_routable_antigravity_model("3p-5h"));
+        assert!(!is_routable_antigravity_model("gemini-weekly"));
+        assert!(!is_routable_antigravity_model("claude-5h"));
+
+        let image = model_definition("imagen-4-ultra".to_string());
+        assert_eq!(image.capabilities, ["image", "vision"]);
+    }
+
+    #[test]
+    fn managed_sync_excludes_accounts_blocked_by_auth_or_workspace_state() {
+        assert!(is_blocking_managed_account_status(Some(
+            "verification_required"
+        )));
+        assert!(is_blocking_managed_account_status(Some("login_required")));
+        assert!(!is_blocking_managed_account_status(Some("normal")));
+        assert!(is_blocking_managed_route_error(
+            Some("deactivated_workspace"),
+            None
+        ));
+        assert!(is_blocking_managed_route_error(
+            None,
+            Some("Google returned VALIDATION_REQUIRED")
+        ));
+        assert!(!is_blocking_managed_route_error(
+            None,
+            Some("temporary upstream HTTP 503")
+        ));
+    }
+
+    #[test]
+    fn watchdog_restart_backoff_is_bounded() {
+        assert_eq!(watchdog_restart_delay(0), Duration::from_secs(30));
+        assert_eq!(watchdog_restart_delay(1), Duration::from_secs(60));
+        assert_eq!(watchdog_restart_delay(3), Duration::from_secs(240));
+        assert_eq!(watchdog_restart_delay(10), Duration::from_secs(300));
+    }
 
     #[test]
     fn normalizes_xai_oauth_for_native_executor() {
@@ -2326,5 +3486,57 @@ mod tests {
         assert_eq!(candidates.first().map(String::as_str), Some("gpt-5.4-mini"));
         assert!(!candidates.iter().any(|model| model == "gpt-image-2"));
         assert!(!candidates.iter().any(|model| model == "codex-auto-review"));
+    }
+
+    #[test]
+    fn provider_chat_tests_choose_one_unique_text_model_per_provider() {
+        let model = |id: &str, capabilities: &[&str]| MultiModelDefinition {
+            id: id.to_string(),
+            alias: String::new(),
+            capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
+            enabled: true,
+        };
+        let account = |provider: &str, models: Vec<MultiModelDefinition>| MultiModelAccount {
+            id: provider.to_string(),
+            name: provider.to_string(),
+            provider: provider.to_string(),
+            auth_mode: "oauth_json".to_string(),
+            base_url: String::new(),
+            api_key: String::new(),
+            credential_json: None,
+            proxy_url: String::new(),
+            prefix: String::new(),
+            priority: 0,
+            headers: Default::default(),
+            models,
+            enabled: true,
+            source: String::new(),
+        };
+        let mut config = default_config();
+        config.accounts = vec![
+            account(
+                "codex",
+                vec![
+                    model("shared-chat", &["text"]),
+                    model("gpt-5.4-mini", &["text"]),
+                    model("gpt-image-2", &["image"]),
+                ],
+            ),
+            account(
+                "gemini",
+                vec![
+                    model("shared-chat", &["text"]),
+                    model("gemini-3-flash", &["text"]),
+                ],
+            ),
+        ];
+
+        assert_eq!(
+            provider_chat_test_models(&config),
+            vec![
+                ("codex".to_string(), "gpt-5.4-mini".to_string()),
+                ("gemini".to_string(), "gemini-3-flash".to_string()),
+            ]
+        );
     }
 }

@@ -112,11 +112,27 @@ fn extract_error_code_from_message(message: &str) -> Option<String> {
 }
 
 fn write_quota_error(account: &mut CodexAccount, message: String) {
+    let code = extract_error_code_from_message(&message);
+    let message = if code.as_deref() == Some("deactivated_workspace") {
+        format!("Codex 工作区已停用，当前账号无法继续刷新额度 [error_code:deactivated_workspace]")
+    } else {
+        message
+    };
     account.quota_error = Some(CodexQuotaErrorInfo {
-        code: extract_error_code_from_message(&message),
+        code,
         message,
         timestamp: chrono::Utc::now().timestamp(),
     });
+}
+
+fn has_deactivated_workspace_error(account: &CodexAccount) -> bool {
+    account.quota_error.as_ref().is_some_and(|error| {
+        error.code.as_deref() == Some("deactivated_workspace")
+            || error
+                .message
+                .to_ascii_lowercase()
+                .contains("deactivated_workspace")
+    })
 }
 
 /// 使用率窗口（5小时/周）
@@ -1580,6 +1596,7 @@ pub async fn refresh_all_quotas() -> Result<Vec<(String, Result<CodexQuota, Stri
     let accounts: Vec<_> = codex_account::list_accounts()
         .into_iter()
         .filter(|account| !account.is_api_key_auth() || is_new_api_account(account))
+        .filter(|account| !has_deactivated_workspace_error(account))
         .collect();
 
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));

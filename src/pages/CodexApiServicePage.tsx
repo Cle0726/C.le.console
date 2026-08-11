@@ -31,8 +31,9 @@ import {
   X,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { confirm as confirmDialog, message } from "@tauri-apps/plugin-dialog";
+import { confirm as confirmDialog, message, open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useTranslation } from "react-i18next";
 import { CodexIcon } from "../components/icons/CodexIcon";
 import { ManualHelpIconButton } from "../components/ManualHelpIconButton";
@@ -45,6 +46,7 @@ import {
 import { getPlatformLabel } from "../utils/platformMeta";
 import { useCodexAccountStore } from "../stores/useCodexAccountStore";
 import * as codexLocalAccessService from "../services/codexLocalAccessService";
+import { multiModelApiService } from "../services/multiModelApiService";
 import {
   getCodexAccountGroups,
   type CodexAccountGroup,
@@ -671,7 +673,7 @@ export function CodexApiServicePage() {
   const clientBaseUrlHost = collection?.clientBaseUrlHost ?? "localhost";
   const imageGenerationMode = collection?.imageGenerationMode ?? "enabled";
   const routingStrategy = collection?.routingStrategy ?? "auto";
-  const gatewayMode = collection?.gatewayMode ?? "sidecar";
+  const gatewayMode = collection?.gatewayMode ?? "legacy";
   const modelIds = state?.modelIds ?? [];
   const chatTestModelIds = useMemo(
     () => modelIds.filter(isCodexChatTestModelId),
@@ -2618,6 +2620,84 @@ export function CodexApiServicePage() {
             >
               <Power size={14} />
               启动 Aurora
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                Promise.all([invoke("start_chat2api"), invoke("start_aurora")])
+                  .then(() => multiModelApiService.syncLocalGptBridges())
+                  .then((gateway) => void message(
+                    `已接入 Chat2API 与 Aurora 免费账号池，共发布 ${gateway.catalog.length} 个模型。统一调用地址：${gateway.baseUrl}/v1`,
+                    { title: "GPT 免费账号池已接入", kind: "info" },
+                  ))
+                  .catch((error) => void message(
+                    `接入失败：${String(error)}`,
+                    { title: "免费账号池接入失败", kind: "error" },
+                  ));
+              }}
+            >
+              <Users size={14} />
+              管理 / 接入 GPT 免费账号池
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                void (async () => {
+                  const selected = await open({
+                    multiple: false,
+                    directory: false,
+                    filters: [{ name: "GPT 账号文件", extensions: ["json", "txt"] }],
+                  });
+                  if (!selected) return;
+                  await invoke("start_chat2api");
+                  const content = await readTextFile(selected);
+                  const result = await invoke<{ imported: number; total: number }>(
+                    "import_local_gpt_accounts",
+                    { service: "chat2api", content },
+                  );
+                  await message(
+                    `Chat2API 已导入 ${result.imported} 条账号凭据，当前账号池 ${result.total} 条。`,
+                    { title: "账号导入完成", kind: "info" },
+                  );
+                })().catch((error) => void message(
+                  `导入失败：${String(error)}`,
+                  { title: "Chat2API 账号导入失败", kind: "error" },
+                ));
+              }}
+            >
+              <Plus size={14} />
+              导入 Chat2API 账号
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                void (async () => {
+                  const selected = await open({
+                    multiple: false,
+                    directory: false,
+                    filters: [{ name: "GPT 账号文件", extensions: ["json", "txt"] }],
+                  });
+                  if (!selected) return;
+                  const content = await readTextFile(selected);
+                  const result = await invoke<{ imported: number; total: number; restartRequired: boolean }>(
+                    "import_local_gpt_accounts",
+                    { service: "aurora", content },
+                  );
+                  await message(
+                    `Aurora 已导入 ${result.imported} 条账号凭据，当前账号池 ${result.total} 条。${result.restartRequired ? "重启 Aurora 后生效。" : ""}`,
+                    { title: "账号导入完成", kind: "info" },
+                  );
+                })().catch((error) => void message(
+                  `导入失败：${String(error)}`,
+                  { title: "Aurora 账号导入失败", kind: "error" },
+                ));
+              }}
+            >
+              <Plus size={14} />
+              导入 Aurora 账号
             </button>
             <button
               type="button"

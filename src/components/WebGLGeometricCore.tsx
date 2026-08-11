@@ -57,6 +57,7 @@ function StaticDrawingCore({
 
 export function WebGLGeometricCore(props: WebGLGeometricCoreProps) {
   const [liteMode, setLiteMode] = useState(isLiteMode);
+  const [runtimeReady, setRuntimeReady] = useState(false);
   const startupReady = useStartupPerformanceReady();
 
   useEffect(() => {
@@ -68,10 +69,21 @@ export function WebGLGeometricCore(props: WebGLGeometricCoreProps) {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (!startupReady || liteMode) {
+      setRuntimeReady(false);
+      return;
+    }
+    // Let the first visible frame settle before shader compilation. WebGL then
+    // takes over on the GPU without competing with the opening transition.
+    const timer = window.setTimeout(() => setRuntimeReady(true), 140);
+    return () => window.clearTimeout(timer);
+  }, [liteMode, startupReady]);
+
   // The high-quality SVG is shown immediately while the opening sequence is
   // running. Three.js is not even imported until that sequence has completed,
   // which removes shader compilation and WebGL context creation from boot.
-  if (liteMode || !startupReady) return <StaticDrawingCore {...props} />;
+  if (liteMode || !startupReady || !runtimeReady) return <StaticDrawingCore {...props} />;
 
   return (
     <Suspense fallback={<StaticDrawingCore {...props} />}>

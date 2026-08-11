@@ -473,6 +473,26 @@
   border-color: rgba(245, 158, 11, 0.3);
 }
 
+.ghcp-accounts-page button.status-pill.gemini-verification-action {
+  font: inherit;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.ghcp-accounts-page button.status-pill.gemini-verification-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.18);
+}
+
+.ghcp-accounts-page button.status-pill.gemini-verification-action:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
 .ghcp-accounts-page .status-pill.forbidden {
   color: #dc2626;
   background: rgba(239, 68, 68, 0.12);
@@ -1105,9 +1125,9 @@
 
 .ghcp-account-card .auth-mode-badge.api_key,
 .ghcp-accounts-page .account-table .auth-mode-badge.api_key {
-  color: #7c3aed;
-  background: rgba(124, 58, 237, 0.1);
-  border-color: rgba(124, 58, 237, 0.24);
+  color: #60788e;
+  background: rgba(96, 120, 142, 0.1);
+  border-color: rgba(96, 120, 142, 0.24);
 }
 
 /* 配额部分 */
@@ -1214,6 +1234,16 @@
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   min-width: 320px;
+}
+
+.ghcp-quota-section.gemini-quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px 14px;
+}
+
+.ghcp-quota-section.gemini-quota-grid.table-layout {
+  min-width: 360px;
 }
 
 .gemini-quota-column {

@@ -14,6 +14,7 @@
 @import './styles/account-page-polish.css';
 @import './styles/provider-account-page-polish.css';
 @import './styles/lite-performance-mode.css';
+@import './styles/signature-cursor.css';
 
 .quota-alert-modal-content {
   display: flex;

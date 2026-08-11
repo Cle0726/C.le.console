@@ -46,11 +46,14 @@ import {
   getGeminiPlanBadgeClass,
   getGeminiPlanDisplayName,
   getGeminiAccountDisplayEmail,
-  getGeminiTierQuotaSummary,
+  getGeminiUsage,
+  getGeminiValidationUrl,
   hasGeminiQuotaData,
   isGeminiAccountBanned,
+  isGeminiVerificationRequired,
 } from "../types/gemini";
-import type { GeminiAccount, GeminiTierQuotaSummary } from "../types/gemini";
+import type { GeminiAccount } from "../types/gemini";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { compareCurrentAccountFirst } from "../utils/currentAccountSort";
 import {
   buildValidAccountsFilterOption,
@@ -426,40 +429,45 @@ export function GeminiAccountsPage() {
   );
 
   const resolveQuotaRows = useCallback(
-    (account: GeminiAccount) => {
-      const tierSummary = getGeminiTierQuotaSummary(account);
-      const buildTierRow = (
-        tier: GeminiTierQuotaSummary,
-      ): GeminiQuotaRowDisplay => {
-        const remainingPercent =
-          tier.remainingPercent == null
-            ? 0
-            : Math.max(0, Math.min(100, Math.round(tier.remainingPercent)));
+    (account: GeminiAccount): GeminiQuotaRowDisplay[] => {
+      const legacyLabels: Record<string, string> = {
+        "gemini-5h": "Gemini ? Five Hour Limit",
+        "gemini-weekly": "Gemini ? Weekly Limit",
+        "3p-5h": "Claude ? Five Hour Limit",
+        "3p-weekly": "Claude ? Weekly Limit",
+      };
+      return getGeminiUsage(account).buckets.map((bucket) => {
+        const remainingPercent = Math.max(
+          0,
+          Math.min(100, Math.round(bucket.remainingPercent)),
+        );
         const usedPercent = 100 - remainingPercent;
-
         return {
-          key: tier.key,
-          label: t(`gemini.quota.${tier.key}`, tier.label),
+          key: bucket.modelId,
+          label: legacyLabels[bucket.modelId] ?? bucket.modelId,
           remainingPercent,
-          remainingText:
-            tier.remainingPercent == null
-              ? "--"
-              : t("gemini.quota.left", "{{value}}% 剩余", {
-                  value: remainingPercent,
-                }),
-          resetText: formatQuotaResetText(tier.resetAt),
+          remainingText: t("gemini.quota.left", "{{value}}% ??", {
+            value: remainingPercent,
+          }),
+          resetText: formatQuotaResetText(bucket.resetAt),
           quotaClass: getGeminiQuotaClass(usedPercent),
         };
-      };
-
-      return {
-        gemini5h: buildTierRow(tierSummary.gemini5h),
-        geminiWeekly: buildTierRow(tierSummary.geminiWeekly),
-        claude5h: buildTierRow(tierSummary.claude5h),
-        claudeWeekly: buildTierRow(tierSummary.claudeWeekly),
-      };
+      });
     },
     [formatQuotaResetText, t],
+  );
+
+  const handleOpenQuotaValidation = useCallback(
+    async (account: GeminiAccount) => {
+      const validationUrl = getGeminiValidationUrl(account);
+      if (!validationUrl) return;
+      try {
+        await openUrl(validationUrl);
+      } catch (error) {
+        console.error("Failed to open Gemini validation URL", error);
+      }
+    },
+    [],
   );
 
   const handleCopyLaunchCommand = useCallback(async () => {
@@ -858,17 +866,10 @@ export function GeminiAccountsPage() {
     );
 
     return (
-      <div className={`ghcp-quota-section gemini-quota-columns ${variant === "table" ? "table-layout" : ""}`}>
-        <div className="gemini-quota-column">
-          <div className="gemini-quota-column-header">Claude</div>
-          {renderRow(rows.claude5h)}
-          {renderRow(rows.claudeWeekly)}
-        </div>
-        <div className="gemini-quota-column">
-          <div className="gemini-quota-column-header">Gemini</div>
-          {renderRow(rows.gemini5h)}
-          {renderRow(rows.geminiWeekly)}
-        </div>
+      <div
+        className={`ghcp-quota-section gemini-quota-grid ${variant === "table" ? "table-layout" : ""}`}
+      >
+        {rows.map(renderRow)}
       </div>
     );
   };
@@ -888,8 +889,12 @@ export function GeminiAccountsPage() {
       const isSelected = selected.has(account.id);
       const isCurrent = currentAccountId === account.id;
       const isBanned = isGeminiAccountBanned(account);
+      const requiresVerification = isGeminiVerificationRequired(account);
+      const validationUrl = getGeminiValidationUrl(account);
       const hasStatusError =
-        !isBanned && (account.status || "").toLowerCase() === "error";
+        !isBanned &&
+        !requiresVerification &&
+        (account.status || "").toLowerCase() === "error";
       const quotaError = account.quota_query_last_error?.trim();
       const statusReason = account.status_reason ?? null;
       const bannedTitle =
@@ -926,7 +931,25 @@ export function GeminiAccountsPage() {
                 {t("accounts.status.refreshFailed")}
               </span>
             )}
-            {quotaError && (
+            {requiresVerification && (
+              <button
+                type="button"
+                className="status-pill warning gemini-verification-action"
+                title={
+                  statusReason ||
+                  t(
+                    "gemini.quota.verificationRequired",
+                    "Google 要求先完成账号验证；完成后再刷新额度。",
+                  )
+                }
+                onClick={() => handleOpenQuotaValidation(account)}
+                disabled={!validationUrl}
+              >
+                <CircleAlert size={12} />
+                {t("gemini.quota.openVerification", "完成验证")}
+              </button>
+            )}
+            {quotaError && !requiresVerification && (
               <span className="status-pill warning" title={quotaError}>
                 <CircleAlert size={12} />
                 {t("common.shared.quota.queryFailed", "配额查询失败")}
@@ -1035,8 +1058,12 @@ export function GeminiAccountsPage() {
       const moreTagCount = Math.max(0, accountTags.length - visibleTags.length);
       const isCurrent = currentAccountId === account.id;
       const isBanned = isGeminiAccountBanned(account);
+      const requiresVerification = isGeminiVerificationRequired(account);
+      const validationUrl = getGeminiValidationUrl(account);
       const hasStatusError =
-        !isBanned && (account.status || "").toLowerCase() === "error";
+        !isBanned &&
+        !requiresVerification &&
+        (account.status || "").toLowerCase() === "error";
       const quotaError = account.quota_query_last_error?.trim();
       const statusReason = account.status_reason ?? null;
       const bannedTitle =
@@ -1073,13 +1100,31 @@ export function GeminiAccountsPage() {
                   </span>
                 )}
               </div>
-              {(hasStatusError || isBanned) && (
+              {(hasStatusError || requiresVerification || isBanned) && (
                 <div className="account-sub-line">
                   {hasStatusError && (
                     <span className="status-pill warning" title={errorTitle}>
                       <CircleAlert size={12} />
                       {t("accounts.status.refreshFailed")}
                     </span>
+                  )}
+                  {requiresVerification && (
+                    <button
+                      type="button"
+                      className="status-pill warning gemini-verification-action"
+                      title={
+                        statusReason ||
+                        t(
+                          "gemini.quota.verificationRequired",
+                          "Google 要求先完成账号验证；完成后再刷新额度。",
+                        )
+                      }
+                      onClick={() => handleOpenQuotaValidation(account)}
+                      disabled={!validationUrl}
+                    >
+                      <CircleAlert size={12} />
+                      {t("gemini.quota.openVerification", "完成验证")}
+                    </button>
                   )}
                   {isBanned && (
                     <span className="status-pill forbidden" title={bannedTitle}>
@@ -1089,7 +1134,7 @@ export function GeminiAccountsPage() {
                   )}
                 </div>
               )}
-              {quotaError && (
+              {quotaError && !requiresVerification && (
                 <div className="account-sub-line">
                   <span className="status-pill warning" title={quotaError}>
                     <CircleAlert size={12} />

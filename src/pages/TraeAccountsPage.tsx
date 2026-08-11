@@ -44,6 +44,7 @@ import { useTraeAccountStore } from '../stores/useTraeAccountStore';
 import * as traeService from '../services/traeService';
 import type { TraePlatformId } from '../services/traeService';
 import type { TraeAccount } from '../types/trae';
+import { isAccountLoginRequired, isAccountRefreshError } from '../utils/accountAuthStatus';
 import {
   getTraeAccountDisplayEmail,
   getTraeAccountDisplayName,
@@ -763,7 +764,12 @@ export function TraeAccountsPage({ platformId = 'trae' }: TraeAccountsPageProps)
         const moreTagCount = Math.max(0, accountTags.length - visibleTags.length);
         const isSelected = selected.has(account.id);
         const isCurrent = currentAccountId === account.id;
-        const hasStatusError = (account.status || '').toLowerCase() === 'error';
+        const requiresLogin = isAccountLoginRequired(
+          account.status,
+          account.status_reason,
+          account.quota_query_last_error,
+        );
+        const hasStatusError = isAccountRefreshError(account.status) || requiresLogin;
         const statusTitle = account.status_reason || t('accounts.status.refreshFailed', '刷新失败');
         const signedInWithText = resolveSignedInWithText(account);
         const userIdText = account.user_id || '--';
@@ -795,7 +801,9 @@ export function TraeAccountsPage({ platformId = 'trae' }: TraeAccountsPageProps)
               {hasStatusError && (
                 <span className="status-pill warning" title={statusTitle}>
                   <CircleAlert size={12} />
-                  {t('accounts.status.refreshFailed', '刷新失败')}
+                  {requiresLogin
+                    ? t('accounts.status.loginRequired', '需重新登录')
+                    : t('accounts.status.refreshFailed', '刷新失败')}
                 </span>
               )}
               {quotaError && (
@@ -928,7 +936,12 @@ export function TraeAccountsPage({ platformId = 'trae' }: TraeAccountsPageProps)
         const visibleTags = accountTags.slice(0, 3);
         const moreTagCount = Math.max(0, accountTags.length - visibleTags.length);
         const isCurrent = currentAccountId === account.id;
-        const hasStatusError = (account.status || '').toLowerCase() === 'error';
+        const requiresLogin = isAccountLoginRequired(
+          account.status,
+          account.status_reason,
+          account.quota_query_last_error,
+        );
+        const hasStatusError = isAccountRefreshError(account.status) || requiresLogin;
         const statusTitle = account.status_reason || t('accounts.status.refreshFailed', '刷新失败');
         const signedInWithText = resolveSignedInWithText(account);
         const userIdText = account.user_id || '--';
@@ -961,7 +974,9 @@ export function TraeAccountsPage({ platformId = 'trae' }: TraeAccountsPageProps)
                   <div className="account-sub-line">
                     <span className="status-pill warning" title={statusTitle}>
                       <CircleAlert size={12} />
-                      {t('accounts.status.refreshFailed', '刷新失败')}
+                      {requiresLogin
+                        ? t('accounts.status.loginRequired', '需重新登录')
+                        : t('accounts.status.refreshFailed', '刷新失败')}
                     </span>
                   </div>
                 )}

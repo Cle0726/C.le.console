@@ -7,7 +7,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   Boxes, Check, CircleAlert, Copy, Database, Download, Eye, EyeOff, FileText,
   FileUp, Film, Globe, Image, KeyRound, Network, Plus, Power, RefreshCw, Route,
-  Save, Settings2, Sparkles, Trash2, Users, X, Zap,
+  Save, Settings2, ShieldCheck, Sparkles, Trash2, Users, X, Zap,
 } from 'lucide-react';
 import { AntigravityIcon } from '../components/icons/AntigravityIcon';
 import { ClaudeIcon } from '../components/icons/ClaudeIcon';
@@ -20,7 +20,7 @@ import * as geminiService from '../services/geminiService';
 import { multiModelApiService } from '../services/multiModelApiService';
 import type {
   ModelCapability, MultiModelAccount, MultiModelApiConfig, MultiModelApiState,
-  MultiModelDefinition, MultiModelApiTestResult,
+  MultiModelDefinition, MultiModelApiTestResult, MultiModelRepairReport,
 } from '../types/multiModelApi';
 import './MultiModelApiServicePage.css';
 
@@ -35,6 +35,7 @@ const PROVIDERS = [
   { id: 'gemini', label: 'Gemini', short: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com' },
   { id: 'codex', label: 'Codex', short: 'Codex', baseUrl: '' },
   { id: 'antigravity', label: 'Antigravity', short: 'Antigravity', baseUrl: '' },
+  { id: 'doubao-seedance', label: 'Doubao Seedance', short: 'Seedance', baseUrl: 'https://doubao.happieapi.top' },
   { id: 'custom', label: '兼容 API', short: '自定义', baseUrl: '' },
 ] as const;
 
@@ -75,6 +76,10 @@ const PROVIDER_MODELS: Record<string, MultiModelDefinition[]> = {
   codex: [
     ['gpt-5.4', ['text', 'vision', 'reasoning']],
     ['gpt-5.3-codex', ['text', 'vision', 'reasoning']],
+  ].map(([id, capabilities]) => ({ id: id as string, alias: '', capabilities: capabilities as ModelCapability[], enabled: true })),
+  'doubao-seedance': [
+    ['doubao-seedance-1.5-pro', ['video']],
+    ['doubao-seedance-1.0-pro-fast', ['video']],
   ].map(([id, capabilities]) => ({ id: id as string, alias: '', capabilities: capabilities as ModelCapability[], enabled: true })),
   custom: [],
 };
@@ -152,6 +157,7 @@ export function MultiModelApiServicePage() {
   const [testModel, setTestModel] = useState('');
   const [testPrompt, setTestPrompt] = useState('Reply with exactly: gateway-ok');
   const [testResult, setTestResult] = useState<MultiModelApiTestResult | null>(null);
+  const [repairReport, setRepairReport] = useState<MultiModelRepairReport | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     setOperation('load');
@@ -273,7 +279,7 @@ export function MultiModelApiServicePage() {
       return;
     }
     if (current.authMode === 'api_key' && !current.apiKey.trim()) {
-      setNotice({ tone: 'error', text: '请填写上游 API Key' });
+      setNotice({ tone: 'error', text: current.provider === 'doubao-seedance' ? '请填写 connect.sid / Cookie' : '请填写上游 API Key' });
       return;
     }
     if (current.provider === 'custom' && !current.baseUrl.trim()) {
@@ -327,6 +333,27 @@ export function MultiModelApiServicePage() {
       });
     } catch (error) {
       setNotice({ tone: 'error', text: `网关测试失败：${String(error)}` });
+    } finally {
+      setOperation(null);
+    }
+  };
+
+  const runRepair = async () => {
+    setOperation('repair');
+    setNotice({ tone: 'info', text: '正在检查配置、端口、sidecar、路由、模型目录与真实上游调用…' });
+    try {
+      const report = await multiModelApiService.diagnoseAndRepair(true);
+      setRepairReport(report);
+      setState(report.state);
+      setDraft(structuredClone(report.state.config));
+      setNotice({
+        tone: report.ok ? 'success' : 'error',
+        text: report.ok
+          ? `全面检查完成：${report.checks.length} 项，自动修复 ${report.repaired} 项，耗时 ${report.durationMs}ms`
+          : `检查完成但仍有 ${report.checks.filter((item) => item.status === 'error').length} 项需要处理`,
+      });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `全面检查与自动修复失败：${String(error)}` });
     } finally {
       setOperation(null);
     }
@@ -390,6 +417,14 @@ export function MultiModelApiServicePage() {
               <div className="mm-api-title-line">
                 <h1>多模型 API 代理服务</h1>
                 <span className={`mm-api-status ${state.running ? 'running' : 'stopped'}`}>{state.running ? '运行中' : '未运行'}</span>
+                {state.selfHeal && (
+                  <span
+                    className={`mm-api-status self-heal ${state.selfHeal.status}`}
+                    title={`连续故障 ${state.selfHeal.consecutiveFailures} 次；自动恢复 ${state.selfHeal.restartAttempts} 次`}
+                  >
+                    自愈：{state.selfHeal.status === 'healthy' ? '正常' : state.selfHeal.status === 'recovering' ? '恢复中' : state.selfHeal.status === 'degraded' ? '降级' : '待监测'}
+                  </span>
+                )}
               </div>
               <div className="mm-api-endpoint">
                 <code>{baseUrl}/v1</code>
@@ -400,6 +435,9 @@ export function MultiModelApiServicePage() {
             </div>
           </div>
           <div className="mm-api-hero-actions">
+            <button type="button" className="btn btn-secondary mm-repair-trigger" onClick={() => void runRepair()} disabled={busy}>
+              <ShieldCheck className={operation === 'repair' ? 'spin' : ''} />全面检查 / 自动修复
+            </button>
             <button type="button" className="btn btn-secondary" onClick={() => void load()} disabled={busy}>
               <RefreshCw className={operation === 'load' ? 'spin' : ''} />刷新
             </button>
@@ -418,6 +456,10 @@ export function MultiModelApiServicePage() {
             <span>{notice?.text ?? state.lastError}</span>
             {notice && <button type="button" onClick={() => setNotice(null)} aria-label="关闭提示"><X /></button>}
           </div>
+        )}
+
+        {repairReport && (
+          <RepairReportPanel report={repairReport} onClose={() => setRepairReport(null)} />
         )}
 
         <section className="mm-provider-strip" aria-label="模型供应商">
@@ -524,11 +566,40 @@ function ProviderIcon({ provider }: { provider: string }) {
   if (provider === 'codex') return <CodexIcon size={18} />;
   if (provider === 'antigravity') return <AntigravityIcon style={{ width: 18, height: 18 }} />;
   if (provider === 'openai') return <Sparkles />;
+  if (provider === 'doubao-seedance') return <Film />;
   return <Boxes />;
 }
 
 function Metric({ label, value, detail }: { label: string; value: number; detail: string }) {
   return <div className="mm-api-summary-card"><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>;
+}
+
+function RepairReportPanel({ report, onClose }: { report: MultiModelRepairReport; onClose: () => void }) {
+  const errors = report.checks.filter((item) => item.status === 'error').length;
+  const warnings = report.checks.filter((item) => item.status === 'warning').length;
+  return (
+    <section className={`mm-repair-report ${report.ok ? 'success' : 'has-error'}`} aria-live="polite">
+      <header>
+        <span className="mm-repair-report-icon"><ShieldCheck /></span>
+        <div>
+          <h2>{report.ok ? '系统检查通过' : '检查完成，仍有异常'}</h2>
+          <p>{report.checks.length} 项检查 · 修复 {report.repaired} 项 · {errors} 个错误 · {warnings} 个警告 · {report.durationMs}ms</p>
+        </div>
+        <button type="button" onClick={onClose} aria-label="关闭检查报告"><X /></button>
+      </header>
+      <div className="mm-repair-check-grid">
+        {report.checks.map((item) => (
+          <article key={item.id} className={`mm-repair-check ${item.status}`}>
+            <span className="mm-repair-check-state">
+              {item.status === 'ok' || item.status === 'repaired' ? <Check /> : <CircleAlert />}
+            </span>
+            <div><strong>{item.label}</strong><p>{item.detail}</p></div>
+            {item.action && <em>{item.action}</em>}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function Overview({ config, setConfig, onSave, busy, testModel, setTestModel, testPrompt, setTestPrompt, onTest, testResult, running }: {
@@ -570,7 +641,7 @@ function Overview({ config, setConfig, onSave, busy, testModel, setTestModel, te
 function AccountCard({ account, onEdit, onToggle, onRemove }: { account: MultiModelAccount; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
   const capabilities = new Set(account.models.flatMap((item) => item.capabilities));
   return <article className={`mm-account${account.enabled ? '' : ' disabled'}`}>
-    <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{account.name}</h3><p>{providerLabel(account.provider)} · {account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}</p></div><button type="button" className={`mm-account-state${account.enabled ? ' enabled' : ''}`} onClick={onToggle}>{account.enabled ? '可用' : '停用'}</button></div>
+    <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}</p></div><button type="button" className={`mm-account-state${account.enabled ? ' enabled' : ''}`} onClick={onToggle}>{account.enabled ? '可用' : '停用'}</button></div>
     <div className="mm-account-models"><strong>{account.models.length || '自动'} 个模型</strong><span>{[...capabilities].map((cap) => <em key={cap}>{cap}</em>)}</span></div>
     <code>{account.baseUrl || 'CLIProxy native endpoint'}</code>
     <footer><span>{account.source.startsWith('cle:') ? 'C.le. 托管账号' : '手动账号'}</span><button type="button" onClick={onEdit}>编辑</button><button type="button" className="trash" onClick={onRemove} aria-label="删除账号"><Trash2 /></button></footer>
@@ -698,6 +769,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
   const isClaude = account.provider === 'claude';
   const isAntigravity = account.provider === 'antigravity';
   const isXai = account.provider === 'xai';
+  const isSeedance = account.provider === 'doubao-seedance';
   const hasNativeOAuth = isCodex || isGemini || isClaude || isAntigravity || isXai;
   const disabled = busy || localBusy;
 
@@ -730,10 +802,12 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
     } : draft);
     cancelActiveOAuth();
     if (pending?.provider === account.provider && pending.authUrl) oauthProviderRef.current = account.provider;
-    if (isNew && (account.provider === 'xai' || account.provider === 'codex' || account.provider === 'gemini' || account.provider === 'claude' || account.provider === 'antigravity')) {
+    if (isSeedance) {
+      setAddMode('api_key');
+    } else if (isNew && (account.provider === 'xai' || account.provider === 'codex' || account.provider === 'gemini' || account.provider === 'claude' || account.provider === 'antigravity')) {
       setAddMode('oauth');
     }
-  }, [account.credentialJson, account.provider, cancelActiveOAuth, isNew]);
+  }, [account.credentialJson, account.provider, cancelActiveOAuth, isNew, isSeedance]);
 
   useEffect(() => () => cancelActiveOAuth(), [cancelActiveOAuth]);
 
@@ -1065,7 +1139,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
   const handleApiKeySubmit = async () => {
     const apiKey = account.apiKey.trim();
     if (!apiKey) {
-      setModalStatus({ tone: 'error', text: '请填写 API Key' });
+      setModalStatus({ tone: 'error', text: isSeedance ? '请填写 connect.sid / Cookie' : '请填写 API Key' });
       return;
     }
     if (!isCodex && !isClaude) {
@@ -1235,10 +1309,10 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
         {PROVIDERS.map((provider) => <button type="button" key={provider.id} className={account.provider === provider.id ? 'active' : ''} onClick={() => onProvider(provider.id)} disabled={disabled}><span className={`mm-provider-icon ${provider.id}`}><ProviderIcon provider={provider.id} /></span><b>{provider.short}</b></button>)}
       </div>
       <div className="mm-modal-auth-tabs" role="tablist" aria-label="账号添加方式">
-        <button type="button" className={addMode === 'oauth' ? 'active' : ''} onClick={() => setAddMode('oauth')} disabled={disabled}><Globe size={14} /><span>OAuth 授权</span></button>
-        <button type="button" className={addMode === 'token' ? 'active' : ''} onClick={() => setAddMode('token')} disabled={disabled}><FileText size={14} /><span>Token / JSON</span></button>
-        <button type="button" className={addMode === 'api_key' ? 'active' : ''} onClick={() => setAddMode('api_key')} disabled={disabled}><KeyRound size={14} /><span>API Key</span></button>
-        <button type="button" className={addMode === 'import' ? 'active' : ''} onClick={() => setAddMode('import')} disabled={disabled}><Database size={14} /><span>导入</span></button>
+        <button type="button" className={addMode === 'oauth' ? 'active' : ''} onClick={() => setAddMode('oauth')} disabled={disabled || isSeedance}><Globe size={14} /><span>OAuth 授权</span></button>
+        <button type="button" className={addMode === 'token' ? 'active' : ''} onClick={() => setAddMode('token')} disabled={disabled || isSeedance}><FileText size={14} /><span>Token / JSON</span></button>
+        <button type="button" className={addMode === 'api_key' ? 'active' : ''} onClick={() => setAddMode('api_key')} disabled={disabled}><KeyRound size={14} /><span>{isSeedance ? 'connect.sid' : 'API Key'}</span></button>
+        <button type="button" className={addMode === 'import' ? 'active' : ''} onClick={() => setAddMode('import')} disabled={disabled || isSeedance}><Database size={14} /><span>导入</span></button>
       </div>
       <div className="mm-modal-form mm-modal-form-codex-like">
         <label><span>账号名称</span><input autoFocus value={account.name} onChange={(event) => setAccount({ ...account, name: event.target.value })} placeholder={`例如 ${providerLabel(account.provider)} 主账号`} /></label>
@@ -1292,8 +1366,8 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
 
         {addMode === 'api_key' && (
           <div className="mm-add-section wide">
-            <label><span>API Key</span><div className="mm-secret-field"><input type={secretVisible ? 'text' : 'password'} value={account.apiKey} onChange={(event) => setAccount({ ...account, apiKey: event.target.value })} placeholder="粘贴供应商 API Key" autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setSecretVisible((visible) => !visible)}>{secretVisible ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
-            <p className="section-desc">{isCodex || isClaude ? '将调用对应账号页同款 API Key 保存逻辑，再同步到 API 代理账号池。' : '保存为当前供应商的上游 API Key 凭证。'}</p>
+            <label><span>{isSeedance ? 'connect.sid / Cookie' : 'API Key'}</span><div className="mm-secret-field"><input type={secretVisible ? 'text' : 'password'} value={account.apiKey} onChange={(event) => setAccount({ ...account, apiKey: event.target.value })} placeholder={isSeedance ? '粘贴 connect.sid 值或完整 Cookie Header' : '粘贴供应商 API Key'} autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setSecretVisible((visible) => !visible)}>{secretVisible ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
+            <p className="section-desc">{isSeedance ? '凭证直接进入现有 1466 多模型账号池；文生视频与图生视频统一使用 /v1/videos/generations，不会启动第二个 API 网关。' : isCodex || isClaude ? '将调用对应账号页同款 API Key 保存逻辑，再同步到 API 代理账号池。' : '保存为当前供应商的上游 API Key 凭证。'}</p>
             <button type="button" className="btn btn-primary btn-full" onClick={() => void handleApiKeySubmit()} disabled={disabled || !account.apiKey.trim()}><KeyRound size={16} />添加账号</button>
           </div>
         )}
@@ -1328,7 +1402,8 @@ function Routes({ baseUrl, apiKey, copied, copy }: { baseUrl: string; apiKey: st
     { id: 'models', icon: <Boxes />, title: '模型列表', method: 'GET', path: '/v1/models', code: `curl ${baseUrl}/v1/models -H "Authorization: Bearer ${apiKey}"` },
     { id: 'chat', icon: <Sparkles />, title: 'Chat Completions', method: 'POST', path: '/v1/chat/completions', code: `curl ${baseUrl}/v1/chat/completions -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"model":"grok-4.3","messages":[{"role":"user","content":"Hello"}]}'` },
     { id: 'image', icon: <Image />, title: '图片生成 / 编辑', method: 'POST', path: '/v1/images/generations', code: `curl ${baseUrl}/v1/images/generations -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"model":"grok-imagine-image","prompt":"a glass city at dawn"}'` },
-    { id: 'video', icon: <Film />, title: '视频生成', method: 'POST', path: '/v1/videos', code: `curl ${baseUrl}/v1/videos/generations -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"model":"veo-3.1-generate-preview","prompt":"cinematic ocean storm","seconds":8,"size":"1280x720"}'` },
+    { id: 'video', icon: <Film />, title: '视频生成（Veo / Grok / Seedance）', method: 'POST', path: '/v1/videos/generations', code: `curl ${baseUrl}/v1/videos/generations -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"model":"doubao-seedance-1.5-pro","prompt":"cinematic ocean storm","seconds":5,"size":"1280x720"}'` },
+    { id: 'video-status', icon: <RefreshCw />, title: 'Seedance 任务状态', method: 'GET', path: '/v1/videos/generations/{video_id}', code: `curl ${baseUrl}/v1/videos/generations/VIDEO_ID -H "Authorization: Bearer ${apiKey}"` },
   ];
   return <section className="mm-api-panel"><header className="mm-api-panel-head"><div><h2>统一网关路线</h2><p>OpenAI-compatible 文本、图片与视频端点；同一个 Bearer Key 通行全部授权模型。</p></div></header><div className="mm-route-grid">{routes.map((route) => <article className="mm-route" key={route.id}><header><span>{route.icon}</span><div><h3>{route.title}</h3><code><b>{route.method}</b> {route.path}</code></div></header><pre>{route.code}</pre><button type="button" onClick={() => void copy(route.code, route.id)}>{copied === route.id ? <Check /> : <Copy />}{copied === route.id ? '已复制' : '复制 cURL'}</button></article>)}</div></section>;
 }

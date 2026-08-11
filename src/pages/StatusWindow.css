@@ -218,6 +218,12 @@ body.status-window-root,
 .compact-status-quota {
   border-right: 1px solid var(--status-line);
   padding: calc(var(--status-u) * .84) calc(var(--status-u) * 1.25);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--status-u) * .84);
 }
 
 .compact-plan-badge {
@@ -238,17 +244,18 @@ body.status-window-root,
 }
 
 .compact-quota-sculpture {
-  position: absolute;
-  top: calc(var(--status-u) * .52);
-  left: 50%;
-  width: clamp(146px, min(34vw, 57vh), 460px);
+  position: relative;
+  flex: 0 0 auto;
+  width: clamp(120px, 74%, 236px);
+  max-width: 100%;
   height: auto;
   aspect-ratio: 41 / 36;
-  transform: translateX(-50%);
+  margin: 0 auto;
   display: grid;
   place-items: center;
   filter: drop-shadow(0 calc(var(--status-u) * 1.56) calc(var(--status-u) * 1.35) color-mix(in srgb, var(--status-shadow) 94%, transparent));
-  animation: compactSculptureFloat 6.4s ease-in-out infinite;
+  isolation: isolate;
+  animation: compactSculptureFloat 5.2s cubic-bezier(.45, .05, .55, .95) infinite;
 }
 
 .compact-quota-sculpture::before {
@@ -258,7 +265,7 @@ body.status-window-root,
   border: 1px solid color-mix(in srgb, var(--status-line-strong) 56%, transparent);
   border-radius: 50%;
   opacity: .64;
-  animation: compactHaloPulse 5.6s ease-in-out infinite;
+  animation: compactHaloPulse 3.8s ease-in-out infinite;
 }
 
 .compact-quota-sculpture::after {
@@ -271,8 +278,76 @@ body.status-window-root,
   border-radius: 50%;
   background: color-mix(in srgb, var(--status-inverse) 78%, var(--status-solid));
   box-shadow: 0 0 calc(var(--status-u) * 1.25) color-mix(in srgb, var(--status-inverse) 48%, transparent);
-  animation: compactSpecularOrbit 7.8s ease-in-out infinite;
+  animation: compactSpecularOrbit 5.8s ease-in-out infinite;
 }
+
+.compact-quota-orbit {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--status-line-strong) 52%, transparent);
+  border-radius: 50%;
+  transform-style: preserve-3d;
+}
+
+.compact-quota-orbit-outer {
+  inset: 8% 7% 10%;
+  border-style: dashed;
+  animation: compactOrbitOuter 9s linear infinite;
+}
+
+.compact-quota-orbit-inner {
+  inset: 20% 18% 21%;
+  opacity: .82;
+  animation: compactOrbitInner 6.5s linear infinite reverse;
+}
+
+.compact-quota-orbit > i {
+  position: absolute;
+  width: clamp(4px, calc(var(--status-u) * .48), 13px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--status-inverse);
+  border: 1px solid color-mix(in srgb, var(--status-solid) 34%, transparent);
+  box-shadow:
+    0 0 calc(var(--status-u) * .52) color-mix(in srgb, var(--status-inverse) 72%, transparent),
+    0 0 calc(var(--status-u) * 1.25) color-mix(in srgb, var(--status-solid) 22%, transparent);
+  animation: compactNodeBeat 1.9s ease-in-out infinite;
+}
+
+.compact-quota-orbit-outer > i:nth-child(1) { top: 3%; left: 28%; }
+.compact-quota-orbit-outer > i:nth-child(2) { right: 2%; bottom: 33%; animation-delay: -.65s; }
+.compact-quota-orbit-outer > i:nth-child(3) { bottom: 2%; left: 22%; animation-delay: -1.3s; }
+.compact-quota-orbit-inner > i:nth-child(1) { top: 8%; right: 19%; animation-delay: -.35s; }
+.compact-quota-orbit-inner > i:nth-child(2) { bottom: 5%; left: 28%; animation-delay: -1.05s; }
+
+.compact-quota-particles {
+  position: absolute;
+  z-index: 1;
+  inset: 11% 12%;
+  pointer-events: none;
+}
+
+.compact-quota-particles > i {
+  --particle-x: 50%;
+  position: absolute;
+  left: var(--particle-x);
+  bottom: 10%;
+  width: clamp(2px, calc(var(--status-u) * .24), 6px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--status-inverse) 76%, var(--status-solid));
+  opacity: 0;
+  box-shadow: 0 0 calc(var(--status-u) * .52) currentColor;
+  animation: compactParticleRise 3.6s ease-in infinite;
+}
+
+.compact-quota-particles > i:nth-child(1) { --particle-x: 12%; animation-delay: -3.1s; }
+.compact-quota-particles > i:nth-child(2) { --particle-x: 28%; animation-delay: -1.4s; }
+.compact-quota-particles > i:nth-child(3) { --particle-x: 43%; animation-delay: -2.5s; }
+.compact-quota-particles > i:nth-child(4) { --particle-x: 61%; animation-delay: -.6s; }
+.compact-quota-particles > i:nth-child(5) { --particle-x: 76%; animation-delay: -2s; }
+.compact-quota-particles > i:nth-child(6) { --particle-x: 89%; animation-delay: -3.4s; }
 
 .compact-quota-shape {
   position: absolute;
@@ -289,7 +364,7 @@ body.status-window-root,
     var(--status-blob-depth) 59%,
     color-mix(in srgb, var(--status-blob-highlight) 62%, transparent) 75%
   );
-  animation: compactSculptureMorph 8s ease-in-out infinite;
+  animation: compactSculptureMorph 6.4s ease-in-out infinite;
 }
 
 .compact-quota-shape-two {
@@ -297,7 +372,7 @@ body.status-window-root,
   border: 1px solid color-mix(in srgb, var(--status-line) 78%, transparent);
   border-radius: 59% 41% 53% 47% / 45% 57% 43% 55%;
   background: radial-gradient(circle at 46% 44%, rgba(255, 255, 255, .3), color-mix(in srgb, var(--status-solid) 15%, transparent) 59%, transparent 62%);
-  animation: compactInnerDrift 9.5s ease-in-out infinite;
+  animation: compactInnerDrift 7.2s ease-in-out infinite;
 }
 
 .compact-quota-shape-three {
@@ -306,7 +381,18 @@ body.status-window-root,
   border-radius: 50%;
   background: color-mix(in srgb, var(--status-panel-strong) 74%, transparent);
   box-shadow: inset 0 0 calc(var(--status-u) * 2.5) color-mix(in srgb, var(--status-solid) 18%, transparent), 0 0 0 calc(var(--status-u) * .94) rgba(255, 255, 255, .08);
-  animation: compactInnerGlow 5.2s ease-in-out infinite;
+  animation: compactInnerGlow 3.6s ease-in-out infinite;
+}
+
+.compact-quota-energy-sweep {
+  position: absolute;
+  z-index: 2;
+  inset: 25%;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(from 0deg, transparent 0 70%, color-mix(in srgb, var(--status-inverse) 60%, transparent) 82%, transparent 92%);
+  mask: radial-gradient(circle, transparent 56%, #000 59% 65%, transparent 68%);
+  animation: compactEnergySweep 3.2s linear infinite;
 }
 
 .compact-quota-core {
@@ -325,7 +411,7 @@ body.status-window-root,
   align-items: center;
   justify-content: center;
   line-height: 1;
-  animation: compactCorePulse 4.8s ease-in-out infinite;
+  animation: compactCorePulse 3.2s ease-in-out infinite;
 }
 
 .compact-quota-core strong {
@@ -384,13 +470,24 @@ body.status-window-root,
   display: block;
   height: 100%;
   background: var(--status-solid);
+  position: relative;
+  overflow: hidden;
   transition: width .35s ease;
+}
+
+.compact-quota-track i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.58), transparent);
+  transform: translateX(-120%);
+  animation: compactTrackSweep 2.8s ease-in-out infinite;
 }
 
 .compact-status-network {
   padding: calc(var(--status-u) * .94) calc(var(--status-u) * 1.04) calc(var(--status-u) * .84);
   display: grid;
-  grid-template-rows: calc(var(--status-u) * 3.33) minmax(0, 1fr) auto;
+  grid-template-rows: calc(var(--status-u) * 3.33) minmax(0, 1fr);
 }
 
 .compact-status-section-heading {
@@ -420,12 +517,12 @@ body.status-window-root,
   letter-spacing: .08em;
 }
 
-.compact-route-summary {
+.compact-live-monitor {
   flex: 0 0 auto;
   min-height: calc(var(--status-u) * 2.29);
   padding: 0 calc(var(--status-u) * .63);
   border: 1px solid var(--status-line);
-  color: var(--status-secondary);
+  color: var(--status-success);
   display: inline-flex;
   align-items: center;
   gap: calc(var(--status-u) * .42);
@@ -434,12 +531,14 @@ body.status-window-root,
   white-space: nowrap;
 }
 
-.compact-route-summary.is-error {
-  color: var(--status-danger);
-  border-color: color-mix(in srgb, var(--status-danger) 54%, var(--status-line));
+.compact-live-monitor > i {
+  width: clamp(5px, calc(var(--status-u) * .58), 15px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 42%, transparent);
+  animation: compactLivePulse 1.8s ease-out infinite;
 }
-
-.compact-route-summary.is-healthy { color: var(--status-success); }
 
 .compact-route-list {
   min-height: 0;
@@ -509,6 +608,15 @@ body.status-window-root,
   align-items: center;
   justify-content: flex-end;
   gap: calc(var(--status-u) * .31);
+}
+
+.compact-route-node-dot {
+  width: clamp(5px, calc(var(--status-u) * .52), 14px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 calc(var(--status-u) * .52) color-mix(in srgb, currentColor 45%, transparent);
+  animation: compactNodeBeat 2.2s ease-in-out infinite;
 }
 
 .compact-route-verdict small {
@@ -644,6 +752,13 @@ html[data-performance-mode='lite'] .compact-quota-shape-one,
 html[data-performance-mode='lite'] .compact-quota-shape-two,
 html[data-performance-mode='lite'] .compact-quota-shape-three,
 html[data-performance-mode='lite'] .compact-quota-core,
+html[data-performance-mode='lite'] .compact-quota-orbit,
+html[data-performance-mode='lite'] .compact-quota-orbit > i,
+html[data-performance-mode='lite'] .compact-quota-particles > i,
+html[data-performance-mode='lite'] .compact-quota-energy-sweep,
+html[data-performance-mode='lite'] .compact-route-node-dot,
+html[data-performance-mode='lite'] .compact-live-monitor > i,
+html[data-performance-mode='lite'] .compact-quota-track i::after,
 html[data-performance-mode='lite'] .compact-quota-sculpture::before,
 html[data-performance-mode='lite'] .compact-quota-sculpture::after,
 html[data-performance-mode='lite'] .is-spinning {
@@ -652,17 +767,18 @@ html[data-performance-mode='lite'] .is-spinning {
 
 @keyframes compactSculptureFloat {
   0%, 100% { transform: translateX(-50%) translateY(0) scale(1); }
-  50% { transform: translateX(-50%) translateY(-3px) scale(1.015); }
+  35% { transform: translateX(-50%) translateY(-6px) scale(1.035) rotate(.6deg); }
+  70% { transform: translateX(-50%) translateY(2px) scale(.99) rotate(-.4deg); }
 }
 
 @keyframes compactSculptureMorph {
-  0%, 100% { transform: rotate(-5deg) scale(1); border-radius: 42% 58% 49% 51% / 55% 39% 61% 45%; }
-  50% { transform: rotate(3deg) scale(.98); border-radius: 55% 45% 43% 57% / 44% 56% 46% 54%; }
+  0%, 100% { transform: rotate(-7deg) scale(1); border-radius: 42% 58% 49% 51% / 55% 39% 61% 45%; }
+  50% { transform: rotate(6deg) scale(.965); border-radius: 55% 45% 43% 57% / 44% 56% 46% 54%; }
 }
 
 @keyframes compactInnerDrift {
   0%, 100% { transform: rotate(8deg) translate3d(0, 0, 0); border-radius: 59% 41% 53% 47% / 45% 57% 43% 55%; }
-  50% { transform: rotate(-7deg) translate3d(2px, -1px, 0); border-radius: 45% 55% 46% 54% / 58% 42% 57% 43%; }
+  50% { transform: rotate(-11deg) translate3d(5px, -3px, 0) scale(1.04); border-radius: 45% 55% 46% 54% / 58% 42% 57% 43%; }
 }
 
 @keyframes compactHaloPulse {
@@ -672,7 +788,8 @@ html[data-performance-mode='lite'] .is-spinning {
 
 @keyframes compactSpecularOrbit {
   0%, 100% { transform: translate(0, 0); opacity: .42; }
-  50% { transform: translate(-25vw, 25vh); opacity: .88; }
+  35% { transform: translate(-460%, 330%); opacity: .95; }
+  68% { transform: translate(-1120%, 720%); opacity: .58; }
 }
 
 @keyframes compactInnerGlow {
@@ -681,8 +798,30 @@ html[data-performance-mode='lite'] .is-spinning {
 }
 
 @keyframes compactCorePulse {
-  0%, 100% { transform: translateY(0); filter: brightness(1); }
-  50% { transform: translateY(-1px); filter: brightness(1.08); }
+  0%, 100% { transform: translateY(0) scale(1); filter: brightness(1); }
+  50% { transform: translateY(-2px) scale(1.055); filter: brightness(1.15); }
+}
+
+@keyframes compactOrbitOuter { to { transform: rotate(360deg); } }
+@keyframes compactOrbitInner { to { transform: rotate(360deg) scale(1.03); } }
+@keyframes compactEnergySweep { to { transform: rotate(360deg); } }
+@keyframes compactNodeBeat {
+  0%, 100% { transform: scale(.72); opacity: .48; }
+  48% { transform: scale(1.28); opacity: 1; }
+}
+@keyframes compactParticleRise {
+  0% { transform: translate3d(0, 12px, 0) scale(.5); opacity: 0; }
+  18% { opacity: .8; }
+  75% { opacity: .42; }
+  100% { transform: translate3d(10px, -92px, 0) scale(1.35); opacity: 0; }
+}
+@keyframes compactTrackSweep {
+  0%, 35% { transform: translateX(-120%); }
+  75%, 100% { transform: translateX(120%); }
+}
+@keyframes compactLivePulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 48%, transparent); }
+  75%, 100% { box-shadow: 0 0 0 calc(var(--status-u) * .78) transparent; }
 }
 
 @keyframes compactStatusSpin { to { transform: rotate(360deg); } }
@@ -715,7 +854,7 @@ html[data-performance-mode='lite'] .is-spinning {
   }
 
   .compact-quota-sculpture {
-    width: clamp(138px, min(32vw, 54vh), 154px);
+    width: clamp(112px, 72%, 150px);
   }
 
   .compact-quota-list {
@@ -728,7 +867,7 @@ html[data-performance-mode='lite'] .is-spinning {
     gap: 4px;
   }
 
-  .compact-route-summary {
+  .compact-live-monitor {
     padding: 0 4px;
   }
 }

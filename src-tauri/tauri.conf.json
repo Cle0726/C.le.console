@@ -5,9 +5,9 @@
   "version": "1.1.4",
   "identifier": "com.cle0726.cle-console",
   "build": {
-    "beforeDevCommand": "node scripts/prepare-tauri.cjs && npm run dev",
+    "beforeDevCommand": "node scripts/prepare-tauri.cjs && node scripts/dev-frontend.cjs",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "node scripts/prepare-tauri.cjs && npm run build",
+    "beforeBuildCommand": "node scripts/prepare-tauri.cjs && node scripts/build-frontend.cjs",
     "frontendDist": "../dist"
   },
   "app": {
@@ -24,7 +24,8 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "transparent": false,
-        "resizable": true
+        "resizable": true,
+        "backgroundColor": "#0B0C0E"
       },
       {
         "label": "floating-card",
@@ -72,7 +73,8 @@
     "createUpdaterArtifacts": false,
     "externalBin": [
       "../sidecars/cle-cliproxy/bin/cle-cliproxy",
-      "../sidecars/cockpit-cliproxy/bin/cockpit-cliproxy"
+      "../sidecars/cockpit-cliproxy/bin/cockpit-cliproxy",
+      "../sidecars/jimeng-api/bin/jimeng-api"
     ],
     "icon": [
       "icons/48x48.png",

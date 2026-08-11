@@ -14,6 +14,8 @@ const ACCOUNTS_INDEX_FILE: &str = "cursor_accounts.json";
 const ACCOUNTS_DIR: &str = "cursor_accounts";
 const CURSOR_QUOTA_ALERT_COOLDOWN_SECONDS: i64 = 10 * 60;
 const CURSOR_ACCESS_TOKEN_REFRESH_THRESHOLD_SECONDS: i64 = 5 * 60;
+const CURSOR_LOGIN_REQUIRED_STATUS: &str = "login_required";
+const CURSOR_LOGIN_REQUIRED_ERROR: &str = "CURSOR_LOGIN_REQUIRED";
 
 lazy_static::lazy_static! {
     static ref CURSOR_ACCOUNT_INDEX_LOCK: Mutex<()> = Mutex::new(());
@@ -57,6 +59,19 @@ fn is_banned_reason(value: Option<&str>) -> bool {
 pub(crate) fn is_banned_account(account: &CursorAccount) -> bool {
     is_banned_status(account.status.as_deref())
         || is_banned_reason(account.status_reason.as_deref())
+}
+
+fn is_login_required_error(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    normalized.contains(&CURSOR_LOGIN_REQUIRED_ERROR.to_ascii_lowercase())
+        || normalized.contains("unauthenticated")
+        || normalized.contains("authentication required")
+        || normalized.contains("session expired")
+}
+
+fn is_login_required_account(account: &CursorAccount) -> bool {
+    normalize_status_value(account.status.as_deref()).as_deref()
+        == Some(CURSOR_LOGIN_REQUIRED_STATUS)
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +273,10 @@ fn persist_quota_query_error(account_id: &str, message: &str) {
     };
     account.quota_query_last_error = Some(message.to_string());
     account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
+    if is_login_required_error(message) && !is_banned_account(&account) {
+        account.status = Some(CURSOR_LOGIN_REQUIRED_STATUS.to_string());
+        account.status_reason = Some("Cursor 登录已失效，请重新导入或登录账号".to_string());
+    }
     let _ = upsert_account_record(account);
 }
 
@@ -1438,7 +1457,10 @@ async fn exchange_refresh_token_with_client(
     })?;
 
     if status == 401 || status == 403 {
-        return Err("Cursor refresh token 已过期或无效，请重新导入账号".to_string());
+        return Err(format!(
+            "{}: Cursor refresh token 已过期或无效，请重新导入或登录账号",
+            CURSOR_LOGIN_REQUIRED_ERROR
+        ));
     }
     if status != 200 {
         let detail = body.trim();
@@ -1467,7 +1489,10 @@ async fn refresh_account_access_token_with_client(
 
     let response = exchange_refresh_token_with_client(client, refresh_token.as_str()).await?;
     if response.should_logout {
-        return Err("Cursor refresh token 已失效，请重新导入账号".to_string());
+        return Err(format!(
+            "{}: Cursor refresh token 已失效，请重新导入或登录账号",
+            CURSOR_LOGIN_REQUIRED_ERROR
+        ));
     }
 
     let new_access_token = normalize_non_empty(response.access_token.as_deref())
@@ -1498,7 +1523,10 @@ async fn fetch_user_meta_with_client(
 
     let status = response.status().as_u16();
     if status == 401 || status == 403 {
-        return Err("Cursor 会话已过期或未认证，请重新导入账号".to_string());
+        return Err(format!(
+            "{}: Cursor 会话已过期或未认证，请重新导入或登录账号",
+            CURSOR_LOGIN_REQUIRED_ERROR
+        ));
     }
     if status != 200 {
         return Err(format!("Cursor user meta API 返回异常状态码: {}", status));
@@ -1534,7 +1562,10 @@ async fn fetch_stripe_profile_with_client(
 
     let full_status = full_response.status().as_u16();
     if full_status == 401 || full_status == 403 {
-        return Err("Cursor 会话已过期或未认证，请重新导入账号".to_string());
+        return Err(format!(
+            "{}: Cursor 会话已过期或未认证，请重新导入或登录账号",
+            CURSOR_LOGIN_REQUIRED_ERROR
+        ));
     }
     if full_status == 200 {
         let body = full_response.text().await.map_err(|e| {
@@ -1563,7 +1594,10 @@ async fn fetch_stripe_profile_with_client(
 
     let fallback_status = fallback_response.status().as_u16();
     if fallback_status == 401 || fallback_status == 403 {
-        return Err("Cursor 会话已过期或未认证，请重新导入账号".to_string());
+        return Err(format!(
+            "{}: Cursor 会话已过期或未认证，请重新导入或登录账号",
+            CURSOR_LOGIN_REQUIRED_ERROR
+        ));
     }
     if fallback_status != 200 {
         return Ok(None);
@@ -1622,7 +1656,10 @@ async fn fetch_usage_summary_with_client(
 
     let status = response.status().as_u16();
     if status == 401 || status == 403 {
-        return Err("Cursor 会话已过期或未认证，请重新导入账号".to_string());
+        return Err(format!(
+            "{}: Cursor 会话已过期或未认证，请重新导入或登录账号",
+            CURSOR_LOGIN_REQUIRED_ERROR
+        ));
     }
     if status != 200 {
         return Err(format!("Cursor usage API 返回异常状态码: {}", status));
@@ -1635,6 +1672,30 @@ async fn fetch_usage_summary_with_client(
 
     serde_json::from_str::<serde_json::Value>(&body)
         .map_err(|e| format!("解析 Cursor usage JSON 失败: {}", e))
+}
+
+fn apply_cursor_usage_snapshot(account: &mut CursorAccount, usage: serde_json::Value) {
+    if let Some(membership_type) = usage.get("membershipType").and_then(Value::as_str) {
+        if !membership_type.trim().is_empty() {
+            account.membership_type = Some(membership_type.to_string());
+        }
+    }
+    account.cursor_usage_raw = Some(usage);
+    account.quota_query_last_error = None;
+    account.quota_query_last_error_at = None;
+    if is_login_required_account(account) {
+        account.status = Some("normal".to_string());
+        account.status_reason = None;
+    }
+}
+
+fn mark_cursor_usage_error(account: &mut CursorAccount, error: String) {
+    if is_login_required_error(&error) && !is_banned_account(account) {
+        account.status = Some(CURSOR_LOGIN_REQUIRED_STATUS.to_string());
+        account.status_reason = Some("Cursor 登录已失效，请重新导入或登录账号".to_string());
+    }
+    account.quota_query_last_error = Some(error);
+    account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
 }
 
 // ---------------------------------------------------------------------------
@@ -1747,30 +1808,43 @@ async fn refresh_account_async_once(account_id: &str) -> Result<CursorAccount, S
         }
     }
 
-    let mut usage_refreshed = false;
-    match fetch_usage_summary_with_client(&client, &account.access_token).await {
-        Ok(usage) => {
-            if let Some(mt) = usage.get("membershipType").and_then(|v| v.as_str()) {
-                if !mt.is_empty() {
-                    account.membership_type = Some(mt.to_string());
-                }
+    let mut usage_result = fetch_usage_summary_with_client(&client, &account.access_token).await;
+
+    // Tokens can be revoked before their embedded expiry. Retry this read-only quota
+    // request once with a refreshed access token, then stop until a manual login.
+    if usage_result
+        .as_ref()
+        .err()
+        .is_some_and(|error| is_login_required_error(error))
+    {
+        match refresh_account_access_token_with_client(&client, &mut account).await {
+            Ok(true) => {
+                usage_result =
+                    fetch_usage_summary_with_client(&client, &account.access_token).await;
             }
-            account.cursor_usage_raw = Some(usage);
-            account.quota_query_last_error = None;
-            account.quota_query_last_error_at = None;
+            Ok(false) => {}
+            Err(refresh_error) => {
+                usage_result = Err(refresh_error);
+            }
+        }
+    }
+
+    let mut usage_refreshed = false;
+    match usage_result {
+        Ok(usage) => {
+            apply_cursor_usage_snapshot(&mut account, usage);
             usage_refreshed = true;
             logger::log_info(&format!(
-                "[Cursor Refresh] API 配额拉取成功: id={}",
+                "[Cursor Refresh] usage refreshed: id={}",
                 account.id
             ));
         }
-        Err(err) => {
+        Err(error) => {
             logger::log_warn(&format!(
-                "[Cursor Refresh] API 配额拉取失败: id={}, error={}",
-                account.id, err
+                "[Cursor Refresh] usage refresh failed: id={}, error={}",
+                account.id, error
             ));
-            account.quota_query_last_error = Some(err);
-            account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
+            mark_cursor_usage_error(&mut account, error);
         }
     }
 
@@ -1789,6 +1863,15 @@ async fn refresh_account_async_once(account_id: &str) -> Result<CursorAccount, S
 }
 
 pub async fn refresh_account_async(account_id: &str) -> Result<CursorAccount, String> {
+    if let Some(account) = load_account(account_id) {
+        if is_login_required_account(&account) {
+            logger::log_info(&format!(
+                "[Cursor Refresh] 账号需要重新登录，跳过自动请求: id={}",
+                account_id
+            ));
+            return Ok(account);
+        }
+    }
     let result = refresh_account_async_once(account_id).await;
     if let Err(err) = &result {
         persist_quota_query_error(account_id, err);
@@ -1801,6 +1884,7 @@ pub async fn refresh_all_tokens() -> Result<Vec<(String, Result<CursorAccount, S
     let active_accounts: Vec<CursorAccount> = accounts
         .into_iter()
         .filter(|account| !is_banned_account(account))
+        .filter(|account| !is_login_required_account(account))
         .collect();
 
     let mut results = Vec::with_capacity(active_accounts.len());
@@ -2117,4 +2201,18 @@ pub fn run_quota_alert_if_needed(
 
     crate::modules::account::dispatch_quota_alert(&payload);
     Ok(Some(payload))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_login_required_errors() {
+        assert!(is_login_required_error(
+            "CURSOR_LOGIN_REQUIRED: session expired"
+        ));
+        assert!(is_login_required_error("authentication required"));
+        assert!(!is_login_required_error("Cursor usage API returned 500"));
+    }
 }

@@ -7328,6 +7328,14 @@ fn desktop_web_usage_error_message(profile: &Value) -> Option<String> {
     ))
 }
 
+fn desktop_usage_error_code(message: &str) -> &'static str {
+    if desktop_error_is_cloudflare_challenge(message) {
+        "verification_required"
+    } else {
+        "desktop_usage_refresh_failed"
+    }
+}
+
 fn desktop_account_has_real_profile_data(account: &ClaudeAccount) -> bool {
     account
         .email
@@ -8239,7 +8247,6 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, St
             },
             timestamp: now_ts(),
         });
-        account.usage_updated_at = Some(now_ts_ms());
         return save_account_and_index(account);
     }
     if account.auth_mode == ClaudeAuthMode::DesktopOAuth {
@@ -8303,11 +8310,16 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, St
                     if web_quota_available {
                         account.quota_error = None;
                     } else if let Some(message) = usage_error {
+                        let error_code = desktop_usage_error_code(&message);
                         account.quota_error = Some(ClaudeQuotaErrorInfo {
-                            code: Some("desktop_usage_refresh_failed".to_string()),
-                            message,
+                            code: Some(error_code.to_string()),
+                            message: message.clone(),
                             timestamp: now_ts(),
                         });
+                        if error_code == "verification_required" {
+                            account.status = Some("verification_required".to_string());
+                            account.status_reason = Some(message);
+                        }
                     } else {
                         account.quota_error = None;
                     }
@@ -8331,13 +8343,19 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, St
                 ));
                 let message = format!("Claude 资料刷新失败: {}", error);
                 if local_profile_applied || desktop_account_has_real_profile_data(&account) {
+                    let error_code = desktop_usage_error_code(&message);
                     account.quota_error = Some(ClaudeQuotaErrorInfo {
-                        code: Some("desktop_usage_refresh_failed".to_string()),
-                        message,
+                        code: Some(error_code.to_string()),
+                        message: message.clone(),
                         timestamp: now_ts(),
                     });
-                    account.status = None;
-                    account.status_reason = None;
+                    if error_code == "verification_required" {
+                        account.status = Some("verification_required".to_string());
+                        account.status_reason = Some(message);
+                    } else {
+                        account.status = None;
+                        account.status_reason = None;
+                    }
                 } else {
                     account.quota_error = Some(ClaudeQuotaErrorInfo {
                         code: Some("desktop_profile_failed".to_string()),
@@ -8369,7 +8387,6 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, St
                     message: error,
                     timestamp: now_ts(),
                 });
-                account.usage_updated_at = Some(now_ts_ms());
                 return save_account_and_index(account);
             }
         }
@@ -8381,7 +8398,6 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, St
             message: "Claude 账号缺少 accessToken".to_string(),
             timestamp: now_ts(),
         });
-        account.usage_updated_at = Some(now_ts_ms());
         return save_account_and_index(account);
     };
 
@@ -8404,7 +8420,6 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, St
                 message: error,
                 timestamp: now_ts(),
             });
-            account.usage_updated_at = Some(now_ts_ms());
         }
     }
     save_account_and_index(account)
@@ -8415,6 +8430,18 @@ pub async fn refresh_all_quotas() -> Result<Vec<(String, Result<ClaudeAccount, S
     let mut results = Vec::with_capacity(accounts.len());
     for account in accounts {
         let id = account.id.clone();
+        if account
+            .status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("verification_required"))
+        {
+            logger::log_info(&format!(
+                "[Claude Quota] 账号等待浏览器验证，跳过自动刷新: account_id={}",
+                id
+            ));
+            results.push((id, Ok(account)));
+            continue;
+        }
         results.push((id.clone(), refresh_account_quota(&id).await));
     }
     Ok(results)

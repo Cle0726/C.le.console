@@ -132,6 +132,7 @@ const CUSTOM_ROUTING_WEIGHT_MAX: u32 = 100;
 const GATEWAY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const GATEWAY_PORT_RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
 const GATEWAY_PORT_RELEASE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const GATEWAY_PORT_RECOVERY_SCAN_LIMIT: u16 = 32;
 const SIDECAR_READY_TIMEOUT: Duration = Duration::from_secs(15);
 const UPSTREAM_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const DEFAULT_OPENAI_RESPONSES_BASE_URL: &str = "https://api.openai.com/v1";
@@ -945,7 +946,8 @@ fn now_ms() -> i64 {
 
 fn is_prepared_account_cache_valid(entry: &CachedPreparedAccount, now: i64) -> bool {
     now.saturating_sub(entry.cached_at_ms) <= PREPARED_ACCOUNT_CACHE_TTL_MS
-        && !codex_oauth::is_token_expired(&entry.account.tokens.access_token)
+        && (entry.account.is_agent_identity_auth()
+            || !codex_oauth::is_token_expired(&entry.account.tokens.access_token))
 }
 
 fn account_has_refresh_token(account: &CodexAccount) -> bool {
@@ -6888,6 +6890,28 @@ fn sidecar_auth_json_for_account(
         .filter(|value| !value.is_empty())
         .unwrap_or(account.id.as_str());
     let excluded_models = merge_collection_and_account_excluded_models(collection, &account.id);
+    if let Some(identity) = account.agent_identity.as_ref() {
+        let mut value = json!({
+            "type": "codex",
+            "auth_mode": "agentIdentity",
+            "openai_auth_mode": "agentIdentity",
+            "agent_runtime_id": identity.agent_runtime_id,
+            "agent_private_key": identity.agent_private_key,
+            "task_id": identity.task_id,
+            "account_id": identity.account_id,
+            "chatgpt_user_id": identity.chatgpt_user_id,
+            "chatgpt_account_is_fedramp": identity.chatgpt_account_is_fedramp,
+            "email": account.email,
+            "plan_type": account.plan_type,
+            "excluded_models": excluded_models,
+            "disable_cooling": collection.disable_cooling,
+            "websockets": true,
+        });
+        if let Some(proxy_url) = proxy_url {
+            value["proxy_url"] = Value::String(proxy_url.to_string());
+        }
+        return value;
+    }
     let mut value = json!({
         "type": "codex",
         "id_token": account.tokens.id_token.clone(),
@@ -6909,6 +6933,49 @@ fn sidecar_auth_json_for_account(
         value["proxy_url"] = Value::String(proxy_url.to_string());
     }
     value
+}
+
+fn preserve_existing_sidecar_agent_task(
+    value: &mut Value,
+    auth_path: &Path,
+    account: &CodexAccount,
+) {
+    let Some(identity) = account.agent_identity.as_ref() else {
+        return;
+    };
+    if identity
+        .task_id
+        .as_deref()
+        .is_some_and(|task| !task.trim().is_empty())
+    {
+        return;
+    }
+    let Ok(raw) = std::fs::read_to_string(auth_path) else {
+        return;
+    };
+    let Ok(existing) = serde_json::from_str::<Value>(&raw) else {
+        return;
+    };
+    let existing_runtime = existing
+        .get("agent_runtime_id")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    let existing_key = existing
+        .get("agent_private_key")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    let existing_task = existing
+        .get("task_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task| !task.is_empty());
+    if existing_runtime == Some(identity.agent_runtime_id.trim())
+        && existing_key == Some(identity.agent_private_key.trim())
+    {
+        if let Some(task) = existing_task {
+            value["task_id"] = Value::String(task.to_string());
+        }
+    }
 }
 
 pub fn sync_sidecar_auth_file_for_account(account: &CodexAccount) -> Result<(), String> {
@@ -6937,8 +7004,9 @@ pub fn sync_sidecar_auth_file_for_account(account: &CodexAccount) -> Result<(), 
     if !auth_path.exists() {
         return Ok(());
     }
-    let auth_json =
+    let mut auth_json =
         sidecar_auth_json_for_account(account, &collection, proxy_signature.proxy_url.as_deref());
+    preserve_existing_sidecar_agent_task(&mut auth_json, &auth_path, account);
     let auth_content = serde_json::to_string_pretty(&auth_json)
         .map_err(|e| format!("序列化 sidecar Codex OAuth 认证失败: {}", e))?;
     write_string_atomic(&auth_path, &auth_content)?;
@@ -6951,10 +7019,20 @@ pub fn sync_sidecar_auth_file_for_account(account: &CodexAccount) -> Result<(), 
 }
 
 fn sidecar_account_manifest_value(account: &CodexAccount, auth_id: Option<&str>) -> Value {
+    let auth_kind = if account.is_api_key_auth() {
+        "api_key"
+    } else if account.is_agent_identity_auth() {
+        "agent_identity"
+    } else {
+        "oauth"
+    };
     json!({
         "id": account.id.clone(),
         "email": account.email.clone(),
         "authId": auth_id,
+        "authKind": auth_kind,
+        "planType": account.plan_type.as_deref(),
+        "chatgptAccountId": account.account_id.as_deref().unwrap_or_default(),
         "upstreamApiKey": account.openai_api_key.as_deref().unwrap_or_default(),
         "planRank": resolve_plan_rank(account),
         "remainingQuota": resolve_remaining_quota(account),
@@ -7257,7 +7335,7 @@ async fn start_legacy_gateway_locked(
 }
 
 fn sidecar_cached_account_usable_after_prepare_error(account: &CodexAccount) -> bool {
-    if account.is_api_key_auth() {
+    if account.is_api_key_auth() || account.is_agent_identity_auth() {
         return true;
     }
     if account.requires_reauth {
@@ -7370,8 +7448,9 @@ async fn prepare_sidecar_launch_config_in_dir(
         let file_name = sidecar_auth_file_name(&account.id);
         let auth_path = auths_dir.join(&file_name);
         expected_auth_files.insert(file_name.clone());
-        let auth_json =
+        let mut auth_json =
             sidecar_auth_json_for_account(&account, collection, effective_proxy_url_ref);
+        preserve_existing_sidecar_agent_task(&mut auth_json, &auth_path, &account);
         let auth_content = serde_json::to_string_pretty(&auth_json)
             .map_err(|e| format!("序列化 sidecar Codex OAuth 认证失败: {}", e))?;
         write_string_atomic_if_changed(&auth_path, &auth_content)?;
@@ -8585,6 +8664,25 @@ fn allocate_random_local_port(bind_host: &str) -> Result<u16, String> {
         .local_addr()
         .map(|addr| addr.port())
         .map_err(|e| format!("读取本地接入端口失败: {}", e))
+}
+
+fn allocate_recovery_local_port(bind_host: &str, occupied_port: u16) -> Result<u16, String> {
+    for offset in 1..=GATEWAY_PORT_RECOVERY_SCAN_LIMIT {
+        let Some(candidate) = occupied_port.checked_add(offset) else {
+            break;
+        };
+        match is_local_access_port_bindable(bind_host, candidate) {
+            Ok(true) => return Ok(candidate),
+            Ok(false) => continue,
+            Err(error) => {
+                logger::log_codex_api_warn(&format!(
+                    "[CodexLocalAccess] 自动迁移端口时检查失败: bind={}:{} error={}",
+                    bind_host, candidate, error
+                ));
+            }
+        }
+    }
+    allocate_random_local_port(bind_host)
 }
 
 fn configured_initial_local_access_port() -> Option<u16> {
@@ -9889,6 +9987,55 @@ pub fn trigger_gateway_reload_in_background(reason: &'static str) {
     reload_gateway_in_background(reason, ensure_runtime_loaded());
 }
 
+async fn recover_occupied_gateway_port(
+    mut collection: CodexLocalAccessCollection,
+    running: bool,
+    actual_port: Option<u16>,
+    actual_bind_host: Option<&str>,
+) -> Result<CodexLocalAccessCollection, String> {
+    let bind_host = bind_host_for_collection(&collection).to_string();
+    let already_owned = running
+        && actual_port == Some(collection.port)
+        && actual_bind_host == Some(bind_host.as_str());
+    let configured_port_available = is_local_access_port_bindable(&bind_host, collection.port)
+        .map_err(|error| {
+            format!(
+                "检查 API 服务端口 {} 可用性失败: {}",
+                collection.port, error
+            )
+        })?;
+    if already_owned || configured_port_available {
+        return Ok(collection);
+    }
+
+    if collection_gateway_mode(&collection) == CodexLocalAccessGatewayMode::Sidecar
+        && probe_sidecar_ready_once(&collection, Duration::from_millis(500))
+            .await
+            .is_ok()
+    {
+        logger::log_codex_api_info(&format!(
+            "[CodexLocalAccess][self-repair] 检测到可复用的独立 API sidecar: bind={}:{}",
+            bind_host, collection.port
+        ));
+        return Ok(collection);
+    }
+
+    let occupied_port = collection.port;
+    collection.port = allocate_recovery_local_port(&bind_host, occupied_port)?;
+    collection.updated_at = now_ms();
+    save_collection_to_disk(&collection)?;
+    {
+        let mut runtime = gateway_runtime().lock().await;
+        sync_runtime_collection(&mut runtime, collection.clone());
+        runtime.last_error = None;
+    }
+    logger::log_codex_api_warn(&format!(
+        "[CodexLocalAccess][self-repair] 配置端口无法提供有效服务，已自动迁移: bind={} port={}->{}",
+        bind_host, occupied_port, collection.port
+    ));
+    Ok(collection)
+}
+
 async fn ensure_gateway_matches_runtime_locked() -> Result<(), String> {
     let (collection, running, actual_port, actual_bind_host, actual_fingerprint, stale_task) = {
         let mut runtime = gateway_runtime().lock().await;
@@ -9948,6 +10095,13 @@ async fn ensure_gateway_matches_runtime_locked() -> Result<(), String> {
         return Ok(());
     }
 
+    let collection = recover_occupied_gateway_port(
+        collection,
+        running,
+        actual_port,
+        actual_bind_host.as_deref(),
+    )
+    .await?;
     let bind_host = bind_host_for_collection(&collection);
     let mode = collection_gateway_mode(&collection);
     if mode == CodexLocalAccessGatewayMode::Legacy {
@@ -19004,9 +19158,9 @@ mod tests {
     use super::{
         account_model_rule_blocks_model, account_requires_bound_oauth_local_gateway,
         account_requires_provider_gateway, account_upstream_base_url, align_codex_prompt_cache,
-        append_usage_event, apply_codex_official_headers, apply_routing_strategy,
-        backup_current_profile_model_before_provider_gateway, bridge_websocket_streams,
-        build_account_scoped_upstream_body, build_base_url_with_host,
+        allocate_recovery_local_port, append_usage_event, apply_codex_official_headers,
+        apply_routing_strategy, backup_current_profile_model_before_provider_gateway,
+        bridge_websocket_streams, build_account_scoped_upstream_body, build_base_url_with_host,
         build_chat_completion_payload, build_chat_completion_stream_body,
         build_codex_client_models_response, build_collection_base_url, build_images_api_payload,
         build_local_access_api_key, build_local_models_response,
@@ -19040,7 +19194,8 @@ mod tests {
         resolve_upstream_target, restore_config_toml_from_takeover_backup,
         sanitize_collection_with_accounts, scutil_proxy_map,
         should_retry_single_account_upstream_status, should_treat_response_as_stream,
-        should_try_next_account, sidecar_api_key_account_scope_values, sidecar_auth_file_name,
+        should_try_next_account, sidecar_account_manifest_value,
+        sidecar_api_key_account_scope_values, sidecar_auth_file_name,
         sidecar_auth_json_for_account, sidecar_auths_dir,
         sidecar_cached_account_usable_after_prepare_error, sidecar_codex_api_key_auth_id,
         sidecar_config_fingerprint, sidecar_payload_default_service_tier,
@@ -19054,7 +19209,8 @@ mod tests {
         CodexLocalAccessGatewayMode, CodexLocalAccessScope,
         CodexModelProviderGatewayChatTestRequest, GatewayResponseAdapter, ParsedRequest,
         ResolvedLocalApiKey, ResponseUsageCollector, RoutingCandidate, SidecarUsageDetails,
-        SidecarUsageEvent, UsageCapture, CODEX_AUTO_REVIEW_MODEL_ID,
+        SidecarUsageEvent, StdTcpListener, UsageCapture, CODEX_AUTO_REVIEW_MODEL_ID,
+        CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST,
         CODEX_LOCAL_ACCESS_TEST_DISABLE_IMAGE_GENERATION_HEADER, CODEX_PROFILE_AUTH_FILE,
         CODEX_PROFILE_CONFIG_FILE, CODEX_PROVIDER_MODEL_BACKUP_FILE,
         CODEX_PROVIDER_MODEL_CATALOG_FILE, DEFAULT_CODEX_MODELS, DEFAULT_MAX_RETRY_INTERVAL_MS,
@@ -19868,6 +20024,38 @@ wire_api = "responses"
         assert_eq!(
             auth_json.get("expired").and_then(Value::as_i64),
             Some(4_102_444_800i64)
+        );
+    }
+
+    #[test]
+    fn sidecar_agent_identity_auth_json_uses_api_only_credentials() {
+        let mut account = test_account_with_plan("k12");
+        account.tokens.access_token.clear();
+        account.agent_identity = Some(crate::models::codex::CodexAgentIdentity {
+            agent_runtime_id: "runtime-test".to_string(),
+            agent_private_key: "private-key-test".to_string(),
+            task_id: Some("task-test".to_string()),
+            account_id: "workspace-test".to_string(),
+            chatgpt_user_id: "user-test".to_string(),
+            email: Some("agent@example.com".to_string()),
+            plan_type: Some("k12".to_string()),
+            chatgpt_account_is_fedramp: false,
+        });
+        let collection = test_local_access_collection(vec![account.id.clone()]);
+        let auth_json = sidecar_auth_json_for_account(&account, &collection, None);
+        assert_eq!(
+            auth_json.get("auth_mode").and_then(Value::as_str),
+            Some("agentIdentity")
+        );
+        assert_eq!(
+            auth_json.get("agent_runtime_id").and_then(Value::as_str),
+            Some("runtime-test")
+        );
+        assert!(auth_json.get("access_token").is_none());
+        let manifest = sidecar_account_manifest_value(&account, Some("agent.json"));
+        assert_eq!(
+            manifest.get("authKind").and_then(Value::as_str),
+            Some("agent_identity")
         );
     }
 
@@ -23371,5 +23559,26 @@ data: {"error":{"code":"server_error","type":"upstream","message":"stream aborte
             build_upstream_websocket_url(&http_account, "/responses").unwrap(),
             "ws://127.0.0.1:8080/v1/responses"
         );
+    }
+
+    #[test]
+    fn recovery_port_skips_an_occupied_preferred_port() {
+        let occupied = StdTcpListener::bind((CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST, 0))
+            .expect("test listener should bind");
+        let occupied_port = occupied
+            .local_addr()
+            .expect("test listener should have an address")
+            .port();
+
+        let recovered =
+            allocate_recovery_local_port(CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST, occupied_port)
+                .expect("a recovery port should be selected");
+
+        assert_ne!(recovered, occupied_port);
+        let verification =
+            StdTcpListener::bind((CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST, recovered))
+                .expect("selected recovery port should be bindable");
+        drop(verification);
+        drop(occupied);
     }
 }

@@ -21,6 +21,11 @@ type RenderCrashBoundaryState = {
   failure: GuardFailure | null;
 };
 
+const CHUNK_RECOVERY_STORAGE_KEY = 'cle:runtime:chunk-recovery';
+const CHUNK_RECOVERY_QUERY_KEY = '__cle_recover';
+const CHUNK_RECOVERY_WINDOW_MS = 2 * 60 * 1000;
+const CHUNK_RECOVERY_STABLE_MS = 30 * 1000;
+
 function normalizeErrorMessage(value: unknown): string {
   if (value instanceof Error) {
     return value.message || value.name || 'error';
@@ -47,6 +52,43 @@ function isLikelyChunkLoadFailure(value: string): boolean {
     normalized.includes('importing a module script failed') ||
     normalized.includes('dynamic import')
   );
+}
+
+function scheduleChunkRecovery(): boolean {
+  const now = Date.now();
+  try {
+    const previous = Number(window.sessionStorage.getItem(CHUNK_RECOVERY_STORAGE_KEY) || '0');
+    if (Number.isFinite(previous) && previous > 0 && now - previous < CHUNK_RECOVERY_WINDOW_MS) {
+      return false;
+    }
+    window.sessionStorage.setItem(CHUNK_RECOVERY_STORAGE_KEY, String(now));
+  } catch {
+    return false;
+  }
+
+  window.setTimeout(() => {
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set(CHUNK_RECOVERY_QUERY_KEY, String(now));
+    window.location.replace(nextUrl.toString());
+  }, 40);
+  return true;
+}
+
+function scheduleRecoveryGuardCleanup(): () => void {
+  const currentUrl = new URL(window.location.href);
+  if (!currentUrl.searchParams.has(CHUNK_RECOVERY_QUERY_KEY)) {
+    return () => undefined;
+  }
+  const timer = window.setTimeout(() => {
+    try {
+      window.sessionStorage.removeItem(CHUNK_RECOVERY_STORAGE_KEY);
+    } catch {
+      // Storage can be unavailable in hardened webviews; the URL marker still prevents ambiguity.
+    }
+    currentUrl.searchParams.delete(CHUNK_RECOVERY_QUERY_KEY);
+    window.history.replaceState(window.history.state, '', currentUrl.toString());
+  }, CHUNK_RECOVERY_STABLE_MS);
+  return () => window.clearTimeout(timer);
 }
 
 function createFallbackMessage(rawMessage: string): string {
@@ -164,12 +206,24 @@ export function AppRuntimeGuard({ children }: AppRuntimeGuardProps) {
   const [chunkFailure, setChunkFailure] = useState<GuardFailure | null>(null);
 
   useEffect(() => {
+    let recoveryScheduled = false;
+    const cleanupRecoveryGuard = scheduleRecoveryGuardCleanup();
+
+    const recoverOrShowFailure = (failure: GuardFailure) => {
+      if (!recoveryScheduled && scheduleChunkRecovery()) {
+        recoveryScheduled = true;
+        console.warn('[AppRuntimeGuard] stale frontend chunk detected; automatic recovery scheduled');
+        return;
+      }
+      setChunkFailure(failure);
+    };
+
     const handleWindowError = (event: ErrorEvent) => {
       const text = `${event.message || ''} ${event.error?.message || ''}`.trim();
       if (!isLikelyChunkLoadFailure(text)) {
         return;
       }
-      setChunkFailure({
+      recoverOrShowFailure({
         code: 'chunk-load',
         message: normalizeErrorMessage(event.error || event.message),
         detail: [event.filename, event.error?.stack].filter(Boolean).join('\n'),
@@ -181,7 +235,7 @@ export function AppRuntimeGuard({ children }: AppRuntimeGuardProps) {
       if (!isLikelyChunkLoadFailure(text)) {
         return;
       }
-      setChunkFailure({
+      recoverOrShowFailure({
         code: 'chunk-load',
         message: text,
         detail: text,
@@ -191,6 +245,7 @@ export function AppRuntimeGuard({ children }: AppRuntimeGuardProps) {
     window.addEventListener('error', handleWindowError);
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
     return () => {
+      cleanupRecoveryGuard();
       window.removeEventListener('error', handleWindowError);
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     };
@@ -202,4 +257,3 @@ export function AppRuntimeGuard({ children }: AppRuntimeGuardProps) {
 
   return <RenderCrashBoundary>{children}</RenderCrashBoundary>;
 }
-

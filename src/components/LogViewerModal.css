@@ -175,3 +175,37 @@
     max-height: 48vh;
   }
 }
+
+/* The line-count input inherits the shared glass input material. Pin its flex
+   basis so it cannot expand past the modal, and give the toolbar a measured
+   second row whenever the metadata already consumes the first row. */
+.log-viewer-meta > * {
+  min-width: 0;
+}
+
+.log-viewer-toolbar {
+  flex: 1 1 320px;
+  min-width: min(100%, 320px);
+  max-width: 100%;
+  justify-content: flex-end;
+}
+
+.log-viewer-line-limit-wrap {
+  min-width: 0;
+}
+
+.log-viewer-line-limit-input {
+  flex: 0 0 92px !important;
+  width: 92px !important;
+  min-width: 92px !important;
+  max-width: 92px !important;
+  box-sizing: border-box;
+}
+
+@media (max-width: 1040px) {
+  .log-viewer-toolbar {
+    flex-basis: 100%;
+    width: 100%;
+    margin-left: 0;
+  }
+}

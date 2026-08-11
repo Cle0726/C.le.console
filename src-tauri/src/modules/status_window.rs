@@ -17,6 +17,7 @@ fn status_window_config(
 
 fn ensure_status_window<R: Runtime>(app: &AppHandle<R>) -> Result<WebviewWindow<R>, String> {
     if let Some(window) = app.get_webview_window(STATUS_WINDOW_LABEL) {
+        apply_native_status_window_shape(&window)?;
         return Ok(window);
     }
 
@@ -25,12 +26,61 @@ fn ensure_status_window<R: Runtime>(app: &AppHandle<R>) -> Result<WebviewWindow<
         .build()
         .map_err(|err| err.to_string())?;
 
+    apply_native_status_window_shape(&window)?;
     logger::log_info("[StatusWindow] 模型额度与出口状态窗口已创建");
     Ok(window)
 }
 
+#[cfg(target_os = "windows")]
+pub fn apply_native_status_window_shape<R: Runtime>(
+    window: &WebviewWindow<R>,
+) -> Result<(), String> {
+    use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
+
+    // Tauri and this crate currently resolve different `windows` crate minor
+    // versions. Rebuild the transparent handle from its raw pointer so Win32
+    // GDI receives the HWND type from this module's windows 0.58 binding.
+    let tauri_hwnd = window.hwnd().map_err(|err| err.to_string())?;
+    let hwnd = windows::Win32::Foundation::HWND(tauri_hwnd.0 as *mut core::ffi::c_void);
+    let size = window.outer_size().map_err(|err| err.to_string())?;
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let diameter = (32.0 * scale).round().clamp(24.0, 72.0) as i32;
+    let region = unsafe {
+        CreateRoundRectRgn(
+            0,
+            0,
+            size.width.saturating_add(1) as i32,
+            size.height.saturating_add(1) as i32,
+            diameter,
+            diameter,
+        )
+    };
+    if region.is_invalid() {
+        return Err("status_window_round_region_create_failed".to_string());
+    }
+
+    // A successful SetWindowRgn transfers ownership of HRGN to Windows and also
+    // changes native hit testing, so the transparent CSS corners are no longer
+    // part of the rectangular window surface.
+    if unsafe { SetWindowRgn(hwnd, region, true) } == 0 {
+        unsafe {
+            let _ = DeleteObject(region);
+        }
+        return Err("status_window_round_region_apply_failed".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn apply_native_status_window_shape<R: Runtime>(
+    _window: &WebviewWindow<R>,
+) -> Result<(), String> {
+    Ok(())
+}
+
 pub fn show_status_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let window = ensure_status_window(app)?;
+    apply_native_status_window_shape(&window)?;
     window.show().map_err(|err| err.to_string())?;
     window.unminimize().map_err(|err| err.to_string())?;
     window.set_focus().map_err(|err| err.to_string())

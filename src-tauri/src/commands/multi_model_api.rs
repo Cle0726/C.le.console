@@ -1,5 +1,5 @@
 use crate::modules::multi_model_api::{
-    self, MultiModelApiConfig, MultiModelApiState, MultiModelApiTestResult,
+    self, MultiModelApiConfig, MultiModelApiState, MultiModelApiTestResult, MultiModelRepairReport,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::RngCore;
@@ -78,6 +78,18 @@ pub async fn multi_model_api_test_chat(
     prompt: Option<String>,
 ) -> Result<MultiModelApiTestResult, String> {
     multi_model_api::test_chat(model, prompt).await
+}
+
+#[tauri::command]
+pub async fn multi_model_api_diagnose_and_repair(
+    deep: Option<bool>,
+) -> Result<MultiModelRepairReport, String> {
+    multi_model_api::diagnose_and_repair(deep.unwrap_or(true)).await
+}
+
+#[tauri::command]
+pub async fn multi_model_api_sync_local_gpt_bridges() -> Result<MultiModelApiState, String> {
+    multi_model_api::sync_local_gpt_bridges().await
 }
 
 #[tauri::command]

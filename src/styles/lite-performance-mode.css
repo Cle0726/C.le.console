@@ -1,15 +1,10 @@
-/* Low-overhead presentation mode. Functional controls remain intact while
-   GPU contexts, continuous animation and expensive compositing are removed. */
-html[data-performance-mode='lite'] *,
-html[data-performance-mode='lite'] *::before,
-html[data-performance-mode='lite'] *::after {
-  animation-duration: 0.001ms !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 0.001ms !important;
-  scroll-behavior: auto !important;
-}
+/* Balanced presentation mode.
+   It lowers blur radius and update frequency, but keeps the visual language,
+   startup sequence and interaction feedback intact. */
 
-html[data-performance-mode='lite'] body {
+/* Legacy fallback only. Modern day/night canvases are owned by the visual
+   theme system and must not collapse back to the old neutral fog palette. */
+html[data-performance-mode='lite']:not([data-visual-theme]) body {
   background: linear-gradient(180deg, var(--fog-0), var(--fog-2)) !important;
 }
 
@@ -18,11 +13,9 @@ html[data-performance-mode='lite'] :is(
   .startup-greeting,
   .spatial-orbit,
   .ambient-grain,
-  .ambient-beam,
-  .cursor-aura,
-  .webgl-core-ambient
+  .ambient-beam
 ) {
-  display: none !important;
+  visibility: visible !important;
 }
 
 html[data-performance-mode='lite'] :is(
@@ -35,10 +28,11 @@ html[data-performance-mode='lite'] :is(
   .launchpad-grid button,
   .model-gallery-card
 ) {
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-  filter: none !important;
-  box-shadow: 2px 3px 0 color-mix(in srgb, var(--text-primary) 8%, transparent) !important;
+  -webkit-backdrop-filter: blur(6px) saturate(108%) !important;
+  backdrop-filter: blur(6px) saturate(108%) !important;
+  box-shadow:
+    0 7px 22px color-mix(in srgb, var(--text-primary) 7%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 30%, transparent) !important;
 }
 
 html[data-performance-mode='lite'] :is(.account-card, .codex-account-card, .main-card) {
@@ -46,15 +40,22 @@ html[data-performance-mode='lite'] :is(.account-card, .codex-account-card, .main
   contain-intrinsic-size: auto 340px;
 }
 
+/* The CSS fallback keeps the scene alive without allocating a continuous
+   WebGL render loop on machines that explicitly selected Lite mode. */
 html[data-performance-mode='lite'] .webgl-geometric-core-canvas {
   display: none !important;
 }
 
 html[data-performance-mode='lite'] .webgl-core-fallback {
-  filter: none !important;
+  display: block !important;
+  filter: saturate(0.72) contrast(1.03) !important;
+  animation-duration: 16s !important;
 }
 
-html[data-performance-mode='lite'] .launchpad-primary::after,
-html[data-performance-mode='lite'] .model-gallery-card::after {
-  display: none !important;
+html[data-performance-mode='lite'] :is(
+  .launchpad-primary::after,
+  .model-gallery-card::after
+) {
+  opacity: 0.46 !important;
+  animation-duration: 9s !important;
 }

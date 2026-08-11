@@ -63,6 +63,18 @@ export interface MultiModelApiState {
   baseUrl: string;
   lastError?: string | null;
   catalog: MultiModelCatalogEntry[];
+  selfHeal?: MultiModelSelfHealState;
+}
+
+export interface MultiModelSelfHealState {
+  status: 'idle' | 'healthy' | 'degraded' | 'recovering';
+  consecutiveFailures: number;
+  restartAttempts: number;
+  restartFailures: number;
+  lastSuccessAt?: string | null;
+  lastRepairAt?: string | null;
+  nextRestartAt?: string | null;
+  lastError?: string | null;
 }
 
 export interface MultiModelApiTestResult {
@@ -72,4 +84,24 @@ export interface MultiModelApiTestResult {
   model: string;
   response: string;
   error?: string | null;
+}
+
+export type MultiModelRepairStatus = 'ok' | 'repaired' | 'warning' | 'error';
+
+export interface MultiModelRepairCheck {
+  id: string;
+  label: string;
+  status: MultiModelRepairStatus;
+  detail: string;
+  action?: string | null;
+}
+
+export interface MultiModelRepairReport {
+  ok: boolean;
+  repaired: number;
+  restarted: boolean;
+  checkedAt: string;
+  durationMs: number;
+  checks: MultiModelRepairCheck[];
+  state: MultiModelApiState;
 }

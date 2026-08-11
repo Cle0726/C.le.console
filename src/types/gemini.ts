@@ -27,6 +27,7 @@ export interface GeminiAccount {
   status_reason?: string | null;
   quota_query_last_error?: string | null;
   quota_query_last_error_at?: number | null;
+  quota_validation_url?: string | null;
 
   created_at: number;
   last_used: number;
@@ -164,35 +165,66 @@ export function getGeminiPlanBadgeClass(
 
 export function getGeminiUsage(account: GeminiAccount): GeminiUsage {
   const raw = toObject(account.gemini_usage_raw);
-  const groupsRaw = raw?.groups;
-  const groups = Array.isArray(groupsRaw) ? groupsRaw : [];
-
-  const parsedBuckets: GeminiUsageBucket[] = [];
-
+  const bucketValues: unknown[] = Array.isArray(raw?.buckets)
+    ? [...raw.buckets]
+    : [];
+  const groups = Array.isArray(raw?.groups) ? raw.groups : [];
   groups.forEach((groupRaw) => {
     const group = toObject(groupRaw);
     if (!group) return;
-
-    const bucketsRaw = group.buckets;
-    const buckets = Array.isArray(bucketsRaw) ? bucketsRaw : [];
-    buckets.forEach((item) => {
-      const bucket = toObject(item);
-      if (!bucket) return;
-
-      const bucketId =
-        typeof bucket.bucketId === "string" ? bucket.bucketId.trim() : "";
-      const remainingFraction = toNumber(bucket.remainingFraction);
-      if (!bucketId || remainingFraction == null) return;
-
-      parsedBuckets.push({
-        modelId: bucketId,
-        remainingPercent: clampPercent(remainingFraction * 100),
-        resetAt: parseResetAt(bucket.resetTime),
-        remainingAmount: null,
-        limit: null,
-      });
-    });
+    if (Array.isArray(group.buckets)) bucketValues.push(...group.buckets);
   });
+
+  const parsedBucketMap = new Map<string, GeminiUsageBucket>();
+  bucketValues.forEach((item) => {
+    const bucket = toObject(item);
+    if (!bucket) return;
+
+    const modelIdRaw =
+      typeof bucket.modelId === "string"
+        ? bucket.modelId
+        : typeof bucket.bucketId === "string"
+          ? bucket.bucketId
+          : "";
+    const modelId = modelIdRaw.trim();
+    const remainingAmount = toNumber(bucket.remainingAmount);
+    let limit =
+      toNumber(bucket.limit) ??
+      toNumber(bucket.totalAmount) ??
+      toNumber(bucket.maxAmount);
+    let remainingFraction = toNumber(bucket.remainingFraction);
+    if (
+      remainingFraction == null &&
+      remainingAmount != null &&
+      limit != null &&
+      limit > 0
+    ) {
+      remainingFraction = remainingAmount / limit;
+    }
+    if (!modelId || remainingFraction == null) return;
+    if (
+      limit == null &&
+      remainingAmount != null &&
+      remainingFraction > 0
+    ) {
+      limit = remainingAmount / remainingFraction;
+    }
+
+    const parsed: GeminiUsageBucket = {
+      modelId,
+      remainingPercent: clampPercent(remainingFraction * 100),
+      resetAt: parseResetAt(bucket.resetTime),
+      remainingAmount,
+      limit,
+    };
+    const previous = parsedBucketMap.get(modelId);
+    if (!previous || parsed.remainingPercent < previous.remainingPercent) {
+      parsedBucketMap.set(modelId, parsed);
+    }
+  });
+  const parsedBuckets = Array.from(parsedBucketMap.values()).sort((a, b) =>
+    a.modelId.localeCompare(b.modelId),
+  );
 
   const lowestRemaining = parsedBuckets.length
     ? parsedBuckets.reduce(
@@ -276,6 +308,7 @@ export function formatGeminiUsageDollars(
 }
 
 export function isGeminiAccountBanned(account: GeminiAccount): boolean {
+  if (isGeminiVerificationRequired(account)) return false;
   const status = (account.status || "").toLowerCase();
   const reason = (account.status_reason || "").toLowerCase();
   const is403Reason =
@@ -295,6 +328,38 @@ export function isGeminiAccountBanned(account: GeminiAccount): boolean {
   );
 }
 
+export function isGeminiVerificationRequired(account: GeminiAccount): boolean {
+  const combined = [
+    account.status,
+    account.status_reason,
+    account.quota_query_last_error,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return (
+    combined.includes("verification_required") ||
+    combined.includes("validation_required") ||
+    combined.includes("gemini_validation_required")
+  );
+}
+
+export function getGeminiValidationUrl(account: GeminiAccount): string | null {
+  const direct = account.quota_validation_url?.trim();
+  if (direct) return direct;
+
+  const sources = [account.quota_query_last_error, account.status_reason];
+  for (const source of sources) {
+    if (!source) continue;
+    const marker = "validation_url=";
+    const offset = source.indexOf(marker);
+    if (offset < 0) continue;
+    const url = source.slice(offset + marker.length).trim();
+    if (url) return url;
+  }
+  return null;
+}
+
 export function hasGeminiQuotaData(account: GeminiAccount): boolean {
-  return account.gemini_usage_raw != null;
+  return getGeminiUsage(account).buckets.length > 0;
 }

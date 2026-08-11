@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { WebGLModelVariant } from '../types/modelGeometry';
+import {
+  FRAME_GOVERNOR_EVENT,
+  readFrameGovernorSnapshot,
+  type FrameGovernorSnapshot,
+} from '../utils/frameGovernor';
 import { ModelGeometricEmblem } from './ModelGeometricEmblem';
 import './WebGLGeometricCore.css';
 
@@ -537,6 +542,7 @@ export function WebGLGeometricCore({
     mode,
     rotationSpeed: clamp(rotationSpeed, 0, 3),
   });
+  const contextRecoveryAttemptsRef = useRef(0);
   const [webGLFailed, setWebGLFailed] = useState(false);
 
   controlsRef.current = {
@@ -549,6 +555,18 @@ export function WebGLGeometricCore({
   };
 
   useEffect(() => {
+    if (!webGLFailed || contextRecoveryAttemptsRef.current >= 3) return;
+
+    contextRecoveryAttemptsRef.current += 1;
+    const retryDelay = 600 * (2 ** (contextRecoveryAttemptsRef.current - 1));
+    const retryTimer = window.setTimeout(() => {
+      setWebGLFailed(false);
+    }, retryDelay);
+
+    return () => window.clearTimeout(retryTimer);
+  }, [webGLFailed]);
+
+  useEffect(() => {
     const host = hostRef.current;
     if (!host || webGLFailed) return;
 
@@ -559,6 +577,9 @@ export function WebGLGeometricCore({
         antialias: true,
         powerPreference: 'high-performance',
         premultipliedAlpha: true,
+        precision: 'highp',
+        depth: true,
+        stencil: false,
       });
     } catch {
       setWebGLFailed(true);
@@ -566,6 +587,9 @@ export function WebGLGeometricCore({
     }
 
     const canvas = renderer.domElement;
+    const healthyContextTimer = window.setTimeout(() => {
+      contextRecoveryAttemptsRef.current = 0;
+    }, 15_000);
     canvas.className = 'webgl-geometric-core-canvas';
     canvas.setAttribute('aria-hidden', 'true');
     canvas.tabIndex = -1;
@@ -750,9 +774,13 @@ export function WebGLGeometricCore({
     let pointerY = 0;
     let renderedWidth = 0;
     let renderedHeight = 0;
-    let visible = true;
+    let intersecting = true;
+    let pageVisible = !document.hidden;
+    let visible = intersecting && pageVisible;
     let disposed = false;
     let reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let frameGovernor = readFrameGovernorSnapshot();
+    let activePixelRatio = 0;
     let lastTime = performance.now();
     let elapsed = 0;
     let lastControlSignature = '';
@@ -928,6 +956,27 @@ export function WebGLGeometricCore({
       renderer.setAnimationLoop(reduceMotion || !visible ? null : render);
       render(performance.now());
     };
+    const applyRenderResolution = (force = false) => {
+      const nextPixelRatio = Math.min(
+        window.devicePixelRatio || 1,
+        frameGovernor.pixelRatioCap,
+      );
+      if (!force && Math.abs(nextPixelRatio - activePixelRatio) < 0.01) return;
+      activePixelRatio = nextPixelRatio;
+      renderer.setPixelRatio(nextPixelRatio);
+      if (renderedWidth > 0 && renderedHeight > 0) {
+        renderer.setSize(renderedWidth, renderedHeight, false);
+      }
+    };
+    let hostBounds = host.getBoundingClientRect();
+    let boundsFrame = 0;
+    const refreshHostBounds = () => {
+      boundsFrame = 0;
+      hostBounds = host.getBoundingClientRect();
+    };
+    const scheduleHostBoundsRefresh = () => {
+      if (!boundsFrame) boundsFrame = window.requestAnimationFrame(refreshHostBounds);
+    };
     const resizeObserver = new ResizeObserver(([entry]) => {
       if (!entry) return;
       const width = Math.max(1, Math.round(entry.contentRect.width));
@@ -935,18 +984,18 @@ export function WebGLGeometricCore({
       if (width === renderedWidth && height === renderedHeight) return;
       renderedWidth = width;
       renderedHeight = height;
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.65));
+      applyRenderResolution();
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+      scheduleHostBoundsRefresh();
       render(performance.now());
     });
     const onPointerMove = (event: PointerEvent) => {
-      const bounds = host.getBoundingClientRect();
-      const centerX = bounds.left + bounds.width / 2;
-      const centerY = bounds.top + bounds.height / 2;
-      const dx = (event.clientX - centerX) / Math.max(bounds.width * 0.72, 280);
-      const dy = (event.clientY - centerY) / Math.max(bounds.height * 0.72, 240);
+      const centerX = hostBounds.left + hostBounds.width / 2;
+      const centerY = hostBounds.top + hostBounds.height / 2;
+      const dx = (event.clientX - centerX) / Math.max(hostBounds.width * 0.72, 280);
+      const dy = (event.clientY - centerY) / Math.max(hostBounds.height * 0.72, 240);
       if (Math.abs(dx) <= 1.25 && Math.abs(dy) <= 1.25) {
         targetPointerX = THREE.MathUtils.clamp(dx, -1, 1);
         targetPointerY = THREE.MathUtils.clamp(dy, -1, 1);
@@ -976,9 +1025,22 @@ export function WebGLGeometricCore({
       if (reduceMotion) render(performance.now());
     });
     const intersectionObserver = new IntersectionObserver(([entry]) => {
-      visible = entry?.isIntersecting ?? true;
+      intersecting = entry?.isIntersecting ?? true;
+      visible = intersecting && pageVisible;
       startRendering();
     }, { rootMargin: '120px' });
+    const onVisibilityChange = () => {
+      pageVisible = !document.hidden;
+      visible = intersecting && pageVisible;
+      lastTime = performance.now();
+      startRendering();
+    };
+    const onFrameGovernor = (event: Event) => {
+      frameGovernor = (event as CustomEvent<FrameGovernorSnapshot>).detail
+        ?? readFrameGovernorSnapshot();
+      applyRenderResolution();
+      if (visible) render(performance.now());
+    };
     const onContextLost = (event: Event) => {
       event.preventDefault();
       if (!disposed) setWebGLFailed(true);
@@ -999,13 +1061,17 @@ export function WebGLGeometricCore({
       attributeFilter: ['data-theme', 'data-visual-theme'],
     });
     motionQuery.addEventListener('change', onMotionPreferenceChange);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener(FRAME_GOVERNOR_EVENT, onFrameGovernor);
     window.addEventListener('pointermove', onPointerMove, { passive: true });
     window.addEventListener('pointerout', resetPointer, { passive: true });
+    window.addEventListener('scroll', scheduleHostBoundsRefresh, { passive: true, capture: true });
     canvas.addEventListener('webglcontextlost', onContextLost);
     startRendering();
 
     return () => {
       disposed = true;
+      window.clearTimeout(healthyContextTimer);
       refreshRef.current = () => undefined;
       swapVariantRef.current = () => undefined;
       renderer.setAnimationLoop(null);
@@ -1013,8 +1079,12 @@ export function WebGLGeometricCore({
       intersectionObserver.disconnect();
       themeObserver.disconnect();
       motionQuery.removeEventListener('change', onMotionPreferenceChange);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener(FRAME_GOVERNOR_EVENT, onFrameGovernor);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerout', resetPointer);
+      window.removeEventListener('scroll', scheduleHostBoundsRefresh, true);
+      if (boundsFrame) window.cancelAnimationFrame(boundsFrame);
       canvas.removeEventListener('webglcontextlost', onContextLost);
       disposeAssembly(activeAssembly);
       scene.traverse((object) => {

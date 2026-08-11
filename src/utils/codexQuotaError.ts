@@ -11,6 +11,7 @@ const BLOCKING_ERROR_CODES = new Set([
   "usage_limit_reached",
   "insufficient_quota",
   "rate_limit_exceeded",
+  "deactivated_workspace",
 ]);
 
 export function isBlockingCodexQuotaError(

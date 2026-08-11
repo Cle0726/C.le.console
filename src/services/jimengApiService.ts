@@ -1,0 +1,73 @@
+import { invoke } from '@tauri-apps/api/core';
+import type {
+  JimengApiConfig,
+  JimengApiState,
+  JimengDeviceFlow,
+  JimengMediaRequest,
+  JimengRepairReport,
+} from '../types/jimengApi';
+
+const isJimengVisualReview =
+  typeof window !== 'undefined' &&
+  ['127.0.0.1', 'localhost'].includes(window.location.hostname) &&
+  ['jimeng', 'jimeng-canvas'].includes(
+    new URLSearchParams(window.location.search).get('visual-review') ?? '',
+  );
+
+const visualReviewState: JimengApiState = {
+  config: {
+    enabled: true,
+    port: 15100,
+    debugLogs: false,
+    accounts: [
+      {
+        id: 'visual-review-account',
+        name: '即梦主账号',
+        region: 'cn',
+        authMethod: 'session',
+        sessionId: 'visual-review-session',
+        oauthHome: '',
+        proxyUrl: '',
+        priority: 10,
+        enabled: true,
+      },
+    ],
+  },
+  running: true,
+  baseUrl: 'http://127.0.0.1:15100/v1',
+  version: '1.6.3',
+  lastError: null,
+  models: [
+    { id: 'jimeng-4.5', kind: 'image', regions: ['cn', 'us'] },
+    { id: 'jimeng-4.1', kind: 'image', regions: ['cn', 'us'] },
+    { id: 'seedance-1.5-pro', kind: 'video', regions: ['cn', 'us'] },
+    { id: 'veo-3.1', kind: 'video', regions: ['us'] },
+  ],
+};
+
+export const jimengApiService = {
+  getState: () =>
+    isJimengVisualReview
+      ? Promise.resolve(structuredClone(visualReviewState))
+      : invoke<JimengApiState>('jimeng_api_get_state'),
+  saveConfig: (config: JimengApiConfig) =>
+    invoke<JimengApiState>('jimeng_api_save_config', { config }),
+  setEnabled: (enabled: boolean) =>
+    invoke<JimengApiState>('jimeng_api_set_enabled', { enabled }),
+  accountAction: (action: 'check' | 'points' | 'receive', accountId?: string) =>
+    invoke<unknown>('jimeng_api_account_action', { action, accountId: accountId ?? null }),
+  generateImage: (request: JimengMediaRequest) =>
+    invoke<Record<string, unknown>>('jimeng_api_generate_image', { request }),
+  composeImage: (request: JimengMediaRequest) =>
+    invoke<Record<string, unknown>>('jimeng_api_compose_image', { request }),
+  generateVideo: (request: JimengMediaRequest) =>
+    invoke<Record<string, unknown>>('jimeng_api_generate_video', { request }),
+  diagnoseAndRepair: () =>
+    invoke<JimengRepairReport>('jimeng_api_diagnose_and_repair'),
+  startDeviceFlow: (accountId: string, accountName: string, region: string) =>
+    invoke<JimengDeviceFlow>('jimeng_api_start_device_flow', { accountId, accountName, region }),
+  pollDeviceFlow: (flowId: string) =>
+    invoke<JimengDeviceFlow>('jimeng_api_poll_device_flow', { flowId }),
+  cancelDeviceFlow: (flowId: string) =>
+    invoke<void>('jimeng_api_cancel_device_flow', { flowId }),
+};

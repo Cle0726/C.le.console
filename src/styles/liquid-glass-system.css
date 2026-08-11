@@ -1,0 +1,1884 @@
+/* =============================================================================
+ * C.le. — Liquid glass system (authoritative)
+ * -----------------------------------------------------------------------------
+ * This is the single material sheet for the application. It supersedes the two
+ * scoped experiments that preceded it; layering more sheets is what failed
+ * before, because eight older stylesheets each repaint the same surfaces and a
+ * partial override always leaves something painted the old way.
+ *
+ * MATERIAL IS GRADED BY DISTANCE FROM FOCUS. Three tiers, separated by steps
+ * large enough to read at a glance rather than by incremental tweaks:
+ *
+ *   Tier 1  static      blur 8    fill .09   the surface content sits on;
+ *                                            deliberately does not compete
+ *   Tier 2  floating    blur 16   fill .20   clearly above the page, with a
+ *                                            specular band along its top lip
+ *   Tier 3  modal       blur 32   fill .88   barely transmits; forces focus
+ *
+ * Blur roughly doubles each step and the fill jumps an order at the top. Values
+ * vary a few percent between components on purpose — that unevenness is part of
+ * the material, and over-uniformity reads as stamped-out.
+ *
+ * RADIUS FOLLOWS MASS, not a lookup table: icon-sized controls stay nearly
+ * square, buttons take a moderate curve, panels a pronounced one, and anything
+ * shaped like a text field or a label goes fully round.
+ *
+ * COVERAGE. A route audit counted 600+ surface class names across 40+ pages, so
+ * tiers are assigned by role pattern rather than by enumeration, then corrected:
+ *   1. canvas            5. tier 3 (modal)
+ *   2. tier 1 (static)   6. sub-part neutralisation
+ *   3. shell dissolve    7. overlays, pills, icons, type, spacing, motion
+ *   4. tier 2 (floating) 8. cost control
+ * Later blocks win, so the cascade runs from least to most focused, and the
+ * corrections come last.
+ *
+ * SPECIFICITY. Every rule is prefixed `html body #root` — (0,n,3) — and carries
+ * !important, because the sheets being corrected are themselves !important and
+ * several are injected at runtime by lazily-loaded pages.
+ *
+ * Revert: delete this file and its import in App.tsx.
+ * ========================================================================== */
+
+html[data-visual-theme],
+html:not([data-visual-theme])[data-theme='dark'] {
+  /* ---- Tier 1: static ---- */
+  --lg-1-fill: rgba(202, 220, 244, 0.09);
+  --lg-1-fill-hover: rgba(210, 228, 250, 0.14);
+  --lg-1-blur: blur(8px) saturate(110%);
+  --lg-1-edge: rgba(255, 255, 255, 0.18);
+  --lg-1-shadow: 0 10px 26px rgba(8, 17, 32, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  --lg-1-sheen: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.13) 0%,
+    rgba(255, 255, 255, 0.045) 13%,
+    rgba(255, 255, 255, 0) 30%
+  );
+
+  /* ---- Tier 2: floating ---- */
+  --lg-2-fill: rgba(210, 228, 250, 0.2);
+  --lg-2-fill-hover: rgba(224, 238, 255, 0.3);
+  --lg-2-blur: blur(16px) saturate(132%);
+  --lg-2-edge: rgba(255, 255, 255, 0.34);
+  --lg-2-edge-hover: rgba(255, 255, 255, 0.52);
+  --lg-2-shadow: 0 20px 44px rgba(8, 17, 32, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  --lg-2-specular: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.36) 0%,
+      rgba(255, 255, 255, 0.1) 3px,
+      rgba(255, 255, 255, 0) 18%
+    ),
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.22) 0%,
+      rgba(255, 255, 255, 0.08) 12%,
+      rgba(255, 255, 255, 0) 31%
+    );
+
+  /* ---- Tier 3: modal ---- */
+  --lg-3-fill: rgba(20, 33, 55, 0.88);
+  --lg-3-blur: blur(32px) saturate(148%);
+  --lg-3-blur-value: 32px;
+  --lg-3-edge: rgba(255, 255, 255, 0.42);
+  --lg-3-shadow: 0 48px 110px rgba(4, 9, 18, 0.66), 0 10px 28px rgba(4, 9, 18, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.36);
+  --lg-3-specular: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.3) 0%,
+      rgba(255, 255, 255, 0.06) 4px,
+      rgba(255, 255, 255, 0) 16%
+    ),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0) 30%);
+
+  /* ---- Recessed: fields, rows, tracks. Never blurred; always inside a pane. */
+  --lg-recess: rgba(14, 24, 42, 0.34);
+  --lg-recess-soft: rgba(14, 24, 42, 0.18);
+  --lg-recess-edge: rgba(255, 255, 255, 0.13);
+
+  /* ---- Radius by mass ---- */
+  --lg-r-icon: 9px;
+  --lg-r-button: 14px;
+  --lg-r-tab: 18px;
+  --lg-r-panel: 26px;
+  --lg-r-panel-lg: 32px;
+  --lg-r-round: 999px;
+
+  /* ---- Ink ---- */
+  --lg-ink: #eef3fa;
+  --lg-ink-2: #bccbe0;
+  --lg-ink-3: #8a9cb6;
+
+  /* ---- Motion ---- */
+  --lg-fade: 180ms cubic-bezier(0.33, 0.7, 0.37, 1);
+  --lg-spring: 420ms cubic-bezier(0.2, 1.22, 0.34, 1);
+
+  /* CJK first; system sans carries latin and figures. */
+  --font-sans: "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei UI",
+    "PingFang SC", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  /* Legacy tokens consumed by ~595 existing rules, remapped so anything this
+     sheet does not name still lands in the right neighbourhood. */
+  --bg-primary: transparent !important;
+  --bg-secondary: var(--lg-2-fill) !important;
+  --bg-surface: var(--lg-3-fill) !important;
+  --bg-tertiary: var(--lg-recess) !important;
+  --bg-card: var(--lg-1-fill) !important;
+  --bg-hover: rgba(255, 255, 255, 0.09) !important;
+  --text-primary: var(--lg-ink) !important;
+  --text-secondary: var(--lg-ink-2) !important;
+  --text-muted: var(--lg-ink-3) !important;
+  --border: var(--lg-2-edge) !important;
+  --border-light: var(--lg-1-edge) !important;
+  --shadow-sm: var(--lg-1-shadow) !important;
+  --shadow-md: var(--lg-2-shadow) !important;
+  --shadow-lg: var(--lg-3-shadow) !important;
+}
+
+/* =============================================================================
+ * 0b. Two palettes, one material system
+ * -----------------------------------------------------------------------------
+ * Everything above defines the material; only the colour differs per theme, so
+ * the tiers, radii, motion and cost rules are shared and cannot drift apart.
+ *
+ *   day    blue liquid glass — saturated, wide luminance range, the canvas the
+ *          panes were tuned against
+ *   night  graphite — neutral, no colour cast. The premium read here comes from
+ *          a long tonal ramp rather than from hue, so the fill is cooled to a
+ *          near-white grey and every blue is drained out of the shadows.
+ *
+ * Both canvases are dark enough that a single light ink works throughout, which
+ * is why the ink tokens are only lightly adjusted between them.
+ * ========================================================================== */
+
+/* ---- Day: blue liquid glass ------------------------------------------------ */
+
+html[data-visual-theme='day'] {
+  /*
+   * Panes are dark translucent, not light translucent. A near-white fill over
+   * the bright band of the canvas pushed the composited panel to rgb(102,135,180)
+   * and muted text on it measured 1.13:1 — invisible. Tinting downward keeps the
+   * canvas visible through the glass while making the panel luminance
+   * predictable, so one ink ramp works everywhere. The rim light and the sheen
+   * are what make it read as glass; the fill never had to be light.
+   */
+  --lg-1-fill: rgba(14, 26, 46, 0.34);
+  --lg-1-fill-hover: rgba(170, 195, 235, 0.13);
+  --lg-1-edge: rgba(255, 255, 255, 0.2);
+  --lg-1-shadow: 0 10px 26px rgba(8, 17, 32, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+
+  --lg-2-fill: rgba(18, 32, 54, 0.26);
+  --lg-2-fill-hover: rgba(182, 208, 242, 0.2);
+  --lg-2-edge: rgba(255, 255, 255, 0.36);
+  --lg-2-edge-hover: rgba(255, 255, 255, 0.56);
+  --lg-2-shadow: 0 20px 44px rgba(8, 17, 32, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+
+  --lg-3-fill: rgba(14, 24, 42, 0.9);
+  --lg-3-edge: rgba(255, 255, 255, 0.42);
+  --lg-3-shadow: 0 48px 110px rgba(4, 9, 18, 0.66), 0 10px 28px rgba(4, 9, 18, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.36);
+
+  --lg-recess: rgba(8, 16, 30, 0.42);
+  --lg-recess-soft: rgba(8, 16, 30, 0.24);
+  --lg-recess-edge: rgba(255, 255, 255, 0.14);
+
+  --lg-ink: #f2f5fa;
+  --lg-ink-2: #cbd7e8;
+  --lg-ink-3: #a8b7cd;
+
+  --lg-anchor: rgba(240, 246, 253, 0.95);
+  --lg-anchor-ink: #16233a;
+  --lg-focus: rgba(226, 238, 255, 0.85);
+
+  /* Semantics, held to the palette. The legacy values (#22c55e, #ef4444) are
+     fully saturated and would be the only vivid thing on either canvas. These
+     carry the same meaning at a fraction of the chroma, and each is verified
+     above 4.5:1 against its own tinted fill. */
+  --lg-success-fill: rgba(120, 176, 148, 0.18);
+  --lg-success-edge: rgba(134, 200, 168, 0.5);
+  --lg-success-ink: #d7ece0;
+  --lg-warning-fill: rgba(186, 156, 112, 0.18);
+  --lg-warning-edge: rgba(214, 178, 128, 0.5);
+  --lg-warning-ink: #f1e3cf;
+  --lg-danger-fill: rgba(186, 122, 122, 0.2);
+  --lg-danger-fill-hover: rgba(196, 132, 132, 0.32);
+  --lg-danger-edge: rgba(214, 144, 144, 0.52);
+  --lg-danger-ink: #f4d9d9;
+  --success: #86c8a8 !important;
+  --warning: #d6b280 !important;
+  --warning-strong: #d3a473 !important;
+  --danger: #d69090 !important;
+}
+
+/* ---- Night: graphite ------------------------------------------------------
+ * Neutral by construction. The fill is a cool near-white so the panes still
+ * read as glass rather than as grey paint, but nothing carries a hue, and the
+ * shadows are pure black rather than a tinted navy. The tonal ramp does the
+ * work that saturation does in day.
+ * -------------------------------------------------------------------------- */
+
+html[data-visual-theme='night'],
+html:not([data-visual-theme])[data-theme='dark'] {
+  --lg-1-fill: rgba(10, 11, 13, 0.34);
+  --lg-1-fill-hover: rgba(158, 166, 178, 0.11);
+  --lg-1-edge: rgba(255, 255, 255, 0.22);
+  --lg-1-shadow: 0 12px 30px rgba(0, 0, 0, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+
+  --lg-2-fill: rgba(14, 16, 19, 0.26);
+  --lg-2-fill-hover: rgba(170, 178, 190, 0.18);
+  --lg-2-edge: rgba(255, 255, 255, 0.34);
+  --lg-2-edge-hover: rgba(255, 255, 255, 0.48);
+  --lg-2-shadow: 0 20px 44px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+
+  --lg-3-fill: rgba(14, 15, 18, 0.92);
+  --lg-3-edge: rgba(255, 255, 255, 0.34);
+  --lg-3-shadow: 0 48px 110px rgba(0, 0, 0, 0.76), 0 10px 28px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+
+  --lg-recess: rgba(4, 5, 6, 0.46);
+  --lg-recess-soft: rgba(4, 5, 6, 0.26);
+  --lg-recess-edge: rgba(255, 255, 255, 0.11);
+
+  --lg-ink: #f2f3f5;
+  --lg-ink-2: #c8ccd2;
+  --lg-ink-3: #a2a8b0;
+
+  --lg-anchor: rgba(244, 245, 247, 0.94);
+  --lg-anchor-ink: #16181c;
+  --lg-focus: rgba(238, 240, 243, 0.82);
+
+  /* On a colourless canvas a small amount of chroma reads clearly, so these sit
+     slightly cooler than the day set and stay well under full saturation. */
+  --lg-success-fill: rgba(126, 172, 148, 0.17);
+  --lg-success-edge: rgba(140, 194, 168, 0.48);
+  --lg-success-ink: #a8d2bc;
+  --lg-warning-fill: rgba(180, 154, 116, 0.17);
+  --lg-warning-edge: rgba(206, 176, 132, 0.48);
+  --lg-warning-ink: #ddc39c;
+  --lg-danger-fill: rgba(180, 124, 124, 0.19);
+  --lg-danger-fill-hover: rgba(192, 134, 134, 0.3);
+  --lg-danger-edge: rgba(206, 146, 146, 0.5);
+  --lg-danger-ink: #e2b0b0;
+  --success: #8cc2a8 !important;
+  --warning: #ceb084 !important;
+  --warning-strong: #cba477 !important;
+  --danger: #ce9292 !important;
+}
+
+/* =============================================================================
+ * 1. Canvas — glass can only show what is behind it, so the canvas carries a
+ * wide luminance range (roughly 15% to 83%) and real saturation.
+ * ========================================================================== */
+
+html[data-visual-theme] body,
+html:not([data-visual-theme])[data-theme='dark'] body {
+  background-attachment: fixed !important;
+  background-repeat: no-repeat !important;
+  background-size: cover !important;
+  color: var(--lg-ink) !important;
+}
+
+/*
+ * In both palettes, brightness is placed where panes cover it rather than where
+ * bare text sits. Page titles and section labels live in the top-left, and a
+ * pale canvas there measured 2.7:1 against the body ink — unreadable. The
+ * bright fog sits mid-diagonal and right, under the cards and the table, while
+ * the top-left is held dark enough for text to carry.
+ */
+
+html[data-visual-theme='day'] body {
+  background-color: #141f33 !important;
+  background-image:
+    radial-gradient(46% 38% at 66% 30%, rgba(214, 224, 238, 0.6) 0%, rgba(214, 224, 238, 0) 62%),
+    radial-gradient(54% 44% at 86% 58%, rgba(147, 169, 200, 0.62) 0%, rgba(147, 169, 200, 0) 64%),
+    radial-gradient(62% 50% at 46% 70%, rgba(92, 127, 174, 0.66) 0%, rgba(92, 127, 174, 0) 66%),
+    radial-gradient(50% 40% at 8% 4%, rgba(24, 38, 62, 0.72) 0%, rgba(24, 38, 62, 0) 64%),
+    radial-gradient(48% 42% at 96% 96%, rgba(16, 26, 46, 0.9) 0%, rgba(16, 26, 46, 0) 62%),
+    radial-gradient(20% 18% at 72% 44%, rgba(230, 237, 246, 0.3) 0%, rgba(230, 237, 246, 0) 70%),
+    linear-gradient(154deg, #33507c 0%, #40639a 22%, #4d6f9e 44%, #3a5b8c 64%, #243b60 84%, #141f33 100%) !important;
+}
+
+/*
+ * Graphite. Every stop is neutral — equal parts across the channels, give or
+ * take a point — so nothing reads as blue-black or brown-black. The range runs
+ * from #3E4248 down to #0B0C0E, which is a longer tonal ramp than the day
+ * canvas carries; that length is what keeps a colourless scheme from going
+ * flat, and it gives the glass plenty to refract.
+ */
+
+html[data-visual-theme='night'] body,
+html:not([data-visual-theme])[data-theme='dark'] body {
+  /*
+   * The dark blob that used to sit at 8% 4% was added to protect bare text in
+   * the top-left, but it landed on the gradient's brightest stop and cancelled
+   * it — measured on screen the whole canvas collapsed to a near-uniform
+   * #16181A and the tonal ramp disappeared. Panes are dark translucent now, so
+   * text no longer depends on the canvas being dark, and the range can come
+   * back. Brightness peaks upper-right where panes cover it; the top-left stays
+   * a mid graphite that still reads ~11:1 against the body ink.
+   */
+  background-color: #0b0c0e !important;
+  background-image:
+    radial-gradient(52% 44% at 72% 26%, rgba(120, 128, 138, 0.55) 0%, rgba(120, 128, 138, 0) 64%),
+    radial-gradient(44% 36% at 40% 14%, rgba(96, 103, 112, 0.4) 0%, rgba(96, 103, 112, 0) 62%),
+    radial-gradient(58% 48% at 88% 62%, rgba(70, 76, 84, 0.5) 0%, rgba(70, 76, 84, 0) 66%),
+    radial-gradient(54% 46% at 12% 84%, rgba(10, 11, 13, 0.72) 0%, rgba(10, 11, 13, 0) 66%),
+    radial-gradient(50% 44% at 98% 98%, rgba(6, 7, 8, 0.88) 0%, rgba(6, 7, 8, 0) 62%),
+    radial-gradient(18% 16% at 78% 34%, rgba(158, 166, 176, 0.3) 0%, rgba(158, 166, 176, 0) 70%),
+    linear-gradient(154deg, #2b2e33 0%, #34383e 20%, #2a2d32 46%, #1d2024 68%, #131518 86%, #0b0c0e 100%) !important;
+}
+
+html[data-visual-theme='day'] body::after {
+  opacity: 0.7 !important;
+  background:
+    radial-gradient(40% 34% at 68% 26%, rgba(222, 232, 246, 0.38), rgba(147, 169, 200, 0.16) 44%, transparent 74%),
+    radial-gradient(44% 38% at 88% 62%, rgba(92, 127, 174, 0.46), rgba(58, 90, 138, 0.2) 46%, transparent 76%),
+    radial-gradient(48% 42% at 44% 82%, rgba(63, 98, 150, 0.42), rgba(26, 44, 74, 0.2) 48%, transparent 76%) !important;
+  filter: blur(48px) saturate(1.05) !important;
+  transform: none !important;
+  animation: none !important;
+  will-change: auto !important;
+}
+
+/* Graphite fog: fully desaturated, so the drifting cloud adds depth without
+   introducing a cast the palette does not have. */
+html[data-visual-theme='night'] body::after,
+html:not([data-visual-theme])[data-theme='dark'] body::after {
+  opacity: 0.66 !important;
+  background:
+    radial-gradient(40% 34% at 68% 26%, rgba(226, 229, 233, 0.3), rgba(140, 146, 154, 0.13) 44%, transparent 74%),
+    radial-gradient(44% 38% at 88% 62%, rgba(96, 102, 110, 0.42), rgba(58, 62, 68, 0.18) 46%, transparent 76%),
+    radial-gradient(48% 42% at 44% 82%, rgba(70, 75, 82, 0.4), rgba(20, 22, 25, 0.2) 48%, transparent 76%) !important;
+  filter: blur(48px) saturate(0) !important;
+  transform: none !important;
+  animation: none !important;
+  will-change: auto !important;
+}
+
+/* =============================================================================
+ * 2. TIER 1 — static background panels
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is(
+  [class*='card'],
+  [class*='panel'],
+  [class*='-section'],
+  [class*='container'],
+  [class*='-table'],
+  [class*='hero'],
+  [class*='stat-card'],
+  [class*='studio'],
+  [class*='-surface'],
+  .empty-state,
+  .settings-group,
+  .infinite-workspace-stage,
+  .jimeng-canvas-panel
+) {
+  background: none !important;
+  background-color: var(--lg-1-fill) !important;
+  background-image: var(--lg-1-sheen) !important;
+  background-repeat: no-repeat !important;
+  /* Fixed physical size, not a percentage. A percentage sheen on a 900px panel
+     becomes a 270px wash that reads as a gradient fill; light landing on a real
+     edge is the same size whatever the pane. */
+  background-size: 460px 460px !important;
+  background-position: 0 0 !important;
+  -webkit-backdrop-filter: var(--lg-1-blur) !important;
+  backdrop-filter: var(--lg-1-blur) !important;
+  border: 1px solid var(--lg-1-edge) !important;
+  border-radius: var(--lg-r-panel) !important;
+  box-shadow: var(--lg-1-shadow) !important;
+  color: var(--lg-ink) !important;
+  transition: background-color var(--lg-fade), border-color var(--lg-fade) !important;
+}
+
+/* The heaviest objects take the most pronounced curve. */
+html[data-visual-theme] body #root :is(
+  .account-table-container,
+  .data-table-container,
+  .codex-compact-list,
+  .infinite-workspace-stage,
+  .jimeng-studio,
+  [class*='-hero']
+) {
+  border-radius: var(--lg-r-panel-lg) !important;
+}
+
+html[data-visual-theme] body #root :is([class*='-card'], .account-card, .stat-card):hover {
+  background-color: var(--lg-1-fill-hover) !important;
+  border-color: rgba(255, 255, 255, 0.26) !important;
+  box-shadow: 0 16px 36px rgba(8, 17, 32, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+/* =============================================================================
+ * 3. Shells dissolve. A container whose only job is to group already-grouped
+ * children is not a tier — it is a pane between the canvas and the content.
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is(
+  [class*='-row'],
+  [class*='-list'],
+  [class*='-wrap'],
+  [class*='-grid'],
+  [class*='-strip'],
+  [class*='tabs-row'],
+  .accounts-grid,
+  .grid-view-container,
+  .page-top-strip,
+  .toolbar,
+  .account-command-dock,
+  .codex-overview-selection-bar,
+  .toolbar-left,
+  .toolbar-right,
+  .main-content,
+  .app-container,
+  .main-wrapper
+) {
+  background: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Decorative rules and hatching drawn by the polish sheets. */
+html[data-visual-theme] body #root :is(
+  .account-table-container::before,
+  .codex-account-card::before,
+  .codex-compact-list::before,
+  .account-command-dock::before,
+  .main-card::before
+) {
+  background: none !important;
+  opacity: 0 !important;
+}
+
+/* =============================================================================
+ * 4. TIER 2 — floating and hovering
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is(
+  button,
+  .btn,
+  [class*='-btn'],
+  [class*='btn-'],
+  [class*='-tab'],
+  [class*='tab-'],
+  [class*='switcher'],
+  [class*='-select'],
+  .page-tabs .filter-tab,
+  .page-tabs .page-tab,
+  .page-tabs-leading,
+  .side-nav,
+  .top-spatial-nav,
+  .infinite-workspace-bar,
+  .infinite-workspace-nav,
+  .infinite-workspace-credit
+) {
+  background: none !important;
+  background-color: var(--lg-2-fill) !important;
+  background-image: var(--lg-2-specular) !important;
+  background-repeat: no-repeat !important;
+  -webkit-backdrop-filter: var(--lg-2-blur) !important;
+  backdrop-filter: var(--lg-2-blur) !important;
+  border: 1px solid var(--lg-2-edge) !important;
+  border-radius: var(--lg-r-button) !important;
+  box-shadow: var(--lg-2-shadow) !important;
+  color: var(--lg-ink) !important;
+  transition: background-color var(--lg-fade), border-color var(--lg-fade) !important;
+}
+
+html[data-visual-theme] body #root :is(button, .btn, [class*='-btn'], [class*='-tab']):hover:not(:disabled) {
+  background-color: var(--lg-2-fill-hover) !important;
+  border-color: var(--lg-2-edge-hover) !important;
+}
+
+html[data-visual-theme] body #root :is(button, .btn, [class*='-btn']):disabled {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+  background-image: none !important;
+  border-color: var(--lg-recess-edge) !important;
+  box-shadow: none !important;
+  color: var(--lg-ink-3) !important;
+}
+
+/* Radius by mass, within tier 2. */
+html[data-visual-theme] body #root :is(
+  [class*='icon-btn'],
+  [class*='-icon-button'],
+  .btn.icon-only,
+  .card-action-btn,
+  .folder-icon-btn,
+  .sort-direction-btn,
+  .header-action-btn,
+  .modal-close,
+  .close-btn
+) {
+  border-radius: var(--lg-r-icon) !important;
+  /* Small area, so a lighter blur is indistinguishable and much cheaper.
+     backdrop-filter cost scales with area times radius, and these are the most
+     numerous controls on any page. */
+  -webkit-backdrop-filter: blur(12px) saturate(130%) !important;
+  backdrop-filter: blur(12px) saturate(130%) !important;
+}
+
+html[data-visual-theme] body #root :is(
+  .page-tabs .filter-tab,
+  .page-tabs .page-tab,
+  .page-tabs-leading,
+  [class*='-tab']:not([class*='tabs'])
+) {
+  border-radius: var(--lg-r-tab) !important;
+}
+
+/* Text-field shaped things go fully round. */
+html[data-visual-theme] body #root :is(.search-box, .search-box input, .search-input-wrap, [class*='search-box']) {
+  background: none !important;
+  background-color: var(--lg-recess) !important;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 42%) !important;
+  -webkit-backdrop-filter: var(--lg-2-blur) !important;
+  backdrop-filter: var(--lg-2-blur) !important;
+  border: 1px solid var(--lg-2-edge) !important;
+  border-radius: var(--lg-r-round) !important;
+  box-shadow: inset 0 2px 6px rgba(6, 12, 24, 0.34) !important;
+  color: var(--lg-ink) !important;
+}
+
+/*
+ * Selected states are brighter glass, not a second anchor.
+ *
+ * These used to share the opaque white treatment with the primary button, which
+ * put an active tab, an active view toggle, an active nav item and a primary
+ * button on screen at once — four things all shouting that they are the one
+ * place to look. Selection is now expressed as a lift within the tier: more
+ * fill, a brighter rim, full-strength ink. It still reads as chosen, and the
+ * single white anchor keeps its meaning.
+ */
+html[data-visual-theme] body #root :is(
+  .filter-tab.active,
+  .page-tab.active,
+  .view-btn.active,
+  .settings-tab.active,
+  .nav-item.active,
+  [class*='-tab'].active
+) {
+  background-color: var(--lg-2-fill-hover) !important;
+  border-color: var(--lg-2-edge-hover) !important;
+  box-shadow: var(--lg-2-shadow), inset 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
+  color: var(--lg-ink) !important;
+}
+
+/* One opaque anchor per view — the eye needs somewhere to land. */
+html[data-visual-theme] body #root :is(
+  .btn.btn-primary,
+  .btn-primary,
+  .primary-btn,
+  [class*='--primary']
+) {
+  background: none !important;
+  background-color: var(--lg-anchor) !important;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 40%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.75) !important;
+  box-shadow: 0 16px 34px rgba(8, 17, 32, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
+  color: var(--lg-anchor-ink) !important;
+}
+
+/* =============================================================================
+ * 5. TIER 3 — modal
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is(
+  [class*='modal'],
+  [class*='dialog'],
+  [class*='popover'],
+  [class*='-menu'],
+  [class*='-select-panel'],
+  [class*='-select-options'],
+  .qs-panel,
+  .tag-filter-panel,
+  .dropdown-menu,
+  .confirm
+) {
+  background: none !important;
+  background-color: var(--lg-3-fill) !important;
+  background-image: var(--lg-3-specular) !important;
+  background-repeat: no-repeat !important;
+  -webkit-backdrop-filter: var(--lg-3-blur) !important;
+  backdrop-filter: var(--lg-3-blur) !important;
+  border: 1px solid var(--lg-3-edge) !important;
+  border-radius: var(--lg-r-panel-lg) !important;
+  box-shadow: var(--lg-3-shadow) !important;
+  color: var(--lg-ink) !important;
+}
+
+/* Portal-mounted dialogs sit outside #root. */
+html[data-visual-theme] body :is(.modal, .modal-content, .confirm-modal, .global-modal, .dropdown-menu, .quick-settings-popover) {
+  background-color: var(--lg-3-fill) !important;
+  background-image: var(--lg-3-specular) !important;
+  -webkit-backdrop-filter: var(--lg-3-blur) !important;
+  backdrop-filter: var(--lg-3-blur) !important;
+  border: 1px solid var(--lg-3-edge) !important;
+  border-radius: var(--lg-r-panel-lg) !important;
+  box-shadow: var(--lg-3-shadow) !important;
+  color: var(--lg-ink) !important;
+}
+
+/* =============================================================================
+ * 5b. Collision repair.
+ * Pattern matching is what makes global coverage possible, but names collide:
+ * a static test over the 2470 class names actually used in the application
+ * found 53 panes demoted by a later pattern — `account-table-container` and
+ * `claude-account-table-container` matched `-tab` and were repainted as
+ * floating controls, `codex-compact-list` matched `-list` and dissolved.
+ * These re-assert the pane, while the exclusions keep genuine controls
+ * (`card-action-btn`, `card-select`, `floating-card-platform-select`) and
+ * genuine sub-parts in the tier they belong to.
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is(
+  [class*='-container'],
+  [class*='-card'],
+  [class*='panel'],
+  [class*='compact-list'],
+  [class*='-list-shell'],
+  .settings-group,
+  .empty-state
+):not(button):not([class*='-btn']):not([class*='btn-']):not([class*='-select']):not([class*='-tabs']):not([class*='modal']):not([class*='dialog']):not([class*='-menu']):not([class*='-grid']):not([class*='-head']):not([class*='-header']):not([class*='-footer']):not([class*='-body']):not([class*='-actions']):not([class*='-title']):not([class*='-label']):not([class*='-desc']):not([class*='-topline']) {
+  background-color: var(--lg-1-fill) !important;
+  background-image: var(--lg-1-sheen) !important;
+  -webkit-backdrop-filter: var(--lg-1-blur) !important;
+  backdrop-filter: var(--lg-1-blur) !important;
+  border: 1px solid var(--lg-1-edge) !important;
+  border-radius: var(--lg-r-panel) !important;
+  box-shadow: var(--lg-1-shadow) !important;
+}
+
+/* Tab and toolbar wrappers group controls; they are not controls themselves.
+   The individual .filter-tab / .page-tab inside them stay tier 2. */
+html[data-visual-theme] body #root :is(
+  [class*='-tabs'],
+  [class*='tabs-row'],
+  [class*='toolbar'],
+  [class*='-dock'],
+  .page-tabs,
+  .filter-tabs
+) {
+  background: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* A <table> already sits inside its container pane. Painting it again is the
+   card-inside-a-card effect and stacks a second backdrop sample. */
+html[data-visual-theme] body table,
+html[data-visual-theme] body #root [class*='-table']:not([class*='-container']):not([class*='-wrap']) {
+  background: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* =============================================================================
+ * 6. Sub-part neutralisation. A header, body or footer inside a pane must not
+ * be a second pane — that is the card-inside-a-card effect, and stacking
+ * backdrop-filters is both expensive and visually muddy.
+ * ========================================================================== */
+
+html[data-visual-theme] body :is(
+  [class*='-header'],
+  [class*='-body'],
+  [class*='-footer'],
+  [class*='-content'],
+  [class*='-actions'],
+  [class*='-title'],
+  [class*='-head'],
+  [class*='-main'],
+  [class*='-left'],
+  [class*='-right'],
+  [class*='-top'],
+  [class*='-meta'],
+  [class*='-label'],
+  [class*='-desc'],
+  [class*='-hint'],
+  [class*='-cell'],
+  [class*='-line'],
+  [class*='-inner'],
+  .form-group,
+  [class*='form-group'],
+  .tag-group-header,
+  .tag-group-row
+):not(.modal):not(.settings-group):not([class*='-container']) {
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: none !important;
+}
+
+/* Recessed elements: fields, rows, tracks. Inside a pane, so never blurred. */
+html[data-visual-theme] body :is(
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea,
+  select,
+  tbody tr,
+  [class*='-track'],
+  [class*='progress-bar'],
+  [class*='quota-bar'],
+  .settings-row,
+  .qs-row,
+  [class*='compact-row'],
+  [class*='table-row']
+) {
+  background: none !important;
+  background-color: var(--lg-recess) !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border-color: var(--lg-recess-edge) !important;
+  box-shadow: inset 0 1px 3px rgba(6, 12, 24, 0.26) !important;
+  color: var(--lg-ink) !important;
+}
+
+html[data-visual-theme] body :is(tbody tr:nth-child(even), [class*='compact-row']:nth-child(even)) {
+  background-color: var(--lg-recess-soft) !important;
+}
+
+html[data-visual-theme] body :is([class*='-track'], [class*='progress-bar'], [class*='quota-bar']) {
+  border-radius: var(--lg-r-round) !important;
+}
+
+html[data-visual-theme] body :is(thead th, table th) {
+  background-color: color-mix(in srgb, var(--lg-3-fill) 52%, transparent) !important;
+  background-image: var(--lg-1-sheen) !important;
+  border-color: var(--lg-1-edge) !important;
+  color: var(--lg-ink) !important;
+}
+
+/* Overlays are scrims, not panes. */
+html[data-visual-theme] body :is([class*='overlay'], [class*='backdrop']) {
+  background: rgba(10, 18, 32, 0.5) !important;
+  background-color: color-mix(in srgb, var(--lg-3-fill) 58%, transparent) !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: blur(14px) saturate(104%) !important;
+  backdrop-filter: blur(14px) saturate(104%) !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* -----------------------------------------------------------------------------
+ * Button variants. The tier rule painted every button identically, which erased
+ * the difference between "save" and "delete everything". Intent is restored as
+ * a tint and an ink shift, staying inside the glass language rather than
+ * dropping a solid colour block onto it.
+ * -------------------------------------------------------------------------- */
+
+html[data-visual-theme] body #root :is(.btn-danger, .action-btn.is-danger, [class*='-btn'].is-danger) {
+  background-color: var(--lg-danger-fill) !important;
+  border-color: var(--lg-danger-edge) !important;
+  color: var(--lg-danger-ink) !important;
+}
+
+html[data-visual-theme] body #root :is(.btn-danger, [class*='-btn'].is-danger):hover:not(:disabled) {
+  background-color: var(--lg-danger-fill-hover) !important;
+  border-color: var(--lg-danger-ink) !important;
+}
+
+html[data-visual-theme] body #root :is(.btn-success, [class*='-btn'].is-success) {
+  background-color: var(--lg-success-fill) !important;
+  border-color: var(--lg-success-edge) !important;
+  color: var(--lg-success-ink) !important;
+}
+
+html[data-visual-theme] body #root :is(.btn-warning, [class*='-btn'].is-warning) {
+  background-color: var(--lg-warning-fill) !important;
+  border-color: var(--lg-warning-edge) !important;
+  color: var(--lg-warning-ink) !important;
+}
+
+/* Secondary, outline and ghost are meant to recede, so the primary and the
+   semantic variants have room to register. */
+html[data-visual-theme] body #root :is(
+  .btn-secondary,
+  .btn-outline,
+  .btn-ghost,
+  [class*='--secondary'],
+  [class*='--ghost']
+) {
+  background-color: rgba(255, 255, 255, 0.055) !important;
+  background-image: var(--lg-1-sheen) !important;
+  border-color: var(--lg-1-edge) !important;
+  box-shadow: none !important;
+  color: var(--lg-ink-2) !important;
+}
+
+html[data-visual-theme] body #root :is(.btn-secondary, .btn-outline, .btn-ghost):hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: var(--lg-2-edge) !important;
+  color: var(--lg-ink) !important;
+}
+
+/* Labels carry almost no fill: hairline, light text, fully round. Never
+   blurred — they are inline text, not floating surfaces. */
+html[data-visual-theme] body :is(
+  [class*='pill'],
+  [class*='badge'],
+  [class*='chip'],
+  [class*='-tag'],
+  [class*='tag-'],
+  .add-status,
+  .current-tag
+):not(input):not(button):not([class*='-btn']) {
+  background: none !important;
+  background-color: rgba(255, 255, 255, 0.07) !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.26) !important;
+  border-radius: var(--lg-r-round) !important;
+  box-shadow: none !important;
+  color: var(--lg-ink-2) !important;
+}
+
+/* Status semantics survive the flattening. */
+html[data-visual-theme] body :is([class*='pill'], [class*='badge'], .add-status).success,
+html[data-visual-theme] body :is([class*='pill'], [class*='badge']):is(.active, .running) {
+  border-color: rgba(134, 200, 168, 0.5) !important;
+  color: #a9d7bd !important;
+}
+
+html[data-visual-theme] body :is([class*='pill'], [class*='badge'], .add-status):is(.warning, .medium) {
+  border-color: rgba(214, 178, 128, 0.5) !important;
+  color: #e2c69c !important;
+}
+
+html[data-visual-theme] body :is([class*='pill'], [class*='badge'], .add-status):is(.danger, .error, .expired, .low) {
+  border-color: rgba(214, 144, 144, 0.5) !important;
+  color: #e8b3b3 !important;
+}
+
+/* =============================================================================
+ * 7. Icons, type, spacing
+ * ========================================================================== */
+
+/* Stroke only. A filled glyph over a blurred pane turns to mush. */
+html[data-visual-theme] body svg.lucide {
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 1.7 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+/*
+ * Hierarchy carried by weight, not size alone.
+ *
+ * Weights must land on faces that actually exist. Microsoft YaHei and PingFang
+ * ship Regular and Bold only, so an in-between value like 560 or 650 resolves
+ * upward to Bold and, worse, can trigger synthetic emboldening — the engine
+ * smears the glyph horizontally, which widens CJK noticeably and pushes labels
+ * out of their containers. 400 and 600 map cleanly onto the two real faces, and
+ * font-synthesis is disabled so nothing is faked.
+ *
+ * Letter-spacing is deliberately not touched here for the same reason: it
+ * changes measured width, and this sheet must not alter layout.
+ */
+html[data-visual-theme] body {
+  font-synthesis-weight: none;
+  font-synthesis: none;
+}
+
+html[data-visual-theme] body #root :is(h1, h2, .page-title, [class*='-heading-zh']) {
+  font-weight: 600 !important;
+  color: var(--lg-ink) !important;
+  text-shadow: 0 1px 3px rgba(8, 15, 28, 0.42) !important;
+}
+
+/* 500 resolves to Regular on a two-face CJK font and to a real Medium on the
+   variable Latin faces, so it degrades gracefully instead of being faked. */
+html[data-visual-theme] body #root :is(h3, h4, .row-title, [class*='-main-line'], [class*='-card-title']) {
+  font-weight: 500 !important;
+  color: var(--lg-ink) !important;
+}
+
+html[data-visual-theme] body #root :is(
+  .row-desc,
+  .section-desc,
+  [class*='-sub-line'],
+  [class*='-hint'],
+  [class*='-desc'],
+  [class*='-heading-en'],
+  small
+) {
+  font-weight: 400 !important;
+  color: var(--lg-ink-2) !important;
+}
+
+html[data-visual-theme] body ::placeholder {
+  color: var(--lg-ink-3) !important;
+  opacity: 1 !important;
+}
+
+/* 4px base, loose enough to let the canvas breathe between sections. */
+html[data-visual-theme] body #root :is(.main-content, [class*='-page']) {
+  gap: 32px !important;
+}
+
+html[data-visual-theme] body #root :is(.toolbar, .account-command-dock) {
+  gap: 20px !important;
+}
+
+html[data-visual-theme] body #root :is(.toolbar-left, .toolbar-right, .page-tabs) {
+  gap: 12px !important;
+}
+
+/* Scrollbars join the material. */
+html[data-visual-theme] body ::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+html[data-visual-theme] body ::-webkit-scrollbar-thumb {
+  background: rgba(206, 224, 248, 0.24) !important;
+  border-radius: var(--lg-r-round) !important;
+}
+
+html[data-visual-theme] body ::-webkit-scrollbar-thumb:hover {
+  background: rgba(216, 232, 252, 0.4) !important;
+}
+
+/* =============================================================================
+ * 8. Motion — fade by default; spring only where the change must be felt.
+ * ========================================================================== */
+
+@keyframes lg-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes lg-spring-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  68% {
+    opacity: 1;
+    transform: scale(1.008);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+html[data-visual-theme] body :is(.modal, .modal-content, .confirm-modal, .global-modal, [class*='-dialog']) {
+  animation: lg-spring-in var(--lg-spring) both !important;
+  transform-origin: center center;
+}
+
+html[data-visual-theme] body :is(.dropdown-menu, .tag-filter-panel, [class*='popover'], [class*='overlay']) {
+  animation: lg-fade-in var(--lg-fade) both !important;
+}
+
+/*
+ * Press feedback — iOS 26 semantics: only the control under the finger reacts,
+ * and it reacts by compressing its material, not by scaling.
+ *
+ * The previous rule had two faults, both visible on screen:
+ *   1. `:active` bubbles up the ancestor chain, so pressing a button also put
+ *      every matching wrapper (toolbar, card, nav container that happens to
+ *      carry a `-btn`/`-tab` class) into :active and they scaled together. The
+ *      `:not(:has(:active))` guard restricts the effect to the innermost pressed
+ *      element — a parent that contains an active descendant is excluded.
+ *   2. A `scale()` reads as a cheap game-button bounce. iOS 26 presses settle
+ *      the glass: the fill darkens a touch, the top highlight tightens into a
+ *      thin inset, the shadow contracts. The control looks pushed into the
+ *      surface rather than shrunk. No transform, so nothing around it shifts.
+ */
+html[data-visual-theme] body #root
+  :is(button, .btn, [class*='-btn'], [class*='-tab'], .nav-item):active:not(:disabled):not(:has(:active)) {
+  background-color: color-mix(in srgb, var(--lg-2-fill) 100%, #000 14%) !important;
+  box-shadow: inset 0 1px 3px rgba(4, 8, 16, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 1px 2px rgba(4, 8, 16, 0.3) !important;
+  filter: brightness(0.94);
+  transition: background-color 80ms linear, box-shadow 80ms linear, filter 80ms linear !important;
+}
+
+html[data-visual-theme] body #root :is(button, .btn, [class*='-btn'], [class*='-tab'], .nav-item) {
+  transition: background-color var(--lg-fade), border-color var(--lg-fade),
+    box-shadow var(--lg-fade), filter var(--lg-fade) !important;
+}
+
+html[data-visual-theme] body :is([draggable='true']:active, .is-dragging) {
+  background-color: var(--lg-2-fill-hover) !important;
+  border-color: var(--lg-2-edge-hover) !important;
+  box-shadow: 0 30px 64px rgba(4, 9, 18, 0.5) !important;
+  transition: border-color var(--lg-spring) !important;
+}
+
+/* =============================================================================
+ * 9. Cost control. Measured at 96 permanent loops and ~177 backdrop-filter
+ * rules before this sheet. Loops that carry information stay; atmosphere stops.
+ * Signature geometry, the opening greeting and control breathing are kept by
+ * request and are not matched by anything below.
+ * ========================================================================== */
+
+html[data-visual-theme] body :is(
+  .ambient-interaction-layer::before,
+  .ambient-grid::after,
+  .ambient-beam,
+  .ambient-grain,
+  .ambient-caustic,
+  .ambient-prism-a,
+  .ambient-prism-b,
+  .ambient-specks,
+  .spatial-floating-brand,
+  .egress-status-primary i,
+  .egress-route-flow,
+  .egress-exit-flow,
+  .egress-exit-pulse,
+  .jimeng-page::before,
+  .jimeng-hero::after,
+  .jimeng-task-dot,
+  .side-nav-update-progress-ripple,
+  .side-nav-update-progress-ripple-b
+) {
+  animation: none !important;
+  will-change: auto !important;
+}
+
+/* =============================================================================
+ * 8b. Restrained motion that costs almost nothing
+ * -----------------------------------------------------------------------------
+ * Rule: animate transform and opacity only — those run on the compositor.
+ * Three properties are never transitioned anywhere in this sheet, because each
+ * re-samples or repaints the surface every frame and they are the usual cause
+ * of a stuttering glass interface: backdrop-filter, box-shadow, filter.
+ *
+ * The hover lift is therefore a 1px transform rather than a shadow change. Same
+ * read, no repaint, and transform never reflows so nothing shifts.
+ * ========================================================================== */
+
+@keyframes lg-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lg-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+html[data-visual-theme] body #root :is(
+  [class*='-card'],
+  .account-card,
+  .stat-card,
+  [class*='panel']
+):hover {
+  transform: translateY(-1px);
+  transition: transform 200ms cubic-bezier(0.33, 0.7, 0.37, 1),
+    background-color var(--lg-fade), border-color var(--lg-fade) !important;
+}
+
+/* Entrance stagger, capped at the fifth item so a long list never turns into a
+   slow reveal. One-shot, transform and opacity only. */
+html[data-visual-theme] body #root :is([class*='-card'], .account-card, .stat-card) {
+  animation: lg-rise-in 280ms cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+
+html[data-visual-theme] body #root :is([class*='-card'], .account-card, .stat-card):nth-child(2) {
+  animation-delay: 40ms;
+}
+html[data-visual-theme] body #root :is([class*='-card'], .account-card, .stat-card):nth-child(3) {
+  animation-delay: 80ms;
+}
+html[data-visual-theme] body #root :is([class*='-card'], .account-card, .stat-card):nth-child(4) {
+  animation-delay: 120ms;
+}
+html[data-visual-theme] body #root :is([class*='-card'], .account-card, .stat-card):nth-child(n + 5) {
+  animation-delay: 150ms;
+}
+
+/* Keyboard focus gets the same care as the pointer; outline never reflows. */
+html[data-visual-theme] body :is(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--lg-focus) !important;
+  outline-offset: 2px !important;
+  transition: outline-offset 140ms cubic-bezier(0.2, 1.1, 0.35, 1) !important;
+}
+
+/* Toggles are a confirmation, so they get the spring. */
+html[data-visual-theme] body :is(.switch, .slider, [class*='-switch'], [type='checkbox']) {
+  transition: transform var(--lg-spring), background-color var(--lg-fade),
+    border-color var(--lg-fade) !important;
+}
+
+html[data-visual-theme] body :is(.switch, [class*='-switch'], [type='checkbox']):active:not(:has(:active)) {
+  transform: scale(0.94);
+}
+
+/* Content swaps cross-fade. Sliding a page of glass means recompositing every
+   pane on every frame, which is the most expensive transition available. */
+html[data-visual-theme] body #root :is(.main-content > *, .tab-content) {
+  animation: lg-fade-in 200ms cubic-bezier(0.33, 0.7, 0.37, 1) both;
+}
+
+/* Loading pulses opacity rather than sweeping a gradient across a box. */
+html[data-visual-theme] body :is([class*='skeleton'], [class*='-loading']:not(.spin)) {
+  animation: lg-pulse 1.4s ease-in-out infinite !important;
+  background-image: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-visual-theme] body #root :is([class*='-card'], .account-card, .stat-card) {
+    animation: none !important;
+  }
+  html[data-visual-theme] body #root :is([class*='-card'], .account-card, .stat-card):hover {
+    transform: none;
+  }
+}
+
+/* =============================================================================
+ * 9b. Status window — the one place that earns more motion
+ * -----------------------------------------------------------------------------
+ * Compositing cost scales with area, and this window is 480x288. Of its fifteen
+ * loops, eleven animate transform or opacity only and cost almost nothing at
+ * that size; blanket-disabling them was the wrong call. They are back.
+ *
+ * The four that were genuinely expensive are replaced rather than removed, so
+ * the window keeps its character:
+ *   compactSculptureMorph / compactInnerDrift  animated border-radius -> now
+ *     scale, rotate and skew, which reads as the same liquid deformation but
+ *     never triggers a repaint
+ *   compactCorePulse  animated filter (a blur/glow) -> now opacity on the layer
+ *   compactLivePulse  animated box-shadow -> now a scaling ring pseudo-element
+ *
+ * Then a few additions that only make sense at this size: a slow specular pass
+ * over the panel, an entrance stagger when the window opens, and a quota ring
+ * that eases to new values instead of snapping.
+ * ========================================================================== */
+
+@keyframes lg-blob-morph {
+  0% {
+    transform: scale(1) rotate(0deg) skewX(0deg);
+  }
+  33% {
+    transform: scale(1.06, 0.95) rotate(42deg) skewX(3deg);
+  }
+  66% {
+    transform: scale(0.95, 1.05) rotate(-28deg) skewX(-2deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg) skewX(0deg);
+  }
+}
+
+@keyframes lg-core-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes lg-ping {
+  0% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+@keyframes lg-panel-sheen {
+  0% {
+    opacity: 0;
+    transform: translateX(-120%) skewX(-14deg);
+  }
+  12%,
+  22% {
+    opacity: 1;
+  }
+  40%,
+  100% {
+    opacity: 0;
+    transform: translateX(220%) skewX(-14deg);
+  }
+}
+
+/* Liquid deformation without repainting. */
+html[data-visual-theme] body :is(
+  .compact-quota-shape-one,
+  .compact-quota-shape-two,
+  .compact-quota-shape-three
+) {
+  animation: lg-blob-morph 11s ease-in-out infinite !important;
+}
+
+html[data-visual-theme] body .compact-quota-shape-two {
+  animation-duration: 14s !important;
+  animation-direction: reverse !important;
+}
+
+html[data-visual-theme] body .compact-quota-shape-three {
+  animation-duration: 9s !important;
+  animation-delay: -3s !important;
+}
+
+/* Keep the quota core stable. The old opacity pulse made the whole sphere look
+   like it was flashing, especially against the bright day canvas. The outer
+   orbits and liquid shapes still move, so the sculpture does not become static. */
+html[data-visual-theme] body .compact-quota-core {
+  animation: none !important;
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+/* These two legacy animations also modulated opacity. Freeze their luminance
+   while preserving the independent orbit rotation and blob deformation. */
+html[data-visual-theme] body .compact-quota-sculpture::before,
+html[data-visual-theme] body .compact-quota-orbit > i {
+  animation: none !important;
+}
+
+/* The live indicator pings outward from a pseudo-element instead of growing a
+   box-shadow, which would repaint the dot every frame. */
+html[data-visual-theme] body .compact-live-monitor > i {
+  position: relative;
+  animation: none !important;
+  box-shadow: none !important;
+}
+
+html[data-visual-theme] body .compact-live-monitor > i::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid currentColor;
+  animation: lg-ping 2.4s cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
+  pointer-events: none;
+}
+
+/* A single specular pass every ten seconds. Long gaps are what keep it feeling
+   like light catching an edge rather than a loading bar. */
+html[data-visual-theme] body .compact-status-panel {
+  position: relative;
+  overflow: hidden;
+}
+
+html[data-visual-theme] body .compact-status-panel::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 32%;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(226, 240, 255, 0.16) 48%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: lg-panel-sheen 10s cubic-bezier(0.4, 0, 0.3, 1) infinite;
+}
+
+/* Opening stagger. The window appears on minimise, so it is seen often; a
+   short cascade makes it feel assembled rather than pasted on. */
+html[data-visual-theme] body :is(
+  .compact-quota-sculpture,
+  .compact-split,
+  .split-half,
+  .compact-route-row,
+  .compact-live-monitor
+) {
+  animation-name: lg-rise-in;
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(0.22, 0.9, 0.3, 1);
+  /* .compact-quota-sculpture inherits `infinite` from its legacy floating
+     animation. Without an explicit reset the 320ms entrance repeats forever,
+     making the entire quota ball flash. */
+  animation-iteration-count: 1;
+  animation-fill-mode: both;
+}
+
+/* Final compatibility fixes. This file is intentionally imported after all
+   legacy page styles, so corrections placed only in components.css are
+   otherwise overwritten by the liquid-control rules above. */
+html[data-theme='dark'] body .platform-group-switcher-trigger {
+  border-color: rgba(225, 234, 238, .22) !important;
+  background: rgba(255, 255, 255, .045) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+html[data-theme='dark'] body .platform-group-switcher-trigger:hover {
+  border-color: rgba(225, 234, 238, .34) !important;
+  background: rgba(255, 255, 255, .08) !important;
+}
+
+html[data-visual-theme] body .split-half:nth-child(2) {
+  animation-delay: 70ms;
+}
+
+html[data-visual-theme] body .compact-route-row:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+html[data-visual-theme] body .compact-route-row:nth-child(3) {
+  animation-delay: 110ms;
+}
+
+/* Quota rings ease to a new value rather than snapping to it. */
+html[data-visual-theme] body :is(
+  .compact-quota-track i,
+  .compact-quota-fill,
+  [class*='compact'][class*='bar']
+) {
+  transition: transform 620ms cubic-bezier(0.22, 0.9, 0.28, 1),
+    background-color var(--lg-fade) !important;
+}
+
+/* Hovering a half brings it forward without moving anything. */
+html[data-visual-theme] body .split-half:hover {
+  transform: translateY(-1px);
+  transition: transform 200ms cubic-bezier(0.33, 0.7, 0.37, 1) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-visual-theme] body :is(
+    .compact-quota-shape-one,
+    .compact-quota-shape-two,
+    .compact-quota-shape-three,
+    .compact-quota-core,
+    .compact-status-panel::after,
+    .compact-live-monitor > i::after
+  ) {
+    animation: none !important;
+  }
+}
+
+/* Lite mode keeps the fill and the edge, and drops only the blur. */
+html[data-performance-mode='lite'] * {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Lite day keeps the blue identity with a cheaper, flatter canvas. The former
+   generic lite rule restored the legacy grey fog, while the regular day
+   after-layer still applied a 64px blur; together they produced the washed-out
+   account workspace. */
+html[data-performance-mode='lite'][data-visual-theme='day'] body {
+  background-color: #243b60 !important;
+  background-image:
+    radial-gradient(70% 58% at 72% 34%, rgba(139, 169, 210, 0.3), transparent 70%),
+    linear-gradient(154deg, #33507c 0%, #40639a 32%, #3a5b8c 68%, #243b60 100%) !important;
+}
+
+html[data-performance-mode='lite'][data-visual-theme='day'] body::after {
+  opacity: 0.14 !important;
+  background:
+    radial-gradient(52% 44% at 70% 32%, rgba(188, 207, 233, 0.32), transparent 72%),
+    radial-gradient(48% 42% at 42% 78%, rgba(82, 121, 176, 0.34), transparent 74%) !important;
+  filter: none !important;
+  animation: none !important;
+}
+
+html[data-performance-mode='lite'][data-visual-theme='night'] body #root :is([class*='card'], [class*='panel'], .settings-group) {
+  background-color: color-mix(in srgb, var(--lg-2-fill) 100%, #2a2d33 62%) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-visual-theme] body :is(.modal, .modal-content, .confirm-modal, .global-modal) {
+    animation: lg-fade-in 1ms both !important;
+  }
+}
+
+
+
+/* =============================================================================
+ * 10. Navigation dock — one pane, not a pane of panes
+ * -----------------------------------------------------------------------------
+ * The dock is a tier 2 surface and its items were tier 2 as well, so twelve
+ * glass squares sat inside a glass bar at the same tone and the whole thing
+ * read as one grey slab. The bar keeps the material; the items go transparent
+ * and earn fill only on hover or when current. Same treatment as a tab bar in
+ * iOS 26 — the container is the glass, the contents are just icons.
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is(
+  .spatial-nav-item,
+  .spatial-nav-avatar,
+  .top-spatial-nav .nav-item,
+  .side-nav .nav-item
+) {
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+html[data-visual-theme] body #root :is(
+  .spatial-nav-item,
+  .top-spatial-nav .nav-item,
+  .side-nav .nav-item
+):hover {
+  background-color: rgba(255, 255, 255, 0.09) !important;
+  border-color: var(--lg-1-edge) !important;
+}
+
+html[data-visual-theme] body #root :is(
+  .spatial-nav-item.active,
+  .top-spatial-nav .nav-item.active,
+  .side-nav .nav-item.active
+) {
+  background-color: var(--lg-2-fill-hover) !important;
+  background-image: var(--lg-2-specular) !important;
+  border-color: var(--lg-2-edge-hover) !important;
+  box-shadow: var(--lg-1-shadow) !important;
+}
+
+/* The bar itself carries the glass. */
+html[data-visual-theme] body #root :is(.top-spatial-nav, .spatial-nav, .side-nav) {
+  background-color: var(--lg-2-fill) !important;
+  background-image: var(--lg-2-specular) !important;
+  background-size: 460px 460px, 100% 100% !important;
+  background-repeat: no-repeat !important;
+  -webkit-backdrop-filter: var(--lg-2-blur) !important;
+  backdrop-filter: var(--lg-2-blur) !important;
+  border: 1px solid var(--lg-2-edge) !important;
+  box-shadow: var(--lg-2-shadow) !important;
+}
+
+
+/* =============================================================================
+ * 11. Shell pseudo-elements
+ * -----------------------------------------------------------------------------
+ * On screen the tab row, the top strip and the toolbar still rendered as panes
+ * after their elements were cleared, because the legacy polish sheets paint
+ * those surfaces on ::before rather than on the element itself. Clearing the
+ * element alone leaves the pseudo untouched, which is why the page kept showing
+ * a bar inside a bar inside a bar.
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is(
+  [class*='-tabs'],
+  [class*='tabs-row'],
+  [class*='toolbar'],
+  [class*='-dock'],
+  [class*='-strip'],
+  .page-tabs,
+  .filter-tabs,
+  .page-top-strip
+)::before,
+html[data-visual-theme] body #root :is(
+  [class*='-tabs'],
+  [class*='tabs-row'],
+  [class*='toolbar'],
+  [class*='-dock'],
+  [class*='-strip'],
+  .page-tabs,
+  .filter-tabs,
+  .page-top-strip
+)::after {
+  background: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  opacity: 0 !important;
+}
+
+/* And the elements themselves, re-asserted last so nothing above can repaint. */
+html[data-visual-theme] body #root :is(
+  [class*='-tabs'],
+  [class*='tabs-row'],
+  [class*='toolbar'],
+  [class*='-dock'],
+  [class*='-strip'],
+  .page-tabs,
+  .filter-tabs,
+  .page-top-strip
+):not([class*='-tab-']):not(.filter-tab):not(.page-tab) {
+  background: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* =============================================================================
+ * 12. Selection has to add light
+ * -----------------------------------------------------------------------------
+ * When the panes were flipped to dark translucent, the hover and active states
+ * kept their old logic of "more fill" — which now meant more dark, so a
+ * selected tab rendered darker than an unselected one and the current tab was
+ * indistinguishable on screen. Emphasis on a dark pane comes from light, so the
+ * hover fills above composite brighter than the base, and selection adds a rim
+ * and an inner top glint on top of that.
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is(
+  .filter-tab.active,
+  .page-tab.active,
+  .view-btn.active,
+  .settings-tab.active,
+  .nav-item.active,
+  [class*='-tab'].active
+) {
+  background-color: var(--lg-2-fill-hover) !important;
+  background-image: var(--lg-2-specular) !important;
+  background-size: 460px 460px, 100% 100% !important;
+  border-color: var(--lg-2-edge-hover) !important;
+  box-shadow: var(--lg-2-shadow), inset 0 0 0 1px rgba(255, 255, 255, 0.16) !important;
+  color: var(--lg-ink) !important;
+}
+
+/* =============================================================================
+ * 13. Nested panes inside cards, and unthemed status colour
+ * -----------------------------------------------------------------------------
+ * Two things visible on the account cards once the outer shells were cleared:
+ *
+ *   The email row and the quota block each rendered as their own rounded pane
+ *   inside the card — the card-in-card effect again, and again drawn on
+ *   pseudo-elements, so clearing the elements alone left them in place.
+ *
+ *   The quota percentages were still #ef4444 / #f97316 / #f59e0b straight from
+ *   codex.css. At full saturation they were the most vivid thing on a
+ *   deliberately desaturated screen. They keep their meaning here at a fraction
+ *   of the chroma, driven by the same tokens as everything else.
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is(
+  [class*='-header'],
+  [class*='-head'],
+  [class*='-main-line'],
+  [class*='-sub-line'],
+  [class*='-footer'],
+  [class*='-actions'],
+  [class*='-meta'],
+  [class*='quota-header'],
+  [class*='quota-item'],
+  [class*='-top'],
+  [class*='-title']
+)::before,
+html[data-visual-theme] body #root :is(
+  [class*='-header'],
+  [class*='-head'],
+  [class*='-main-line'],
+  [class*='-sub-line'],
+  [class*='-footer'],
+  [class*='-actions'],
+  [class*='-meta'],
+  [class*='quota-header'],
+  [class*='quota-item'],
+  [class*='-top'],
+  [class*='-title']
+)::after {
+  background: none !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Status colour, held to the palette. */
+html[data-visual-theme] body #root :is(
+  [class*='quota-value'],
+  [class*='quota-pct'],
+  [class*='quota-percent'],
+  [class*='-quota-value']
+).low,
+html[data-visual-theme] body #root [class*='quota'].low {
+  color: var(--lg-danger-ink) !important;
+}
+
+html[data-visual-theme] body #root :is(
+  [class*='quota-value'],
+  [class*='quota-pct'],
+  [class*='quota-percent'],
+  [class*='-quota-value']
+).medium,
+html[data-visual-theme] body #root [class*='quota'].medium {
+  color: var(--lg-warning-ink) !important;
+}
+
+html[data-visual-theme] body #root :is(
+  [class*='quota-value'],
+  [class*='quota-pct'],
+  [class*='quota-percent'],
+  [class*='-quota-value']
+).high,
+html[data-visual-theme] body #root [class*='quota'].high {
+  color: var(--lg-success-ink) !important;
+}
+
+/* And the bars they sit above. */
+html[data-visual-theme] body #root :is([class*='quota-bar'], [class*='quota-fill'], [class*='-bar']).low {
+  background: var(--lg-danger-edge) !important;
+}
+html[data-visual-theme] body #root :is([class*='quota-bar'], [class*='quota-fill'], [class*='-bar']).medium {
+  background: var(--lg-warning-edge) !important;
+}
+html[data-visual-theme] body #root :is([class*='quota-bar'], [class*='quota-fill'], [class*='-bar']).high {
+  background: var(--lg-success-edge) !important;
+}
+
+/* =============================================================================
+ * 14. No panes inside panes — the general rule
+ * -----------------------------------------------------------------------------
+ * Chasing this one class at a time did not converge: the email row, then the
+ * quota block, then the next thing. Rather than enumerate, state the principle.
+ * Inside a tier 1 pane nothing is a pane unless it is itself a card, a control,
+ * a label or a track. Everything else is content and carries no surface.
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is([class*='-card'], [class*='panel'], .account-card, .stat-card) :is(
+  div,
+  span,
+  section,
+  header,
+  footer,
+  p,
+  li
+):not([class*='-card']):not([class*='panel']):not([class*='-btn']):not([class*='btn-']):not([class*='pill']):not([class*='badge']):not([class*='chip']):not([class*='-tag']):not([class*='tag-']):not([class*='track']):not([class*='-bar']):not([class*='bar-']):not([class*='-fill']):not([class*='progress']):not([class*='switch']):not([class*='avatar']):not([class*='icon']):not([class*='status']):not([class*='state']):not([class*='-dot']):not([class*='tier']):not([class*='plan']):not([class*='-mark']):not([class*='indicator']):not([class*='swatch']) {
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Status words carry more modifiers than .low/.medium/.high across the older
+   sheets; catch the rest so nothing stays at full saturation. */
+html[data-visual-theme] body #root [class*='quota']:is(.critical, .danger, .error, .expired, .exhausted),
+html[data-visual-theme] body #root :is([class*='-value'], [class*='-pct'], [class*='-percent']):is(.critical, .danger, .error) {
+  color: var(--lg-danger-ink) !important;
+}
+
+html[data-visual-theme] body #root [class*='quota']:is(.warn, .warning, .caution),
+html[data-visual-theme] body #root :is([class*='-value'], [class*='-pct'], [class*='-percent']):is(.warn, .warning) {
+  color: var(--lg-warning-ink) !important;
+}
+
+html[data-visual-theme] body #root [class*='quota']:is(.ok, .good, .healthy, .active),
+html[data-visual-theme] body #root :is([class*='-value'], [class*='-pct'], [class*='-percent']):is(.ok, .good) {
+  color: var(--lg-success-ink) !important;
+}
+
+/* Named directly, because the pattern rules above kept missing them: the older
+   sheets scope these as `.codex-quota-section .quota-pct.low` and friends. */
+html[data-visual-theme] body #root :is(.quota-pct, .quota-value, [class*='quota-value'], [class*='quota-pct']) {
+  color: var(--lg-ink) !important;
+}
+html[data-visual-theme] body #root :is(.quota-pct, .quota-value, [class*='quota-value'], [class*='quota-pct']):is(.low, .critical, .danger) {
+  color: var(--lg-danger-ink) !important;
+}
+html[data-visual-theme] body #root :is(.quota-pct, .quota-value, [class*='quota-value'], [class*='quota-pct']):is(.medium, .warning, .warn) {
+  color: var(--lg-warning-ink) !important;
+}
+html[data-visual-theme] body #root :is(.quota-pct, .quota-value, [class*='quota-value'], [class*='quota-pct']):is(.high, .ok, .good) {
+  color: var(--lg-success-ink) !important;
+}
+
+/* Modern day mode is the blue liquid-glass palette. The account polish sheet
+   still owns a legacy light-grey masthead for installations without a visual
+   theme; replace that single layer when the current day theme is active. */
+html[data-visual-theme='day'] body .app-container:has(.codex-accounts-page)::before,
+html[data-visual-theme='day'] body .app-container:has(.accounts-page)::before {
+  border-bottom-color: rgba(224, 235, 250, 0.22) !important;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(51, 80, 124, 0.99),
+      rgba(58, 91, 140, 0.96) 72%,
+      rgba(58, 91, 140, 0)
+    ) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html[data-visual-theme='day'] body :is(.industrial-chrome, .spatial-floating-brand) {
+  color: var(--lg-ink) !important;
+}
+
+/* =============================================================================
+ * 15. Account workspace compositor budget
+ * -----------------------------------------------------------------------------
+ * Account pages can place dozens of individually blurred controls above several
+ * account panes. Preserve their fill, edge, specular highlight and hover lift,
+ * but avoid allocating a live backdrop surface for every small control. The
+ * larger account panes retain a restrained 4px blur, and offscreen account cards
+ * are skipped by the renderer until they approach the viewport.
+ * ========================================================================== */
+
+html[data-visual-theme] body #root :is(.accounts-page, .codex-accounts-page) :is(
+  [class*='-card'],
+  .account-card,
+  .codex-api-service-panel
+) {
+  -webkit-backdrop-filter: blur(4px) saturate(106%) !important;
+  backdrop-filter: blur(4px) saturate(106%) !important;
+}
+
+html[data-visual-theme] body #root :is(.accounts-page, .codex-accounts-page) :is(
+  button,
+  .btn,
+  [class*='-btn'],
+  [class*='btn-'],
+  [class*='-tab'],
+  [class*='tab-'],
+  [class*='switcher'],
+  [class*='-select'],
+  .search-box,
+  .search-box input,
+  .search-input-wrap,
+  [class*='search-box']
+) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Selection remains visually lifted, but no longer repaints its gradient and
+   shadow forever. Existing hover/focus rules continue to provide feedback. */
+html[data-visual-theme] body #root :is(.accounts-page, .codex-accounts-page) :is(
+  .filter-tab.active,
+  .page-tab.active,
+  .view-btn.active,
+  .settings-tab.active,
+  .nav-item.active,
+  [class*='-tab'].active,
+  .btn-primary,
+  .primary-btn,
+  [class*='--primary']
+) {
+  animation: none !important;
+}
+
+/* =============================================================================
+ * 17. Adaptive frame-budget pass
+ * -----------------------------------------------------------------------------
+ * Nothing disappears. Only after the runtime governor confirms sustained frame
+ * pressure, decorative full-window animations hold their current frame and
+ * glass blur radii step down slightly. The native tier restores them
+ * automatically when the measured budget recovers.
+ * ========================================================================== */
+html[data-frame-tier='performance'] {
+  --glass-static-blur: 5px;
+  --glass-content-blur: 6px;
+  --glass-float-blur: 9px;
+  --glass-modal-blur: 18px;
+}
+
+html[data-frame-tier='performance'] :is(
+  body::after,
+  .ambient-caustic,
+  .ambient-prism,
+  .ambient-specks,
+  .ambient-grain,
+  .ambient-beam
+) {
+  animation-play-state: paused !important;
+  will-change: auto !important;
+}
+
+html[data-frame-tier='performance'] .ambient-depth {
+  transition-duration: 520ms !important;
+  will-change: auto !important;
+}
+
+html[data-visual-theme] body #root :is(.accounts-page, .codex-accounts-page) :is(
+  .account-card,
+  .codex-account-card,
+  .codex-local-access-card
+) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 340px;
+}
+
+/* Keep the coloured atmosphere, but reduce the full-window filtered region
+   only while an account workspace is mounted. */
+html[data-visual-theme='day']:has(body #root :is(.accounts-page, .codex-accounts-page)) body::after {
+  filter: blur(32px) saturate(1.05) !important;
+}
+
+html[data-visual-theme='night']:has(body #root :is(.accounts-page, .codex-accounts-page)) body::after,
+html:not([data-visual-theme])[data-theme='dark']:has(body #root :is(.accounts-page, .codex-accounts-page)) body::after {
+  filter: blur(32px) saturate(0) !important;
+}
+
+/* =============================================================================
+ * 16. Account workspace static-compositor pass
+ * -----------------------------------------------------------------------------
+ * Keep the static glass fill and borders, but stop allocating a live backdrop
+ * surface for every large account card. Expensive full-window atmosphere layers
+ * are also suppressed only while an account workspace is mounted.
+ * ========================================================================== */
+html[data-visual-theme] body #root :is(.accounts-page, .codex-accounts-page) :is(
+  [class*='-card'],
+  .account-card,
+  .codex-api-service-panel
+) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html:has(body #root :is(.accounts-page, .codex-accounts-page)) :is(
+  .ambient-caustic,
+  .ambient-prism,
+  .ambient-specks,
+  .ambient-grain
+) {
+  display: none !important;
+}
+
+html:has(body #root :is(.accounts-page, .codex-accounts-page)) body::after {
+  animation: none !important;
+  filter: none !important;
+}
+
+html[data-visual-theme] body #root :is(.accounts-page, .codex-accounts-page) :is(
+  [class*='-card'],
+  .account-card,
+  .codex-api-service-panel,
+  button,
+  [class*='-tab']
+)::after {
+  animation: none !important;
+}

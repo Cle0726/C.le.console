@@ -12,6 +12,14 @@ src-tauri/arms_cache/
 
 # Go sidecar build
 sidecars/cle-cliproxy/bin/
+sidecars/cockpit-cliproxy/bin/
+sidecars/jimeng-api/bin/
+
+# Local build, review, and visual verification output
+artifacts/
+build-staging/
+locale-check-report.md
+third_party/adobe2api-reference/
 
 # Runtime and local data
 logs/

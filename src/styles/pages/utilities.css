@@ -20,9 +20,9 @@
   --plan-plus-color: #059669;
   --plan-plus-border: rgba(16, 185, 129, 0.35);
 
-  --plan-team-bg: rgba(139, 92, 246, 0.15);
-  --plan-team-color: #7c3aed;
-  --plan-team-border: rgba(139, 92, 246, 0.35);
+  --plan-team-bg: rgba(112, 135, 155, 0.15);
+  --plan-team-color: #60788e;
+  --plan-team-border: rgba(112, 135, 155, 0.35);
 
   --plan-enterprise-bg: rgba(245, 158, 11, 0.18);
   --plan-enterprise-color: #b45309;
@@ -38,9 +38,9 @@
   --plan-ultra-color: #3f1d00;
   --plan-ultra-border: rgba(249, 115, 22, 0.4);
 
-  --plan-trial-bg: rgba(168, 85, 247, 0.15);
-  --plan-trial-color: #7c3aed;
-  --plan-trial-border: rgba(168, 85, 247, 0.35);
+  --plan-trial-bg: rgba(112, 135, 155, 0.15);
+  --plan-trial-color: #60788e;
+  --plan-trial-border: rgba(112, 135, 155, 0.35);
 
   --plan-unknown-bg: rgba(239, 68, 68, 0.16);
   --plan-unknown-color: #b91c1c;

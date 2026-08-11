@@ -1,9 +1,11 @@
 use crate::models::codex::{
-    CodexAccount, CodexAccountIndex, CodexAccountSummary, CodexApiProviderMode, CodexAppSpeed,
-    CodexAuthFile, CodexAuthMode, CodexAuthTokens, CodexJwtPayload, CodexQuickConfig, CodexTokens,
+    CodexAccount, CodexAccountIndex, CodexAccountSummary, CodexAgentIdentity, CodexApiProviderMode,
+    CodexAppSpeed, CodexAuthFile, CodexAuthMode, CodexAuthTokens, CodexJwtPayload,
+    CodexQuickConfig, CodexTokens,
 };
 use crate::modules::{account, codex_oauth, logger};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use ed25519_dalek::pkcs8::DecodePrivateKey;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION};
 #[cfg(target_os = "macos")]
 #[cfg(all(target_os = "macos", not(test)))]
@@ -322,6 +324,127 @@ fn build_api_key_email(api_key: &str) -> String {
 
 fn build_api_key_account_id(api_key: &str) -> String {
     format!("codex_apikey_{:x}", md5::compute(api_key.as_bytes()))
+}
+
+fn build_legacy_agent_identity_account_id(account_id: &str) -> String {
+    format!(
+        "codex_agent_identity_{:x}",
+        md5::compute(account_id.trim().as_bytes())
+    )
+}
+
+fn build_agent_identity_account_id(account_id: &str, chatgpt_user_id: &str) -> String {
+    let identity_key = format!("{}\0{}", account_id.trim(), chatgpt_user_id.trim());
+    format!(
+        "codex_agent_identity_{:x}",
+        md5::compute(identity_key.as_bytes())
+    )
+}
+
+fn is_auth_mode_agent_identity(value: Option<&str>) -> bool {
+    value
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("agentIdentity"))
+}
+
+fn normalize_agent_identity(
+    mut identity: CodexAgentIdentity,
+) -> Result<CodexAgentIdentity, String> {
+    identity.agent_runtime_id = identity.agent_runtime_id.trim().to_string();
+    identity.agent_private_key = identity.agent_private_key.trim().to_string();
+    identity.account_id = identity.account_id.trim().to_string();
+    identity.chatgpt_user_id = identity.chatgpt_user_id.trim().to_string();
+    identity.task_id = normalize_optional_value(identity.task_id);
+    identity.email = normalize_optional_value(identity.email);
+    identity.plan_type = normalize_optional_value(identity.plan_type);
+    if identity.agent_runtime_id.is_empty()
+        || identity.agent_private_key.is_empty()
+        || identity.account_id.is_empty()
+        || identity.chatgpt_user_id.is_empty()
+    {
+        return Err(
+            "Agent Identity 缺少 agent_runtime_id、agent_private_key、account_id 或 chatgpt_user_id"
+                .to_string(),
+        );
+    }
+    let private_key = base64::engine::general_purpose::STANDARD
+        .decode(identity.agent_private_key.as_bytes())
+        .map_err(|_| "Agent Identity agent_private_key 不是有效 Base64".to_string())?;
+    ed25519_dalek::SigningKey::from_pkcs8_der(&private_key)
+        .map_err(|_| "Agent Identity agent_private_key 不是有效 PKCS#8 Ed25519 私钥".to_string())?;
+    Ok(identity)
+}
+
+fn parse_agent_identity_from_value(
+    value: &serde_json::Value,
+) -> Result<Option<CodexAgentIdentity>, String> {
+    let root_auth_mode = value
+        .get("auth_mode")
+        .or_else(|| value.get("authMode"))
+        .and_then(serde_json::Value::as_str);
+    let credentials = value.get("credentials");
+    let credentials_auth_mode = credentials.and_then(|item| {
+        item.get("auth_mode")
+            .or_else(|| item.get("authMode"))
+            .and_then(serde_json::Value::as_str)
+    });
+    let nested = value
+        .get("agent_identity")
+        .or_else(|| value.get("agentIdentity"))
+        .or_else(|| credentials.and_then(|item| item.get("agent_identity")))
+        .or_else(|| credentials.and_then(|item| item.get("agentIdentity")));
+    let credentials_look_like_identity = credentials.is_some_and(|item| {
+        item.get("agent_runtime_id")
+            .or_else(|| item.get("agentRuntimeId"))
+            .is_some()
+            && item
+                .get("agent_private_key")
+                .or_else(|| item.get("agentPrivateKey"))
+                .is_some()
+    });
+    if !is_auth_mode_agent_identity(root_auth_mode)
+        && !is_auth_mode_agent_identity(credentials_auth_mode)
+        && nested.is_none()
+        && !credentials_look_like_identity
+    {
+        return Ok(None);
+    }
+    let source = nested
+        .or_else(|| {
+            credentials.filter(|_| {
+                is_auth_mode_agent_identity(root_auth_mode)
+                    || is_auth_mode_agent_identity(credentials_auth_mode)
+                    || credentials_look_like_identity
+            })
+        })
+        .unwrap_or(value);
+    let identity = CodexAgentIdentity {
+        agent_runtime_id: read_json_string(source, &["agent_runtime_id", "agentRuntimeId"])
+            .unwrap_or_default(),
+        agent_private_key: read_json_string(source, &["agent_private_key", "agentPrivateKey"])
+            .unwrap_or_default(),
+        task_id: read_json_string(source, &["task_id", "taskId"]),
+        account_id: read_json_string(
+            source,
+            &[
+                "account_id",
+                "accountId",
+                "chatgpt_account_id",
+                "chatgptAccountId",
+            ],
+        )
+        .unwrap_or_default(),
+        chatgpt_user_id: read_json_string(source, &["chatgpt_user_id", "chatgptUserId"])
+            .unwrap_or_default(),
+        email: read_json_string(source, &["email"]),
+        plan_type: read_json_string(source, &["plan_type", "planType"]),
+        chatgpt_account_is_fedramp: read_json_bool(
+            source,
+            &["chatgpt_account_is_fedramp", "chatgptAccountIsFedramp"],
+        )
+        .unwrap_or(false),
+    };
+    normalize_agent_identity(identity).map(Some)
 }
 
 fn normalize_api_model_catalog(models: Vec<String>) -> Vec<String> {
@@ -2347,6 +2470,20 @@ fn read_json_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> 
     normalize_optional_ref(Some(raw))
 }
 
+fn read_json_bool(value: &serde_json::Value, keys: &[&str]) -> Option<bool> {
+    keys.iter().find_map(|key| {
+        let item = value.get(*key)?;
+        item.as_bool().or_else(|| {
+            item.as_str()
+                .and_then(|raw| match raw.trim().to_ascii_lowercase().as_str() {
+                    "true" | "1" | "yes" => Some(true),
+                    "false" | "0" | "no" => Some(false),
+                    _ => None,
+                })
+        })
+    })
+}
+
 fn read_json_i64(value: &serde_json::Value, keys: &[&str]) -> Option<i64> {
     keys.iter().find_map(|key| {
         let item = value.get(*key)?;
@@ -2785,7 +2922,7 @@ pub fn list_accounts_checked() -> Result<Vec<CodexAccount>, String> {
 /// 刷新账号资料（团队名/结构）
 async fn refresh_account_profile_once(account_id: &str) -> Result<CodexAccount, String> {
     let mut account = prepare_account_for_injection(account_id).await?;
-    if account.is_api_key_auth() {
+    if account.is_api_key_auth() || account.is_agent_identity_auth() {
         return Ok(account);
     }
 
@@ -2830,6 +2967,94 @@ pub async fn refresh_account_profile(account_id: &str) -> Result<CodexAccount, S
 /// 添加或更新账号
 pub fn upsert_account(tokens: CodexTokens) -> Result<CodexAccount, String> {
     upsert_account_with_hints(tokens, None, None)
+}
+
+fn build_agent_identity_account_draft(
+    identity: CodexAgentIdentity,
+) -> Result<CodexAccount, String> {
+    let identity = normalize_agent_identity(identity)?;
+    let email = identity
+        .email
+        .clone()
+        .unwrap_or_else(|| identity.chatgpt_user_id.clone());
+    let account_storage_id =
+        build_agent_identity_account_id(&identity.account_id, &identity.chatgpt_user_id);
+    let mut account = CodexAccount::new(
+        account_storage_id,
+        email,
+        CodexTokens {
+            id_token: String::new(),
+            access_token: String::new(),
+            refresh_token: None,
+        },
+    );
+    account.agent_identity = Some(identity.clone());
+    account.user_id = Some(identity.chatgpt_user_id.clone());
+    account.account_id = Some(identity.account_id.clone());
+    account.plan_type = identity.plan_type.clone();
+    Ok(account)
+}
+
+pub fn upsert_agent_identity_account(identity: CodexAgentIdentity) -> Result<CodexAccount, String> {
+    let draft = build_agent_identity_account_draft(identity)?;
+    let identity = draft
+        .agent_identity
+        .clone()
+        .ok_or("Agent Identity 凭据为空")?;
+    let account_storage_id = draft.id.clone();
+    let mut index = load_account_index();
+    let legacy_account_storage_id = build_legacy_agent_identity_account_id(&identity.account_id);
+    let legacy_account = load_account(&legacy_account_storage_id).filter(|account| {
+        account.agent_identity.as_ref().is_some_and(|stored| {
+            stored.account_id.trim() == identity.account_id
+                && stored.chatgpt_user_id.trim() == identity.chatgpt_user_id
+        })
+    });
+    let mut account = load_account(&account_storage_id)
+        .or(legacy_account)
+        .unwrap_or(draft);
+    account.id = account_storage_id;
+    account.email = identity
+        .email
+        .clone()
+        .unwrap_or_else(|| identity.chatgpt_user_id.clone());
+    account.auth_mode = CodexAuthMode::OAuth;
+    account.openai_api_key = None;
+    account.api_base_url = None;
+    account.agent_identity = Some(identity.clone());
+    account.user_id = Some(identity.chatgpt_user_id.clone());
+    account.account_id = Some(identity.account_id.clone());
+    account.plan_type = identity.plan_type.clone();
+    account.tokens = CodexTokens {
+        id_token: String::new(),
+        access_token: String::new(),
+        refresh_token: None,
+    };
+    account.requires_reauth = false;
+    account.reauth_reason = None;
+    account.authorization_status = None;
+    account.update_last_used();
+    save_account(&account)?;
+
+    index
+        .accounts
+        .retain(|item| item.id != legacy_account_storage_id || item.id == account.id);
+    if let Some(summary) = index.accounts.iter_mut().find(|item| item.id == account.id) {
+        summary.email = account.email.clone();
+        summary.plan_type = account.plan_type.clone();
+        summary.last_used = account.last_used;
+    } else {
+        index.accounts.push(CodexAccountSummary {
+            id: account.id.clone(),
+            email: account.email.clone(),
+            plan_type: account.plan_type.clone(),
+            subscription_active_until: account.subscription_active_until.clone(),
+            created_at: account.created_at,
+            last_used: account.last_used,
+        });
+    }
+    save_account_index(&index)?;
+    Ok(account)
 }
 
 pub fn upsert_account_for_reauth(
@@ -3610,7 +3835,7 @@ pub fn sync_account_from_auth_dir(
 ) -> Result<CodexAccount, String> {
     let mut account =
         load_account(account_id).ok_or_else(|| format!("账号不存在: {}", account_id))?;
-    if account.is_api_key_auth() {
+    if account.is_api_key_auth() || account.is_agent_identity_auth() {
         return Ok(account);
     }
 
@@ -3771,6 +3996,13 @@ fn build_auth_file_value(account: &CodexAccount) -> Result<serde_json::Value, St
         }));
     }
 
+    if let Some(identity) = account.agent_identity.clone() {
+        return Ok(serde_json::json!({
+            "auth_mode": "agentIdentity",
+            "agent_identity": normalize_agent_identity(identity)?,
+        }));
+    }
+
     if account.tokens.access_token.trim().is_empty() {
         return Err("OAuth 账号缺少 access_token，无法写入 auth.json".to_string());
     }
@@ -3791,6 +4023,7 @@ fn build_auth_file_value(account: &CodexAccount) -> Result<serde_json::Value, St
             ),
             account_id: account.account_id.clone(),
         }),
+        agent_identity: None,
         last_refresh: Some(serde_json::Value::String(
             chrono::Utc::now()
                 .format("%Y-%m-%dT%H:%M:%S%.6fZ")
@@ -4497,7 +4730,7 @@ async fn refresh_managed_account_locked(
 ) -> Result<CodexAccount, String> {
     let mut account =
         load_account(account_id).ok_or_else(|| format!("账号不存在: {}", account_id))?;
-    if account.is_api_key_auth() {
+    if account.is_api_key_auth() || account.is_agent_identity_auth() {
         return Ok(account);
     }
     if let Err(err) = sync_account_from_authority_sources(&mut account) {
@@ -4600,7 +4833,7 @@ pub async fn keepalive_managed_account(
     let _file_guard = acquire_codex_token_refresh_file_lock(account_id, reason).await?;
     let mut account =
         load_account(account_id).ok_or_else(|| format!("账号不存在: {}", account_id))?;
-    if account.is_api_key_auth() {
+    if account.is_api_key_auth() || account.is_agent_identity_auth() {
         return Ok(account);
     }
     if let Err(err) = sync_account_from_authority_sources(&mut account) {
@@ -5933,6 +6166,10 @@ async fn import_sub2api_export_from_value(
         if !is_sub2api_codex_oauth_account(item) {
             continue;
         }
+        if let Some(identity) = parse_agent_identity_from_value(item)? {
+            imported.push(upsert_agent_identity_account(identity)?);
+            continue;
+        }
         let candidate = extract_codex_import_candidate_from_value(item).ok_or_else(|| {
             format!(
                 "Sub2API 第 {} 个 OpenAI OAuth 账号缺少有效 access_token",
@@ -5952,6 +6189,10 @@ async fn import_sub2api_export_from_value(
 async fn import_account_from_json_value(
     value: serde_json::Value,
 ) -> Result<Option<CodexAccount>, String> {
+    if let Some(identity) = parse_agent_identity_from_value(&value)? {
+        return Ok(Some(upsert_agent_identity_account(identity)?));
+    }
+
     if let Some(account) = pending_oauth_account_from_value(&value) {
         return Ok(Some(import_account_struct(account)?));
     }
@@ -6732,6 +6973,12 @@ fn api_key_draft_from_value(
 async fn codex_batch_import_draft_from_value(
     value: serde_json::Value,
 ) -> Result<Option<CodexBatchImportDraft>, String> {
+    if let Some(identity) = parse_agent_identity_from_value(&value)? {
+        return Ok(Some(CodexBatchImportDraft::Account(
+            build_agent_identity_account_draft(identity)?,
+        )));
+    }
+
     if let Some(account) = pending_oauth_account_from_value(&value) {
         return Ok(Some(CodexBatchImportDraft::Account(account)));
     }
@@ -6880,6 +7127,8 @@ fn codex_batch_import_values_from_content(content: &str) -> Result<Vec<serde_jso
 fn codex_batch_import_account_type(account: &CodexAccount) -> String {
     if account.is_api_key_auth() {
         "API Key".to_string()
+    } else if account.is_agent_identity_auth() {
+        "Agent Identity".to_string()
     } else if normalize_optional_ref(account.tokens.refresh_token.as_deref()).is_some() {
         "OAuth".to_string()
     } else {
@@ -7353,7 +7602,13 @@ pub fn confirm_codex_batch_import(
             continue;
         };
         let result = match draft {
-            CodexBatchImportDraft::Account(account) => import_account_struct(account),
+            CodexBatchImportDraft::Account(account) => {
+                if let Some(identity) = account.agent_identity {
+                    upsert_agent_identity_account(identity)
+                } else {
+                    import_account_struct(account)
+                }
+            }
             CodexBatchImportDraft::FullToken {
                 tokens,
                 account_id_hint,
@@ -7503,14 +7758,16 @@ fn extract_codex_tokens_from_value(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_account_storage_id, build_auth_file_value, decode_jwt_payload_value,
-        detect_auth_file_plan_type_from_path, ensure_managed_account_fresh,
-        extract_codex_import_candidate_from_value, extract_codex_tokens_from_value,
-        extract_user_info, force_refresh_managed_account_after_observed,
-        format_refresh_error_for_user, get_accounts_dir, get_accounts_storage_path,
-        get_current_account_from_loaded, import_from_json, is_managed_auth_refresh_due,
-        is_pending_oauth_account, list_accounts_checked, load_account, load_account_index,
-        looks_like_sub2api_export, now_timestamp, parse_auth_file_last_refresh,
+        build_account_storage_id, build_auth_file_value, codex_batch_import_account_type,
+        codex_batch_import_draft_from_value, codex_batch_import_values_from_content,
+        decode_jwt_payload_value, detect_auth_file_plan_type_from_path,
+        ensure_managed_account_fresh, extract_codex_import_candidate_from_value,
+        extract_codex_tokens_from_value, extract_user_info,
+        force_refresh_managed_account_after_observed, format_refresh_error_for_user,
+        get_accounts_dir, get_accounts_storage_path, get_current_account_from_loaded,
+        import_from_json, is_managed_auth_refresh_due, is_pending_oauth_account,
+        list_accounts_checked, load_account, load_account_index, looks_like_sub2api_export,
+        now_timestamp, parse_agent_identity_from_value, parse_auth_file_last_refresh,
         parse_codex_account_compat, parse_line_delimited_json_values,
         read_api_provider_from_config_toml, read_quick_config_from_config_toml, remove_accounts,
         resolve_api_provider_config, save_account, save_account_index,
@@ -7530,6 +7787,88 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn validates_external_sub2api_agent_identity_fixture_when_configured() {
+        let Ok(path) = std::env::var("CLE_AGENT_IDENTITY_FIXTURE") else {
+            return;
+        };
+        let raw = fs::read_to_string(path).expect("read configured Agent Identity fixture");
+        let root: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse configured Sub2API JSON");
+        assert!(looks_like_sub2api_export(&root));
+        let accounts = root
+            .get("accounts")
+            .and_then(serde_json::Value::as_array)
+            .expect("Sub2API export has accounts");
+        let codex_accounts: Vec<_> = accounts
+            .iter()
+            .filter(|item| super::is_sub2api_codex_oauth_account(item))
+            .collect();
+        assert!(!codex_accounts.is_empty());
+        for account in codex_accounts {
+            let identity = parse_agent_identity_from_value(account)
+                .expect("validate Agent Identity")
+                .expect("detect Agent Identity");
+            assert!(!identity.agent_runtime_id.is_empty());
+            assert!(!identity.account_id.is_empty());
+            assert!(!identity.chatgpt_user_id.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn imports_external_sub2api_agent_identity_fixture_when_configured() {
+        let Ok(path) = std::env::var("CLE_AGENT_IDENTITY_FIXTURE") else {
+            return;
+        };
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let _env = TestEnvGuard::new("codex-agent-identity-external-import");
+        let raw = fs::read_to_string(path).expect("read configured Agent Identity fixture");
+        let root: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse configured Sub2API JSON");
+        let expected = root
+            .get("accounts")
+            .and_then(serde_json::Value::as_array)
+            .expect("Sub2API export has accounts")
+            .iter()
+            .filter(|item| super::is_sub2api_codex_oauth_account(item))
+            .count();
+        let imported = import_from_json(&raw)
+            .await
+            .expect("import configured Sub2API Agent Identity");
+        assert_eq!(imported.len(), expected);
+        for account in imported {
+            assert!(account.is_agent_identity_auth());
+            assert!(account.tokens.access_token.is_empty());
+            assert!(load_account(&account.id).is_some());
+            assert!(load_account_index()
+                .accounts
+                .iter()
+                .any(|item| item.id == account.id));
+        }
+    }
+
+    #[tokio::test]
+    async fn previews_external_sub2api_agent_identity_file_import_when_configured() {
+        let Ok(path) = std::env::var("CLE_AGENT_IDENTITY_FIXTURE") else {
+            return;
+        };
+        let raw = fs::read_to_string(path).expect("read configured Agent Identity fixture");
+        let values =
+            codex_batch_import_values_from_content(&raw).expect("expand Sub2API file accounts");
+        assert!(!values.is_empty());
+        for value in values {
+            let draft = codex_batch_import_draft_from_value(value)
+                .await
+                .expect("build Agent Identity batch draft")
+                .expect("Agent Identity batch draft");
+            let account = super::preview_account_for_draft(&draft).expect("preview account");
+            assert!(account.is_agent_identity_auth());
+            assert_eq!(codex_batch_import_account_type(&account), "Agent Identity");
+        }
+    }
 
     #[test]
     fn parse_line_delimited_json_values_accepts_one_object_per_line() {
@@ -7935,6 +8274,7 @@ mod tests {
                 refresh_token: tokens.refresh_token.clone(),
                 account_id: Some(account_id.to_string()),
             }),
+            agent_identity: None,
             last_refresh: Some(serde_json::Value::String(
                 "2026-04-13T00:00:00.000000Z".to_string(),
             )),

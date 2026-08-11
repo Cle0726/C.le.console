@@ -8,6 +8,8 @@ export type Page =
   | 'claude-web-api'
   | 'codex-api-service'
   | 'multi-model-api-service'
+  | 'jimeng-api-service'
+  | 'jimeng-infinite-canvas'
   | 'zed'
   | 'github-copilot'
   | 'windsurf'

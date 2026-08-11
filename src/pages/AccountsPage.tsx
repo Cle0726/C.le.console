@@ -575,14 +575,14 @@ export function AccountsPage({ onNavigate }: AccountsPageProps) {
 
   // Available color options
   const colorOptions = [
-    { index: 0, color: '#8b5cf6', name: 'Purple' },
+    { index: 0, color: '#70879b', name: 'Steel Blue' },
     { index: 1, color: '#3b82f6', name: 'Blue' },
     { index: 2, color: '#14b8a6', name: 'Teal' },
     { index: 3, color: '#f59e0b', name: 'Orange' },
     { index: 4, color: '#ec4899', name: 'Pink' },
     { index: 5, color: '#ef4444', name: 'Red' },
     { index: 6, color: '#22c55e', name: 'Green' },
-    { index: 7, color: '#6366f1', name: 'Indigo' }
+    { index: 7, color: '#70879b', name: 'Steel Blue' }
   ]
 
   const showAddModalRef = useRef(showAddModal)
@@ -2411,34 +2411,62 @@ export function AccountsPage({ onNavigate }: AccountsPageProps) {
       );
     }
 
-    const claude5h = quotaDisplayItems.find(item => item.key === 'claude:5h');
-    const claudeWeekly = quotaDisplayItems.find(item => item.key === 'claude:weekly');
-    const gemini5h = quotaDisplayItems.find(item => item.key === 'gemini:5h');
-    const geminiWeekly = quotaDisplayItems.find(item => item.key === 'gemini:weekly');
+    const claudeItems = quotaDisplayItems.filter((item) => {
+      const key = `${item.key} ${item.label}`.toLowerCase();
+      return key.includes('claude') || key.includes('3p-');
+    });
+    const geminiItems = quotaDisplayItems.filter((item) => {
+      const key = `${item.key} ${item.label}`.toLowerCase();
+      return key.includes('gemini');
+    });
+    const representedKeys = new Set(
+      [...claudeItems, ...geminiItems].map((item) => item.key),
+    );
+    const otherItems = quotaDisplayItems.filter(
+      (item) => !representedKeys.has(item.key),
+    );
+    const groups = [
+      { key: 'claude', title: 'Claude', items: claudeItems },
+      { key: 'gemini', title: 'Gemini', items: geminiItems },
+      {
+        key: 'other',
+        title: t('accounts.quota.otherModels', 'Other models'),
+        items: otherItems,
+      },
+    ].filter((group) => group.items.length > 0);
 
-    const renderBar = (label: string, item: any) => {
-      const percentage = item ? item.percentage : 100;
-      const resetTime = item ? item.resetTime : '';
-      const resetLabel = resetTime ? formatResetTimeDisplay(resetTime, t) : '';
-      
+    const renderBar = (item: (typeof quotaDisplayItems)[number]) => {
+      const percentage = Math.max(0, Math.min(100, item.percentage));
+      const resetLabel = item.resetTime
+        ? formatResetTimeDisplay(item.resetTime, t)
+        : '';
+
       return (
-        <div className={isList ? "quota-item" : "quota-compact-item"}>
-          <div className={isList ? "quota-header" : "quota-compact-header"}>
-            <span className={isList ? "quota-name" : "model-label"}>{label}</span>
-            <span className={`${isList ? "quota-value" : "model-pct"} ${getQuotaClass(percentage)}`}>
+        <div
+          key={item.key}
+          className={isList ? 'quota-item' : 'quota-compact-item'}
+          title={item.label}
+        >
+          <div className={isList ? 'quota-header' : 'quota-compact-header'}>
+            <span className={isList ? 'quota-name' : 'model-label'}>
+              {item.label}
+            </span>
+            <span
+              className={`${isList ? 'quota-value' : 'model-pct'} ${getQuotaClass(percentage)}`}
+            >
               {percentage}%
             </span>
           </div>
-          <div className={isList ? "quota-progress-track" : "quota-compact-bar-track"}>
+          <div className={isList ? 'quota-progress-track' : 'quota-compact-bar-track'}>
             <div
-              className={`${isList ? "quota-progress-bar" : "quota-compact-bar"} ${getQuotaClass(percentage)}`}
+              className={`${isList ? 'quota-progress-bar' : 'quota-compact-bar'} ${getQuotaClass(percentage)}`}
               style={{ width: `${percentage}%` }}
             />
           </div>
           {(isList || resetLabel) && (
-            <div className={isList ? "quota-footer" : undefined}>
+            <div className={isList ? 'quota-footer' : undefined}>
               <span
-                className={isList ? "quota-reset" : "quota-compact-reset"}
+                className={isList ? 'quota-reset' : 'quota-compact-reset'}
                 title={resetLabel || undefined}
               >
                 {resetLabel || '\u00A0'}
@@ -2451,16 +2479,15 @@ export function AccountsPage({ onNavigate }: AccountsPageProps) {
 
     return (
       <>
-        <div className="quota-column">
-          <div className="quota-column-title">Claude</div>
-          {renderBar("5h", claude5h)}
-          {renderBar(t('gemini.quota.geminiWeekly', 'Weekly'), claudeWeekly)}
-        </div>
-        <div className="quota-column">
-          <div className="quota-column-title">Gemini</div>
-          {renderBar("5h", gemini5h)}
-          {renderBar(t('gemini.quota.geminiWeekly', 'Weekly'), geminiWeekly)}
-        </div>
+        {groups.map((group) => (
+          <div className="quota-column quota-model-list" key={group.key}>
+            <div className="quota-column-title">
+              {group.title}
+              <span className="quota-column-count">{group.items.length}</span>
+            </div>
+            {group.items.map(renderBar)}
+          </div>
+        ))}
       </>
     );
   };

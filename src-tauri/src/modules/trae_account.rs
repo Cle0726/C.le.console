@@ -630,7 +630,22 @@ fn persist_quota_query_error(account_id: &str, message: &str) {
     };
     account.quota_query_last_error = Some(message.to_string());
     account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
+    if is_trae_login_required_error(message) {
+        account.status = Some("login_required".to_string());
+        account.status_reason =
+            Some("Trae 登录会话已过期；已停止自动重复刷新，请重新登录后再试。".to_string());
+    }
     let _ = upsert_account_record(account);
+}
+
+fn is_trae_login_required_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("trae_login_required")
+        || lower.contains("session expired")
+        || lower.contains("session has expired")
+        || lower.contains("unauthenticated")
+        || lower.contains("login required")
+        || lower.contains("重新登录")
 }
 
 fn extract_json_value(root: Option<&Value>, path: &[&str]) -> Option<Value> {
@@ -4024,7 +4039,10 @@ async fn parse_trae_response_body(response: reqwest::Response, url: &str) -> Res
     let status = response.status();
     let status_code = status.as_u16();
     if status_code == 401 || status_code == 403 {
-        return Err("Trae 会话已过期或未认证，请重新登录".to_string());
+        return Err(format!(
+            "TRAE_LOGIN_REQUIRED: Trae 会话已过期或未认证，请重新登录 (HTTP {})",
+            status_code
+        ));
     }
 
     let headers = response.headers();
@@ -4115,7 +4133,12 @@ async fn request_trae_json_with_candidates(
         .await
         {
             Ok(response) => return Ok(response),
-            Err(err) => errors.push(format!("{} => {}", url, err)),
+            Err(err) => {
+                if is_trae_login_required_error(&err) {
+                    return Err(err);
+                }
+                errors.push(format!("{} => {}", url, err));
+            }
         }
     }
 
@@ -4178,7 +4201,12 @@ async fn request_trae_pay_json_with_candidates(
         .await
         {
             Ok(response) => return Ok(response),
-            Err(err) => errors.push(format!("{} => {}", url, err)),
+            Err(err) => {
+                if is_trae_login_required_error(&err) {
+                    return Err(err);
+                }
+                errors.push(format!("{} => {}", url, err));
+            }
         }
     }
 
@@ -4679,7 +4707,9 @@ async fn refresh_account_async_once(account_id: &str) -> Result<TraeAccount, Str
     ));
 
     if normalize_non_empty(account.refresh_token.as_deref()).is_none() {
-        return Err("Trae refresh token 缺失，无法按官方流程刷新登录态".to_string());
+        return Err(
+            "TRAE_LOGIN_REQUIRED: Trae 账号缺少 refresh token，请重新登录后再刷新".to_string(),
+        );
     }
 
     let exchange_response = match request_exchange_token_by_official_refresh(
@@ -4692,6 +4722,9 @@ async fn refresh_account_async_once(account_id: &str) -> Result<TraeAccount, Str
     {
         Ok(response) => response,
         Err(official_err) => {
+            if is_trae_login_required_error(&official_err) {
+                return Err(official_err);
+            }
             logger::log_warn(&format!(
                 "[Trae Refresh] 官方新版 ExchangeToken 失败，尝试旧接口 fallback: {}",
                 official_err
@@ -4772,6 +4805,19 @@ async fn refresh_account_async_once(account_id: &str) -> Result<TraeAccount, Str
 }
 
 pub async fn refresh_account_async(account_id: &str) -> Result<TraeAccount, String> {
+    if let Some(account) = load_account(account_id) {
+        if account
+            .status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("login_required"))
+        {
+            logger::log_info(&format!(
+                "[Trae Refresh] 账号需要重新登录，跳过自动请求: id={}",
+                account_id
+            ));
+            return Ok(account);
+        }
+    }
     let result = refresh_account_async_once(account_id).await;
     if let Err(err) = &result {
         persist_quota_query_error(account_id, err);
@@ -4837,6 +4883,18 @@ async fn refresh_accounts(
     let mut results = Vec::with_capacity(accounts.len());
     for account in accounts {
         let account_id = account.id.clone();
+        if account
+            .status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("login_required"))
+        {
+            logger::log_info(&format!(
+                "[Trae Refresh] 跳过需要重新登录的账号，避免自动重复请求: account_id={}",
+                account_id
+            ));
+            results.push((account_id, Ok(account)));
+            continue;
+        }
         if let Some(storage_path) = protection_map.get(account_id.as_str()) {
             logger::log_info(&format!(
                 "[Trae Refresh] 运行中实例账号走仅额度刷新: account_id={}, storage_path={}",

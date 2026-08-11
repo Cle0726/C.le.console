@@ -1,0 +1,20 @@
+.dashboard-visual-review-shell {
+  position: relative;
+  min-height: 100vh;
+  padding: 56px 26px 24px;
+  overflow: hidden;
+}
+
+.dashboard-visual-review-shell .main-wrapper {
+  position: relative;
+  z-index: 2;
+  min-height: calc(100vh - 80px);
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.dashboard-visual-review-shell .main-content {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}

@@ -7,6 +7,9 @@
   isolation: isolate;
   contain: layout paint style;
   user-select: none;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform;
 }
 
 .webgl-geometric-core::before,
@@ -81,6 +84,9 @@
   pointer-events: none;
   filter: drop-shadow(0 20px 22px rgba(40, 48, 52, 0.11));
   animation: webglCanvasReveal 560ms cubic-bezier(.2,.72,.22,1) both;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform, opacity, filter;
 }
 
 .webgl-core-fallback {
@@ -107,6 +113,36 @@
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/* The dashboard hero already has a glass surface and a wide canvas gradient.
+   Its extra WebGL halo, ground haze and canvas drop-shadow stack into the
+   opaque-looking fog over the model. Remove only those three soft layers from
+   this stage; the geometry, wire cage, orbit nodes and motion stay intact. */
+.dashboard-scene .launchpad-primary .webgl-geometric-core::before,
+.dashboard-scene .launchpad-primary .webgl-geometric-core::after {
+  content: none !important;
+  display: none !important;
+  background: none !important;
+  filter: none !important;
+}
+
+.dashboard-scene .launchpad-primary .webgl-geometric-core-canvas,
+.dashboard-scene .launchpad-primary .webgl-core-fallback,
+.dashboard-scene .launchpad-primary .webgl-core-fallback-model {
+  filter: none !important;
+}
+
+/* Lite mode swaps WebGL for ModelGeometricEmblem. That SVG carries its own
+   feDropShadow and blurred ground ellipse, which are independent from the
+   container filters above. Neutralise them only in the dashboard hero too. */
+.dashboard-scene .launchpad-primary .model-geometric-emblem [filter] {
+  filter: none !important;
+}
+
+.dashboard-scene .launchpad-primary .model-emblem-shadow {
+  display: none !important;
+  filter: none !important;
 }
 
 @keyframes webglCanvasReveal {

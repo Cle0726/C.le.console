@@ -1,0 +1,28 @@
+Upstream: https://github.com/iptag/jimeng-api
+Pinned commit: b9a4199e5a273415f9dd3155246e9bb39ace4395
+Upstream runtime version: 1.6.3
+C.le integration version: 1.6.3-cle.1
+License: GPL-3.0 (see LICENSE)
+
+Integration layout
+- Upstream TypeScript source remains under third_party/jimeng-api.
+- The standalone Windows sidecar is under sidecars/jimeng-api/bin.
+- Runtime configuration, logs and PID state are generated in the C.le data directory.
+- The sidecar is process-isolated and survives closing the C.le UI.
+
+C.le compatibility and hardening
+- Added GET /healthz.
+- Added OpenAI-style POST /v1/images/edits as an alias of image composition.
+- Expanded GET /v1/models to the complete image/video catalog used by C.le.
+- Fixed upstream TypeScript errors and upgraded runtime dependencies to an audit-clean set.
+- C.le validates model-region compatibility before selecting an account.
+- C.le performs priority-based account failover and repairs a crashed local sidecar on connection refusal.
+- A watchdog restarts an enabled service after unexpected exits.
+- One-click diagnostics verifies the executable, writable runtime, health endpoint, model catalog and account configuration.
+
+Reproducible commands
+  powershell -ExecutionPolicy Bypass -File scripts/build-jimeng-sidecar.ps1
+  powershell -ExecutionPolicy Bypass -File scripts/smoke-jimeng-sidecar.ps1
+
+Packaging
+TypeScript is bundled with esbuild and packaged as a standalone Node executable with @yao-pkg/pkg. The pkg dynamic-plugin warning is non-operative for this application because jimeng-api does not load optional @colors/colors plugins at runtime.

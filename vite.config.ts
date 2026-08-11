@@ -66,8 +66,16 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. Watch frontend source only. Build output, sidecars and browser-review
+      // profiles can contain locked SQLite files and must never crash Vite.
+      ignored: [
+        "**/src-tauri/**",
+        "**/target/**",
+        "**/dist/**",
+        "**/build-staging/**",
+        "**/sidecars/**",
+        "**/third_party/**",
+      ],
     },
   },
 }));

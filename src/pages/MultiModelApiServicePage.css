@@ -92,6 +92,11 @@
 
 .mm-api-status.running { border-color: color-mix(in srgb, var(--success) 25%, transparent); background: color-mix(in srgb, var(--success) 12%, transparent); color: #16a34a; }
 .mm-api-status.stopped { border-color: color-mix(in srgb, var(--warning) 25%, transparent); background: color-mix(in srgb, var(--warning) 12%, transparent); color: #d97706; }
+.mm-api-status.self-heal.healthy { border-color: color-mix(in srgb, #38bdf8 28%, transparent); background: color-mix(in srgb, #38bdf8 10%, transparent); color: #0284c7; }
+.mm-api-status.self-heal.recovering { border-color: color-mix(in srgb, #90a7bb 32%, transparent); background: color-mix(in srgb, #90a7bb 12%, transparent); color: #60788e; animation: mm-self-heal-pulse 1.4s ease-in-out infinite; }
+.mm-api-status.self-heal.degraded { border-color: color-mix(in srgb, var(--warning) 32%, transparent); background: color-mix(in srgb, var(--warning) 12%, transparent); color: #d97706; }
+.mm-api-status.self-heal.idle { color: var(--text-secondary); }
+@keyframes mm-self-heal-pulse { 50% { opacity: .58; transform: translateY(-1px); } }
 
 .mm-api-endpoint { display: flex; align-items: center; gap: 5px; margin-top: 3px; min-width: 0; }
 .mm-api-endpoint code { overflow: hidden; max-width: min(500px, 58vw); color: var(--text-secondary); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
@@ -178,7 +183,8 @@
 .mm-provider-icon.claude { background: color-mix(in srgb, #d97757 15%, var(--bg-card)); }
 .mm-provider-icon.gemini { background: color-mix(in srgb, #4285f4 12%, var(--bg-card)); }
 .mm-provider-icon.codex { background: color-mix(in srgb, #111827 12%, var(--bg-card)); }
-.mm-provider-icon.antigravity { background: color-mix(in srgb, #6366f1 12%, var(--bg-card)); }
+.mm-provider-icon.antigravity { background: color-mix(in srgb, #7f96aa 12%, var(--bg-card)); }
+.mm-provider-icon.doubao-seedance { background: color-mix(in srgb, #f97316 14%, var(--bg-card)); color: #fb923c; }
 .mm-provider-icon.all { color: var(--primary); }
 .mm-x-mark { font-size: 17px; line-height: 1; font-weight: 800; }
 
@@ -366,6 +372,35 @@
 
 .mm-api-loading { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 60vh; color: var(--text-secondary); font-size: 12px; }
 .mm-api-loading svg { width: 16px; height: 16px; }
+.mm-repair-trigger { min-width: 156px; }
+.mm-repair-report {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--success) 32%, var(--mm-border));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--success) 5%, var(--mm-surface-strong));
+  box-shadow: var(--mm-shadow);
+  animation: mm-repair-present .34s cubic-bezier(.2, .82, .2, 1) both;
+}
+.mm-repair-report.has-error { border-color: color-mix(in srgb, var(--danger) 34%, var(--mm-border)); }
+.mm-repair-report > header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--mm-border-soft); }
+.mm-repair-report > header > div { min-width: 0; flex: 1; }
+.mm-repair-report h2 { margin: 0 0 2px; color: var(--text-primary); font-size: 13px; }
+.mm-repair-report header p { margin: 0; color: var(--text-secondary); font-size: 9.5px; }
+.mm-repair-report header > button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 999px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.mm-repair-report header > button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.mm-repair-report header svg { width: 15px; height: 15px; }
+.mm-repair-report-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+.mm-repair-report.has-error .mm-repair-report-icon { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.mm-repair-check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding: 10px; }
+.mm-repair-check { display: grid; grid-template-columns: 25px minmax(0, 1fr) auto; align-items: start; gap: 7px; min-width: 0; padding: 8px; border: 1px solid var(--mm-border-soft); border-radius: 11px; background: color-mix(in srgb, var(--bg-primary) 70%, transparent); }
+.mm-repair-check-state { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 8px; background: color-mix(in srgb, var(--success) 11%, transparent); color: var(--success); }
+.mm-repair-check.warning .mm-repair-check-state { background: color-mix(in srgb, var(--warning) 12%, transparent); color: var(--warning); }
+.mm-repair-check.error .mm-repair-check-state { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.mm-repair-check-state svg { width: 12px; height: 12px; }
+.mm-repair-check strong { display: block; margin-bottom: 2px; color: var(--text-primary); font-size: 10px; }
+.mm-repair-check p { margin: 0; color: var(--text-secondary); font-size: 8.8px; line-height: 1.45; overflow-wrap: anywhere; }
+.mm-repair-check em { align-self: center; padding: 2px 6px; border-radius: 999px; background: color-mix(in srgb, var(--success) 10%, transparent); color: var(--success); font-size: 8px; font-style: normal; white-space: nowrap; }
+@keyframes mm-repair-present { from { opacity: 0; transform: translateY(-7px) scale(.99); } to { opacity: 1; transform: none; } }
 .spin { animation: mm-spin .85s linear infinite; }
 @keyframes mm-spin { to { transform: rotate(360deg); } }
 
@@ -404,4 +439,9 @@
   .mm-key { grid-template-columns: 1fr 28px 28px; }
   .mm-key > label { grid-column: 1 / -1; }
   .mm-modal-provider-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .mm-repair-check-grid { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mm-repair-report { animation: none; }
 }

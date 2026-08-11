@@ -1,4 +1,4 @@
-import { Settings, GaugeCircle, LayoutGrid, SlidersHorizontal, FileText, ChevronDown, PanelLeftClose, PanelLeftOpen, ShieldCheck, Network } from 'lucide-react';
+import { Settings, GaugeCircle, LayoutGrid, SlidersHorizontal, FileText, ChevronDown, PanelLeftClose, PanelLeftOpen, ShieldCheck, Network, PanelsTopLeft, WandSparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   useState,
@@ -870,6 +870,30 @@ export function SideNav({
           {spatialNavExpanded && (
             <>
               <div className="spatial-nav-wing spatial-nav-wing-left">
+                <button
+                  className={`spatial-nav-item${page === 'jimeng-infinite-canvas' ? ' active' : ''}`}
+                  onClick={() => {
+                    closeSpatialNavigation(true);
+                    setPage('jimeng-infinite-canvas');
+                  }}
+                  title={t('nav.jimengInfiniteCanvas', '无限画布')}
+                  aria-current={page === 'jimeng-infinite-canvas' ? 'page' : undefined}
+                >
+                  <PanelsTopLeft size={18} />
+                  <span className="spatial-nav-tooltip">{t('nav.jimengInfiniteCanvas', '无限画布')}</span>
+                </button>
+                <button
+                  className={`spatial-nav-item${page === 'jimeng-api-service' ? ' active' : ''}`}
+                  onClick={() => {
+                    closeSpatialNavigation(true);
+                    setPage('jimeng-api-service');
+                  }}
+                  title={t('nav.jimengApiService', '即梦创作 API')}
+                  aria-current={page === 'jimeng-api-service' ? 'page' : undefined}
+                >
+                  <WandSparkles size={18} />
+                  <span className="spatial-nav-tooltip">{t('nav.jimengApiService', '即梦创作 API')}</span>
+                </button>
                 <button
                   ref={spatialFirstActionRef}
                   className={`spatial-nav-item${page === 'dashboard' ? ' active' : ''}`}

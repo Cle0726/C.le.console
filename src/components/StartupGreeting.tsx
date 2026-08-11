@@ -1,92 +1,207 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { readPerformanceMode } from '../utils/performanceMode';
+import appIcon from '../assets/app-icon-rounded.png';
+import { resolveGreetingCopy } from '../data/startupGreetings';
+import './StartupGreeting.css';
 
-interface GreetingPeriod {
-  zh: string;
-  en: string;
-  code: string;
+type StartupPhase = 'loading' | 'ready' | 'leaving';
+
+function waitForPageResources(timeoutMs: number): Promise<void> {
+  const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, timeoutMs));
+
+  const ready = new Promise<void>((resolve) => {
+    const collect = async () => {
+      await new Promise<void>((next) => requestAnimationFrame(() => requestAnimationFrame(() => next())));
+
+      const pending: Promise<unknown>[] = [];
+      if (document.fonts?.ready) pending.push(document.fonts.ready);
+
+      document.querySelectorAll<HTMLImageElement>('img').forEach((image) => {
+        if (image.complete) return;
+        pending.push(
+          new Promise<void>((next) => {
+            image.addEventListener('load', () => next(), { once: true });
+            image.addEventListener('error', () => next(), { once: true });
+          }),
+        );
+      });
+
+      await Promise.allSettled(pending);
+      if ('requestIdleCallback' in window) {
+        await new Promise<void>((next) =>
+          window.requestIdleCallback(() => next(), { timeout: 500 }),
+        );
+      }
+      resolve();
+    };
+
+    if (document.readyState === 'complete') {
+      void collect();
+    } else {
+      window.addEventListener('load', () => void collect(), { once: true });
+    }
+  });
+
+  return Promise.race([ready, timeout]);
 }
 
-function resolveGreetingPeriod(hour: number): GreetingPeriod {
-  if (hour < 5) return { zh: '夜深了', en: 'Still awake? Take it easy, Caiku.', code: 'LATE NIGHT / 02' };
-  if (hour < 11) return { zh: '早上好', en: 'Good morning, Caiku.', code: 'MORNING / 08' };
-  if (hour < 14) return { zh: '中午好', en: 'Good afternoon, Caiku.', code: 'NOON / 12' };
-  if (hour < 18) return { zh: '下午好', en: 'Good afternoon, Caiku.', code: 'DAY / 15' };
-  return { zh: '晚上好', en: 'Good evening, Caiku.', code: 'EVENING / 20' };
-}
-
-export function StartupGreeting({ onComplete }: { onComplete?: () => void }) {
+export function StartupGreeting({
+  onComplete,
+  readyGate = true,
+}: {
+  onComplete?: () => void;
+  readyGate?: boolean;
+}) {
   const liteMode = useMemo(() => readPerformanceMode() === 'lite', []);
-  const [leaving, setLeaving] = useState(false);
-  const [visible, setVisible] = useState(!liteMode);
+  const reducedMotion = useMemo(
+    () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+    [],
+  );
+  const [phase, setPhase] = useState<StartupPhase>('loading');
+  const [visible, setVisible] = useState(true);
+  const [progress, setProgress] = useState(0);
   const completedRef = useRef(false);
+  const readyGateRef = useRef(readyGate);
+  const tryReadyRef = useRef<() => void>(() => undefined);
+  const queuedContinueRef = useRef(false);
+  const timerRefs = useRef<number[]>([]);
   const now = useMemo(() => new Date(), []);
-  const period = useMemo(() => resolveGreetingPeriod(now.getHours()), [now]);
+  /* Drawn once per launch, so the line holds still while the screen is up. */
+  const copy = useMemo(() => resolveGreetingCopy(now), [now]);
+  readyGateRef.current = readyGate;
+
+  const clearTimers = useCallback(() => {
+    timerRefs.current.forEach((timer) => window.clearTimeout(timer));
+    timerRefs.current = [];
+  }, []);
 
   const complete = useCallback(() => {
     if (completedRef.current) return;
     completedRef.current = true;
+    clearTimers();
     setVisible(false);
     onComplete?.();
-  }, [onComplete]);
+  }, [clearTimers, onComplete]);
+
+  const beginLeaving = useCallback(() => {
+    setPhase((current) => (current === 'loading' ? current : 'leaving'));
+  }, []);
 
   useEffect(() => {
-    if (liteMode) {
-      complete();
+    const startedAt = performance.now();
+    /*
+     * Shortened from 5.2s. An opening sequence earns its keep in the first
+     * couple of seconds; past that it is a door held shut in front of an app
+     * that is already loaded. The sentence now resolves as one motion and the
+     * application is loaded behind it, so the screen only needs a brief hold.
+     */
+    const minimumVisibleMs = reducedMotion ? 800 : liteMode ? 1_250 : 1_600;
+    const resourceTimeoutMs = reducedMotion ? 2_200 : 8_000;
+    let cancelled = false;
+    let resourcesReady = false;
+    let minimumReady = false;
+
+    const tryReady = () => {
+      if (cancelled || !resourcesReady || !minimumReady || !readyGateRef.current) return;
+      setProgress(100);
+      setPhase('ready');
+      const holdMs = queuedContinueRef.current ? 220 : reducedMotion ? 220 : 520;
+      timerRefs.current.push(window.setTimeout(() => setPhase('leaving'), holdMs));
+    };
+    tryReadyRef.current = tryReady;
+
+    void waitForPageResources(resourceTimeoutMs).then(() => {
+      resourcesReady = true;
+      tryReady();
+    });
+
+    timerRefs.current.push(
+      window.setTimeout(() => {
+        minimumReady = true;
+        tryReady();
+      }, minimumVisibleMs),
+    );
+
+    const progressTimer = window.setInterval(() => {
+      const elapsed = performance.now() - startedAt;
+      const ratio = Math.min(elapsed / minimumVisibleMs, 1);
+      const eased = 1 - Math.pow(1 - ratio, 2.2);
+      setProgress(Math.min(96, Math.round(eased * 96)));
+    }, 90);
+
+    return () => {
+      cancelled = true;
+      tryReadyRef.current = () => undefined;
+      window.clearInterval(progressTimer);
+      clearTimers();
+    };
+  }, [clearTimers, liteMode, reducedMotion]);
+
+  useEffect(() => {
+    if (readyGate) tryReadyRef.current();
+  }, [readyGate]);
+
+  useEffect(() => {
+    if (phase !== 'leaving') return;
+    const exitMs = reducedMotion ? 160 : liteMode ? 380 : 480;
+    const timer = window.setTimeout(complete, exitMs);
+    timerRefs.current.push(timer);
+    return () => window.clearTimeout(timer);
+  }, [complete, liteMode, phase, reducedMotion]);
+
+  const handleContinue = () => {
+    if (phase === 'ready') {
+      beginLeaving();
       return;
     }
-    const leaveTimer = window.setTimeout(() => setLeaving(true), 3420);
-    const removeTimer = window.setTimeout(complete, 4180);
-    return () => {
-      window.clearTimeout(leaveTimer);
-      window.clearTimeout(removeTimer);
-    };
-  }, [complete, liteMode]);
-
-  const dismiss = () => {
-    if (leaving) return;
-    setLeaving(true);
-    window.setTimeout(complete, 700);
+    if (phase === 'loading') queuedContinueRef.current = true;
   };
 
-  if (!visible || liteMode) return null;
+  if (!visible) return null;
+
+  const title = copy.zh;
+  const startupStyle = {
+    '--sg-progress': progress / 100,
+  } as CSSProperties;
 
   return (
     <div
-      className={`startup-greeting${leaving ? ' is-leaving' : ''}`}
+      className={`startup-greeting sg is-${phase}`}
+      data-performance={liteMode ? 'lite' : 'full'}
+      data-startup-phase={phase}
       role="status"
       aria-live="polite"
-      onPointerDown={dismiss}
+      aria-busy={phase === 'loading'}
+      style={startupStyle}
+      onPointerDown={handleContinue}
     >
-      <div className="startup-greeting-grid" />
-      <div className="startup-greeting-orbit" />
-      <div className="startup-greeting-meta startup-greeting-meta-top">
-        <span>C.LE / 启动序列 · BOOT SEQUENCE</span>
-        <span>{period.code}</span>
-      </div>
+      <div className="sg-veil" aria-hidden="true" />
 
-      <div className="startup-greeting-content">
-        <div className="startup-greeting-eyebrow">
-          <span />
-          系统已就绪 · SYSTEM READY
+      <div className="sg-stack">
+        <div className="sg-mark" aria-hidden="true">
+          <img src={appIcon} alt="" draggable={false} />
         </div>
-        <h1>
-          {period.zh}
-          <span className="startup-greeting-brand">，才酷。</span>
+
+        <h1 className="sg-title" aria-label={title}>
+          <span className="sg-title-line" aria-hidden="true">{title}</span>
         </h1>
-        <div className="startup-greeting-en">{period.en}</div>
-        <div className="startup-greeting-rule"><i /></div>
-        <p>哪怕只做一件小事，今天也会因此不同。</p>
-        <p className="startup-greeting-quote-en">
-          ONE SMALL MOVE CAN CHANGE THE DAY.
-        </p>
+
+        <p className="sg-en">{copy.en}</p>
+
+        <div className="sg-rule" aria-hidden="true">
+          <i />
+        </div>
+
+        <p className="sg-note">{copy.note}</p>
       </div>
 
-      <div className="startup-greeting-progress"><span /></div>
-      <div className="startup-greeting-meta startup-greeting-meta-bottom">
-        <span>{now.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</span>
-        <span>点击任意处进入 · CLICK ANYWHERE TO CONTINUE</span>
-        <strong>00—01</strong>
+      <div className="sg-foot">
+        <span className="sg-foot-date">
+          {now.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}
+        </span>
+        <span className="sg-foot-state">
+          {phase === 'ready' ? '就绪' : '正在准备工作区'}
+        </span>
       </div>
     </div>
   );

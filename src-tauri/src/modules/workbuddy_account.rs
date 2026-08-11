@@ -15,6 +15,7 @@ const ACCOUNTS_INDEX_FILE: &str = "workbuddy_accounts.json";
 const ACCOUNTS_DIR: &str = "workbuddy_accounts";
 const WORKBUDDY_QUOTA_ALERT_COOLDOWN_SECONDS: i64 = 10 * 60;
 const WORKBUDDY_AUTH_FILE_NAME: &str = "workbuddy-desktop.info";
+const LOGIN_REQUIRED_STATUS: &str = "login_required";
 
 lazy_static::lazy_static! {
     static ref WORKBUDDY_ACCOUNT_INDEX_LOCK: Mutex<()> = Mutex::new(());
@@ -23,6 +24,26 @@ lazy_static::lazy_static! {
 
 fn now_ts() -> i64 {
     chrono::Utc::now().timestamp()
+}
+
+fn is_login_required_error(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    [
+        "invalid_grant",
+        "unauthorized",
+        "authentication required",
+        "login required",
+        "session expired",
+        "missing refresh token",
+        "invalid refresh token",
+        "refresh_token missing",
+        "重新登录",
+        "会话已过期",
+        "http 401",
+        "http 403",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
 }
 
 fn get_data_dir() -> Result<PathBuf, String> {
@@ -691,6 +712,10 @@ async fn refresh_account_token_once(account_id: &str) -> Result<WorkbuddyAccount
     let created_at = account.created_at;
     apply_payload(&mut account, payload);
     if let Some(err) = quota_refresh_error {
+        if is_login_required_error(&err) {
+            account.status = Some(LOGIN_REQUIRED_STATUS.to_string());
+            account.status_reason = Some("WorkBuddy 登录已失效，请重新登录".to_string());
+        }
         account.quota_query_last_error = Some(err);
         account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
     } else {
@@ -717,7 +742,32 @@ async fn refresh_account_token_once(account_id: &str) -> Result<WorkbuddyAccount
 }
 
 pub async fn refresh_account_token(account_id: &str) -> Result<WorkbuddyAccount, String> {
-    refresh_account_token_once(account_id).await
+    if let Some(account) = load_account(account_id) {
+        if account
+            .status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case(LOGIN_REQUIRED_STATUS))
+        {
+            logger::log_info(&format!(
+                "[WorkBuddy Refresh] 账号需要重新登录，跳过自动请求: id={}",
+                account_id
+            ));
+            return Ok(account);
+        }
+    }
+    let result = refresh_account_token_once(account_id).await;
+    if let Err(error) = &result {
+        if let Some(mut account) = load_account(account_id) {
+            account.quota_query_last_error = Some(error.clone());
+            account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
+            if is_login_required_error(error) {
+                account.status = Some(LOGIN_REQUIRED_STATUS.to_string());
+                account.status_reason = Some("WorkBuddy 登录已失效，请重新登录".to_string());
+            }
+            let _ = upsert_account_record(account);
+        }
+    }
+    result
 }
 
 pub async fn refresh_all_tokens() -> Result<Vec<(String, Result<WorkbuddyAccount, String>)>, String>
@@ -731,6 +781,12 @@ pub async fn refresh_all_tokens() -> Result<Vec<(String, Result<WorkbuddyAccount
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
     let tasks: Vec<_> = accounts
         .into_iter()
+        .filter(|account| {
+            !account
+                .status
+                .as_deref()
+                .is_some_and(|status| status.eq_ignore_ascii_case(LOGIN_REQUIRED_STATUS))
+        })
         .map(|account| {
             let id = account.id;
             let semaphore = semaphore.clone();

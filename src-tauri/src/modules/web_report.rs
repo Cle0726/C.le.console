@@ -98,6 +98,10 @@ fn build_service_refresh_policies(cfg: &super::config::UserConfig) -> Vec<Servic
             interval_minutes: cfg.codex_auto_refresh_minutes,
         },
         ServiceRefreshPolicy {
+            key: "claude",
+            interval_minutes: cfg.claude_auto_refresh_minutes,
+        },
+        ServiceRefreshPolicy {
             key: "ghcp",
             interval_minutes: cfg.ghcp_auto_refresh_minutes,
         },
@@ -124,6 +128,10 @@ fn build_service_refresh_policies(cfg: &super::config::UserConfig) -> Vec<Servic
         ServiceRefreshPolicy {
             key: "codebuddy_cn",
             interval_minutes: cfg.codebuddy_cn_auto_refresh_minutes,
+        },
+        ServiceRefreshPolicy {
+            key: "workbuddy",
+            interval_minutes: cfg.workbuddy_auto_refresh_minutes,
         },
         ServiceRefreshPolicy {
             key: "qoder",
@@ -172,6 +180,9 @@ async fn run_refresh_for_service(policy: ServiceRefreshPolicy) -> Result<(), Str
                 .map(|_| ())
         }
         "codex" => super::codex_quota::refresh_all_quotas().await.map(|_| ()),
+        "claude" => super::claude_account::refresh_all_quotas()
+            .await
+            .map(|_| ()),
         "ghcp" => super::github_copilot_account::refresh_all_tokens()
             .await
             .map(|_| ()),
@@ -189,6 +200,9 @@ async fn run_refresh_for_service(policy: ServiceRefreshPolicy) -> Result<(), Str
             .await
             .map(|_| ()),
         "codebuddy_cn" => super::codebuddy_cn_account::refresh_all_tokens()
+            .await
+            .map(|_| ()),
+        "workbuddy" => super::workbuddy_account::refresh_all_tokens()
             .await
             .map(|_| ()),
         "qoder" => super::qoder_oauth::refresh_all_accounts_from_openapi()

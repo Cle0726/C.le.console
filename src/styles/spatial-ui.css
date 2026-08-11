@@ -84,6 +84,8 @@ html[data-theme="dark"] body {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  contain: strict;
+  isolation: isolate;
 }
 .ambient-interaction-layer::before {
   content: "";
@@ -94,6 +96,8 @@ html[data-theme="dark"] body {
     linear-gradient(90deg, transparent, rgba(255,255,255,.025) 48%, transparent 72%);
   transform-origin: center;
   animation: ambientFogDrift 16s ease-in-out infinite alternate;
+  backface-visibility: hidden;
+  will-change: transform;
 }
 .ambient-grid {
   position: absolute;
@@ -112,6 +116,8 @@ html[data-theme="dark"] body {
   background: linear-gradient(105deg, transparent 0 44%, rgba(255,255,255,.18) 49%, transparent 54%);
   transform: translateX(-70%);
   animation: gridScan 13s ease-in-out infinite;
+  backface-visibility: hidden;
+  will-change: transform;
 }
 .ambient-beam {
   position: absolute;
@@ -121,6 +127,8 @@ html[data-theme="dark"] body {
   border-radius: 50%;
   filter: blur(.2px);
   animation: ambientOrbit 24s linear infinite;
+  backface-visibility: hidden;
+  will-change: transform;
 }
 .ambient-beam-a { top: -34vw; right: -8vw; box-shadow: none; }
 .ambient-beam-b { bottom: -40vw; left: 10vw; animation-direction: reverse; animation-duration: 34s; }
@@ -139,12 +147,114 @@ html[data-theme="dark"] body {
   will-change: transform;
 }
 .has-pointer-motion .cursor-aura { opacity: 1; }
+/* Foreground pet overlay: unlike the ambient scenery, this layer must sit
+   above cards and page panels so the fish and wake are never clipped into
+   disconnected fragments. */
+.pet-cursor-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+  isolation: isolate;
+}
+
+html.has-pet .pet-fish-cursor { opacity: 1; }
+
+.pet-bow-foam {
+  fill: none;
+  stroke: rgba(234,244,255,.92);
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: left center;
+  transform: scaleX(var(--pet-foam-scale, .42));
+  filter: drop-shadow(0 0 2px rgba(226,242,255,.7));
+}
+
+.pet-click-bubbles {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  contain: strict;
+}
+
+.pet-click-bubble {
+  position: absolute;
+  display: block;
+  margin: -3px 0 0 -3px;
+  border: 1px solid rgba(239, 248, 255, .92);
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 28%, rgba(255,255,255,.88) 0 14%, rgba(205,230,249,.2) 28%, rgba(138,184,221,.08) 58%, transparent 72%);
+  box-shadow: inset 0 0 2px rgba(255,255,255,.74), 0 0 4px rgba(156,202,239,.38);
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: petClickBubble var(--bubble-duration, 620ms) var(--bubble-delay, 0ms) cubic-bezier(.16,.72,.25,1) forwards;
+}
+
+.pet-fish-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 150px;
+  height: 150px;
+  margin: -75px 0 0 -75px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  opacity: 0;
+  background: radial-gradient(circle, rgba(150,190,240,.12), rgba(150,190,240,.03) 38%, transparent 66%);
+  transition: opacity .45s ease;
+  will-change: transform;
+  contain: layout style paint;
+}
+
+.pet-fish-svg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 40px;
+  height: 22px;
+  margin: -11px 0 0 -20px;
+  overflow: visible;
+  filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,.5))
+    drop-shadow(0 0 3px rgba(150,200,255,.65))
+    drop-shadow(0 0 7px rgba(120,175,240,.4));
+}
+.pet-fish-body {
+  fill: #161922;
+  stroke: rgba(216,228,246,.62);
+  stroke-width: .9;
+  stroke-linejoin: round;
+}
+.pet-eye-base { fill: #f3c469; }
+.pet-eye-slit { fill: rgba(10,10,12,.95); }
+
+@keyframes petClickBubble {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(.42);
+  }
+  18% { opacity: .92; }
+  72% { opacity: .66; }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--bubble-dx, 18px), var(--bubble-dy, -18px), 0) scale(1.22);
+  }
+}
 .ambient-grain {
   position: absolute;
-  inset: -80%;
+  inset: -12%;
   opacity: .035;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");
-  animation: grainShift .35s steps(2) infinite;
+  background-size: 180px 180px;
+  animation: grainShift 1.2s steps(2) infinite;
+  backface-visibility: hidden;
+  will-change: transform;
 }
 
 /* Opening sequence */
@@ -153,38 +263,92 @@ html[data-theme="dark"] body {
   inset: 0;
   z-index: 20000 !important;
   overflow: hidden;
-  color: #eef2f0;
+  color: #edf3f7;
   background:
-    radial-gradient(circle at 72% 36%, rgba(94,229,205,.13), transparent 22%),
-    radial-gradient(circle at 20% 88%, rgba(255,255,255,.06), transparent 26%),
-    linear-gradient(145deg, #23272a 0%, #101315 52%, #07090a 100%);
+    radial-gradient(circle at 73% 31%, rgba(119, 151, 178, .18), transparent 28%),
+    radial-gradient(circle at 17% 86%, rgba(203, 217, 228, .09), transparent 31%),
+    linear-gradient(145deg, #263746 0%, #14202a 44%, #080e14 100%);
   cursor: pointer;
-  animation: greetingReveal .8s cubic-bezier(.2,.8,.2,1) both;
+  animation: greetingReveal .48s cubic-bezier(.2,.8,.2,1) both;
   transform-origin: top center;
   contain: strict;
   backface-visibility: hidden;
   will-change: opacity, transform, clip-path;
 }
-.startup-greeting::after {
+.startup-greeting::before {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(105deg, transparent 20%, rgba(255,255,255,.065) 48%, transparent 64%);
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent 0 49.92%, rgba(221, 232, 240, .12) 50%, transparent 50.08%),
+    linear-gradient(180deg, transparent 0 49.92%, rgba(221, 232, 240, .08) 50%, transparent 50.08%);
+  opacity: .34;
+  transform: scale(.72);
+  animation: greetingCrosshair 1.3s .16s cubic-bezier(.16,.8,.24,1) both;
+}
+.startup-greeting::after {
+  content: "";
+  position: absolute;
+  z-index: 8;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 20%, rgba(225, 237, 246, .095) 48%, transparent 64%);
   transform: translateX(-110%);
-  animation: greetingLightSweep 3.6s .25s cubic-bezier(.3,.6,.2,1) both;
+  animation: greetingLightSweep 1.45s .1s cubic-bezier(.3,.6,.2,1) both;
   will-change: transform;
 }
 .startup-greeting.is-leaving {
   pointer-events: none;
-  animation: greetingExit .9s cubic-bezier(.76,0,.24,1) forwards;
+  animation: greetingExit .48s cubic-bezier(.76,0,.24,1) forwards;
+}
+.startup-greeting.is-leaving .startup-greeting-content {
+  animation: greetingContentExit .38s cubic-bezier(.55,0,.8,.2) forwards;
 }
 .startup-greeting-grid {
   position: absolute;
   inset: 0;
-  opacity: .12;
-  background-image: linear-gradient(rgba(255,255,255,.22) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.22) 1px,transparent 1px);
-  background-size: 58px 58px;
+  opacity: .11;
+  background-image:
+    linear-gradient(rgba(205, 220, 231, .2) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(205, 220, 231, .2) 1px, transparent 1px);
+  background-size: 64px 64px;
   mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+  animation: greetingGridBreathe 4.6s ease-in-out infinite alternate;
+}
+.startup-greeting-aurora {
+  position: absolute;
+  width: min(68vw, 880px);
+  aspect-ratio: 1.35;
+  border-radius: 46% 54% 62% 38% / 51% 41% 59% 49%;
+  opacity: .22;
+  filter: blur(76px) saturate(.72);
+  backface-visibility: hidden;
+  will-change: transform, opacity;
+}
+.startup-greeting-aurora-a {
+  top: -31%;
+  right: -17%;
+  background: radial-gradient(ellipse, rgba(112, 148, 178, .72), rgba(62, 89, 112, .18) 48%, transparent 72%);
+  animation: greetingAuroraA 7.4s ease-in-out infinite alternate;
+}
+.startup-greeting-aurora-b {
+  bottom: -38%;
+  left: -18%;
+  background: radial-gradient(ellipse, rgba(189, 207, 220, .44), rgba(71, 99, 122, .14) 52%, transparent 74%);
+  animation: greetingAuroraB 8.8s ease-in-out infinite alternate;
+}
+.startup-greeting-scanline {
+  position: absolute;
+  z-index: 3;
+  inset: -18% 0 auto;
+  height: 22%;
+  opacity: .32;
+  background: linear-gradient(180deg, transparent, rgba(207, 224, 236, .12) 48%, rgba(245, 249, 251, .24) 50%, transparent 54%);
+  transform: translate3d(0, -100%, 0);
+  animation: greetingScanline 1.65s .18s cubic-bezier(.22,.62,.22,1) both;
+  will-change: transform, opacity;
 }
 .startup-greeting-orbit {
   position: absolute;
@@ -192,58 +356,228 @@ html[data-theme="dark"] body {
   top: 50%;
   width: min(72vw, 920px);
   aspect-ratio: 1;
-  border: 1px solid rgba(255,255,255,.1);
+  border: 1px solid rgba(202, 220, 233, .13);
   border-radius: 50%;
   transform: translate(-50%,-50%) rotateX(68deg);
-  box-shadow: 0 0 100px rgba(94,229,205,.04), inset 0 0 100px rgba(255,255,255,.025);
-  animation: greetingOrbit 16s linear infinite;
+  box-shadow: 0 0 100px rgba(92, 126, 153, .08), inset 0 0 100px rgba(223, 234, 242, .025);
+  animation: greetingOrbit 13s linear infinite;
   will-change: transform;
 }
 .startup-greeting-orbit::before,
 .startup-greeting-orbit::after { content:""; position:absolute; border-radius:50%; }
-.startup-greeting-orbit::before { inset: 16%; border: 1px solid rgba(94,229,205,.14); }
-.startup-greeting-orbit::after { left: 8%; top: 19%; width: 7px; height: 7px; background: var(--signal); box-shadow: 0 0 20px var(--signal); }
+.startup-greeting-orbit::before { inset: 16%; border: 1px solid rgba(143, 171, 193, .18); }
+.startup-greeting-orbit::after {
+  left: 8%;
+  top: 19%;
+  width: 7px;
+  height: 7px;
+  background: #c6d8e6;
+  box-shadow: 0 0 20px rgba(174, 203, 225, .72);
+}
+.startup-greeting-orbit-secondary {
+  width: min(54vw, 680px);
+  opacity: .56;
+  transform: translate(-50%,-50%) rotateX(72deg) rotateZ(180deg);
+  animation-name: greetingOrbitReverse;
+  animation-duration: 19s;
+}
+.startup-greeting-orbit-secondary::before { inset: 27%; }
+.startup-greeting-orbit-secondary::after {
+  left: auto;
+  right: 12%;
+  top: 71%;
+  width: 5px;
+  height: 5px;
+}
 .startup-greeting-content {
   position: absolute;
   left: 50%;
-  top: 49%;
+  top: 50%;
   z-index: 2;
   width: min(820px, calc(100vw - 80px));
   transform: translate(-50%,-50%);
   text-align: center;
+  will-change: transform, opacity;
+}
+.startup-greeting-core {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 78px;
+  height: 78px;
+  margin: 0 auto 18px;
+  border-radius: 25px;
+  background: linear-gradient(145deg, rgba(229, 238, 244, .15), rgba(102, 130, 153, .08));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .3),
+    0 18px 45px rgba(0, 0, 0, .2);
+  animation: greetingCoreIn .58s .08s cubic-bezier(.16,.88,.28,1.14) both;
+}
+.startup-greeting-core img {
+  position: relative;
+  z-index: 2;
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  object-fit: cover;
+  user-select: none;
+  box-shadow: 0 7px 18px rgba(0,0,0,.24);
+}
+.startup-greeting-core-ring,
+.startup-greeting-core-pulse {
+  position: absolute;
+  inset: -8px;
+  border: 1px solid rgba(177, 203, 222, .28);
+  border-radius: 30px;
+  animation: greetingCoreRing 2.4s ease-in-out infinite;
+}
+.startup-greeting-core-pulse {
+  inset: -17px;
+  opacity: .34;
+  border-radius: 36px;
+  animation-delay: .38s;
 }
 .startup-greeting-eyebrow {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  margin-bottom: 24px;
-  color: rgba(222,229,226,.52);
+  margin-bottom: 18px;
+  color: rgba(211, 224, 233, .58);
   font: 650 9px/1 var(--font-mono);
   letter-spacing: .24em;
-  animation: greetingItemIn .7s .35s both;
+  animation: greetingItemIn .42s .18s both;
 }
-.startup-greeting-eyebrow span { width: 7px; height: 7px; border-radius: 50%; background: var(--signal-strong); box-shadow: 0 0 14px rgba(94,229,205,.7); }
+.startup-greeting-eyebrow span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #a9c3d6;
+  box-shadow: 0 0 16px rgba(143, 180, 207, .68);
+  animation: greetingReadyPulse 1.5s ease-in-out infinite;
+}
 .startup-greeting h1 {
   margin: 0;
-  color: #f4f7f5;
+  color: #f1f6f9;
   font-size: clamp(48px, 6.8vw, 88px);
   font-weight: 350;
   letter-spacing: -.055em;
   line-height: 1.04;
   text-shadow: 0 18px 48px rgba(0,0,0,.28);
-  animation: greetingItemIn .85s .5s both;
+  animation: greetingItemIn .5s .24s both;
 }
-.startup-greeting-brand { color: rgba(239,244,242,.42); font-weight: 270; white-space: nowrap; }
-.startup-greeting-en { margin-top: 19px; color: rgba(229,235,232,.5); font: 500 11px/1.2 var(--font-mono); letter-spacing: .19em; animation: greetingItemIn .8s .7s both; }
-.startup-greeting-rule { width: min(440px,68vw); height: 1px; margin: 34px auto 28px; overflow: hidden; background: rgba(255,255,255,.1); }
-.startup-greeting-rule i { display:block; width:100%; height:100%; background:linear-gradient(90deg,transparent,var(--signal),transparent); transform:translateX(-100%); animation:greetingRule 1.4s .8s ease both; }
-.startup-greeting-content p { margin: 0; color: rgba(242,246,244,.86); font-size: clamp(14px,1.6vw,18px); font-weight: 350; letter-spacing: .08em; animation: greetingItemIn .8s 1s both; }
-.startup-greeting-content .startup-greeting-quote-en { margin-top: 13px; color: rgba(217,224,221,.38); font: 500 9px/1.5 var(--font-mono); letter-spacing: .2em; animation-delay: 1.15s; }
-.startup-greeting-meta { position:absolute; z-index:2; left:38px; right:38px; display:flex; align-items:center; justify-content:space-between; color:rgba(224,231,228,.38); font:600 8px/1 var(--font-mono); letter-spacing:.16em; }
+.startup-greeting-brand { color: rgba(218, 230, 239, .46); font-weight: 270; white-space: nowrap; }
+.startup-greeting-en {
+  margin-top: 16px;
+  color: rgba(207, 221, 231, .54);
+  font: 500 11px/1.2 var(--font-mono);
+  letter-spacing: .19em;
+  animation: greetingItemIn .44s .31s both;
+}
+.startup-greeting-rule {
+  width: min(440px,68vw);
+  height: 1px;
+  margin: 25px auto 21px;
+  overflow: hidden;
+  background: rgba(209, 226, 238, .1);
+}
+.startup-greeting-rule i {
+  display:block;
+  width:100%;
+  height:100%;
+  background:linear-gradient(90deg,transparent,#adc7da,rgba(243,248,251,.88),transparent);
+  transform:translateX(-100%);
+  animation:greetingRule .86s .28s ease both;
+}
+.startup-greeting-content p {
+  margin: 0;
+  color: rgba(232, 240, 245, .84);
+  font-size: clamp(14px,1.6vw,18px);
+  font-weight: 350;
+  letter-spacing: .08em;
+  animation: greetingItemIn .45s .36s both;
+}
+.startup-greeting-content .startup-greeting-quote-en {
+  margin-top: 10px;
+  color: rgba(190, 208, 221, .42);
+  font: 500 9px/1.5 var(--font-mono);
+  letter-spacing: .2em;
+  animation-delay: .42s;
+}
+.startup-greeting-stages {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 7px;
+  margin: 22px auto 0;
+  animation: greetingItemIn .45s .46s both;
+}
+.startup-greeting-stages > span {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  min-width: 102px;
+  padding: 8px 10px;
+  border: 1px solid rgba(173, 198, 216, .12);
+  border-radius: 12px;
+  color: rgba(190, 207, 219, .42);
+  background: rgba(153, 180, 199, .035);
+  transition: color .24s ease, border-color .24s ease, background-color .24s ease, transform .24s ease;
+}
+.startup-greeting-stages i {
+  grid-row: 1 / 3;
+  margin-right: 8px;
+  color: rgba(174, 199, 217, .36);
+  font: 600 8px/1 var(--font-mono);
+  font-style: normal;
+}
+.startup-greeting-stages small {
+  margin-top: 4px;
+  font: 600 7px/1 var(--font-mono);
+  letter-spacing: .12em;
+}
+.startup-greeting-stages > span.is-active,
+.startup-greeting-stages > span.is-complete {
+  color: rgba(232, 240, 246, .86);
+  border-color: rgba(164, 194, 216, .28);
+  background: rgba(127, 160, 184, .11);
+  transform: translateY(-2px);
+}
+.startup-greeting-stages > span.is-active {
+  box-shadow: inset 0 1px rgba(255,255,255,.12), 0 8px 22px rgba(22, 43, 59, .18);
+}
+.startup-greeting-stages > span.is-complete i { color: #aac5d8; }
+.startup-greeting-meta { position:absolute; z-index:5; left:38px; right:38px; display:flex; align-items:center; justify-content:space-between; color:rgba(199,216,228,.43); font:600 8px/1 var(--font-mono); letter-spacing:.16em; }
 .startup-greeting-meta-top { top: 30px; }.startup-greeting-meta-bottom { bottom: 27px; }.startup-greeting-meta-bottom strong { color:rgba(238,243,241,.7); font-size:12px; }
-.startup-greeting-progress { position:absolute; left:38px; right:38px; bottom:52px; height:1px; background:rgba(255,255,255,.09); }
-.startup-greeting-progress span { display:block; height:100%; background:linear-gradient(90deg,var(--signal-dark),var(--signal),rgba(255,255,255,.85)); transform-origin:left; animation:greetingProgress 3.35s .2s linear both; will-change:transform; }
+.startup-greeting-progress { position:absolute; z-index:5; left:38px; right:38px; bottom:52px; height:1px; overflow:visible; background:rgba(199,218,232,.1); }
+.startup-greeting-progress span {
+  display:block;
+  position:relative;
+  height:100%;
+  background:linear-gradient(90deg,#496b85,#9ebed5,rgba(240,247,251,.92));
+  box-shadow: 0 0 12px rgba(130, 169, 198, .38);
+  transform-origin:left;
+  animation:greetingProgress 1.65s .08s cubic-bezier(.16,.7,.2,1) both;
+  will-change:transform;
+}
+.startup-greeting-progress span::after {
+  content:"";
+  position:absolute;
+  right:-2px;
+  top:-2px;
+  width:5px;
+  height:5px;
+  border-radius:50%;
+  background:#dfeaf1;
+  box-shadow:0 0 14px rgba(174,205,227,.72);
+}
+
+.startup-greeting[data-performance='lite'] .startup-greeting-aurora { filter: blur(52px) saturate(.68); opacity: .15; }
+.startup-greeting[data-performance='lite'] .startup-greeting-grid { animation-duration: 7s; }
+.startup-greeting[data-performance='lite'] .startup-greeting-orbit { animation-duration: 22s; }
+.startup-greeting[data-performance='lite'] .startup-greeting-orbit-secondary { animation-duration: 30s; }
+.startup-greeting[data-performance='lite'] .startup-greeting-progress span { animation-duration: .9s; }
 
 @keyframes greetingReveal { from{opacity:0;transform:scale(1.018)} to{opacity:1;transform:scale(1)} }
 @keyframes greetingItemIn { from{opacity:0;transform:translate3d(0,18px,0)} to{opacity:1;transform:translate3d(0,0,0)} }
@@ -251,7 +585,31 @@ html[data-theme="dark"] body {
 @keyframes greetingRule { to{transform:translateX(100%)} }
 @keyframes greetingProgress { from{transform:scaleX(0)} to{transform:scaleX(1)} }
 @keyframes greetingOrbit { to{transform:translate(-50%,-50%) rotateX(68deg) rotateZ(360deg)} }
-@keyframes greetingExit { 0%{opacity:1;clip-path:inset(0 0 0 0)} 68%{opacity:.96;clip-path:inset(0 0 84% 0)} 100%{opacity:0;clip-path:inset(0 0 100% 0)} }
+@keyframes greetingOrbitReverse { to{transform:translate(-50%,-50%) rotateX(72deg) rotateZ(-180deg)} }
+@keyframes greetingCrosshair { from{opacity:0;transform:scale(.68)} to{opacity:.34;transform:scale(1)} }
+@keyframes greetingGridBreathe { from{opacity:.075;transform:scale(1)} to{opacity:.13;transform:scale(1.018)} }
+@keyframes greetingAuroraA { from{transform:translate3d(-3%, -2%, 0) rotate(-3deg) scale(.96);opacity:.17} to{transform:translate3d(5%, 5%, 0) rotate(4deg) scale(1.08);opacity:.27} }
+@keyframes greetingAuroraB { from{transform:translate3d(3%, 3%, 0) rotate(4deg) scale(1.04);opacity:.14} to{transform:translate3d(-4%, -5%, 0) rotate(-5deg) scale(.94);opacity:.24} }
+@keyframes greetingScanline { 0%{opacity:0;transform:translate3d(0,-100%,0)} 18%{opacity:.35} 80%{opacity:.24} 100%{opacity:0;transform:translate3d(0,620%,0)} }
+@keyframes greetingCoreIn { from{opacity:0;transform:translate3d(0,18px,0) scale(.82) rotate(-3deg)} to{opacity:1;transform:translate3d(0,0,0) scale(1) rotate(0)} }
+@keyframes greetingCoreRing { 0%,100%{opacity:.18;transform:scale(.96)} 50%{opacity:.58;transform:scale(1.04)} }
+@keyframes greetingReadyPulse { 0%,100%{opacity:.45;transform:scale(.86)} 50%{opacity:1;transform:scale(1.12)} }
+@keyframes greetingContentExit { to{opacity:0;transform:translate(-50%,-54%) scale(.985)} }
+@keyframes greetingExit { 0%{opacity:1;clip-path:inset(0 0 0 0)} 58%{opacity:.98;clip-path:inset(0 0 68% 0)} 100%{opacity:0;clip-path:inset(0 0 100% 0)} }
+
+@media (max-width: 720px) {
+  .startup-greeting-content { width: calc(100vw - 36px); }
+  .startup-greeting-core { width: 66px; height: 66px; border-radius: 21px; }
+  .startup-greeting-core img { width: 50px; height: 50px; border-radius: 15px; }
+  .startup-greeting-stages { gap: 4px; }
+  .startup-greeting-stages > span { min-width: 0; padding: 7px; }
+  .startup-greeting-stages > span { grid-template-columns: auto; }
+  .startup-greeting-stages i { grid-row: auto; margin: 0 0 4px; }
+  .startup-greeting-stages small { display: none; }
+  .startup-greeting-meta { left: 18px; right: 18px; }
+  .startup-greeting-progress { left: 18px; right: 18px; }
+  .startup-greeting-meta-bottom span:nth-child(2) { display: none; }
+}
 
 .app-container { position: relative; isolation: isolate; background: transparent !important; }
 /* Direct children include fixed chrome, overlays and navigation. Forcing them all

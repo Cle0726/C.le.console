@@ -47,6 +47,7 @@ import {
   hasCursorQuotaData,
   isCursorAccountBanned,
 } from '../types/cursor';
+import { isAccountLoginRequired, isAccountRefreshError } from '../utils/accountAuthStatus';
 import type { CursorAccount } from '../types/cursor';
 import { compareCurrentAccountFirst } from '../utils/currentAccountSort';
 import {
@@ -585,7 +586,12 @@ export function CursorAccountsPage() {
       const quotaError = account.quota_query_last_error?.trim();
       const hasQuotaData = hasCursorQuotaData(account);
       const isBanned = isCursorAccountBanned(account);
-      const hasStatusError = (account.status || '').toLowerCase() === 'error';
+      const requiresLogin = isAccountLoginRequired(
+        account.status,
+        account.status_reason,
+        account.quota_query_last_error,
+      );
+      const hasStatusError = isAccountRefreshError(account.status) || requiresLogin;
       const statusReason = account.status_reason ?? null;
       const bannedTitle = statusReason || t('accounts.status.forbidden_tooltip');
       const errorTitle = statusReason || t('accounts.status.refreshFailed');
@@ -606,7 +612,9 @@ export function CursorAccountsPage() {
             {hasStatusError && (
               <span className="status-pill warning" title={errorTitle}>
                 <CircleAlert size={12} />
-                {t('accounts.status.refreshFailed')}
+                {requiresLogin
+                  ? t('accounts.status.loginRequired', '需重新登录')
+                  : t('accounts.status.refreshFailed')}
               </span>
             )}
             {quotaError && (
@@ -751,7 +759,12 @@ export function CursorAccountsPage() {
       const isBanned = isCursorAccountBanned(account);
       const quotaError = account.quota_query_last_error?.trim();
       const hasQuotaData = hasCursorQuotaData(account);
-      const hasStatusError = (account.status || '').toLowerCase() === 'error';
+      const requiresLogin = isAccountLoginRequired(
+        account.status,
+        account.status_reason,
+        account.quota_query_last_error,
+      );
+      const hasStatusError = isAccountRefreshError(account.status) || requiresLogin;
       const statusReason = account.status_reason ?? null;
       const bannedTitle = statusReason || t('accounts.status.forbidden_tooltip');
       const errorTitle = statusReason || t('accounts.status.refreshFailed');
@@ -767,7 +780,7 @@ export function CursorAccountsPage() {
               </div>
               {(hasStatusError || isBanned) && (
                 <div className="account-sub-line">
-                  {hasStatusError && (<span className="status-pill warning" title={errorTitle}><CircleAlert size={12} />{t('accounts.status.refreshFailed')}</span>)}
+                  {hasStatusError && (<span className="status-pill warning" title={errorTitle}><CircleAlert size={12} />{requiresLogin ? t('accounts.status.loginRequired', '需重新登录') : t('accounts.status.refreshFailed')}</span>)}
                   {isBanned && (<span className="status-pill forbidden" title={bannedTitle}><Lock size={12} />{t('accounts.status.forbidden')}</span>)}
                 </div>
               )}

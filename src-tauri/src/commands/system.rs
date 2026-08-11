@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::Manager;
 use tauri_plugin_autostart::ManagerExt as _;
 use url::Url;
@@ -3487,6 +3488,7 @@ fn start_configured_windows_tool(
     display_name: &str,
     executable_names: &[&str],
     extra_candidates: &[&str],
+    child_env: &[(&str, &str)],
 ) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
@@ -3550,9 +3552,12 @@ fn start_configured_windows_tool(
         .filter(|path| !path.as_os_str().is_empty())
         .ok_or_else(|| format!("无法确定 {display_name} 的工作目录"))?;
 
-    std::process::Command::new(&executable)
+    let mut command = std::process::Command::new(&executable);
+    command
         .current_dir(working_directory)
-        .creation_flags(0x0800_0000)
+        .envs(child_env.iter().copied())
+        .creation_flags(0x0800_0000);
+    command
         .spawn()
         .map_err(|error| format!("启动 {display_name} 失败：{error}"))?;
 
@@ -3563,7 +3568,7 @@ fn start_configured_windows_tool(
 pub async fn start_chat2api() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        return start_configured_windows_tool(
+        start_configured_windows_tool(
             "CLE_CHAT2API_PATH",
             "Chat2API",
             &["chat2api.exe"],
@@ -3571,7 +3576,23 @@ pub async fn start_chat2api() -> Result<(), String> {
                 r"F:\自动注册\chat2api\chat2api.exe",
                 r"F:\tmp_chat2api\dist\chat2api.exe",
             ],
-        );
+            &[
+                ("AUTHORIZATION", "cle-chat2api-pool"),
+                ("AUTO_SEED", "true"),
+                ("RANDOM_TOKEN", "true"),
+                ("RETRY_TIMES", "3"),
+            ],
+        )?;
+        for _ in 0..50 {
+            if tokio::net::TcpStream::connect(("127.0.0.1", 5005))
+                .await
+                .is_ok()
+            {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        return Err("Chat2API 已启动进程，但端口 5005 未在 10 秒内就绪".to_string());
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -3582,14 +3603,166 @@ pub async fn start_chat2api() -> Result<(), String> {
 pub async fn start_aurora() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        return start_configured_windows_tool(
+        start_configured_windows_tool(
             "CLE_AURORA_PATH",
             "AuroraProxy",
             &["aurora.exe", "AuroraProxy.exe"],
             &[r"F:\自动注册\AuroraProxy\aurora.exe"],
-        );
+            &[],
+        )?;
+        for _ in 0..50 {
+            if tokio::net::TcpStream::connect(("127.0.0.1", 8080))
+                .await
+                .is_ok()
+            {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        return Err("AuroraProxy 已启动进程，但端口 8080 未在 10 秒内就绪".to_string());
     }
 
     #[cfg(not(target_os = "windows"))]
     Err("AuroraProxy 快捷启动目前仅支持 Windows".to_string())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalGptAccountImportResult {
+    pub service: String,
+    pub imported: usize,
+    pub total: usize,
+    pub restart_required: bool,
+}
+
+fn collect_local_gpt_tokens(value: &Value, output: &mut BTreeSet<String>) {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                collect_local_gpt_tokens(value, output);
+            }
+        }
+        Value::Object(object) => {
+            for (key, value) in object {
+                if matches!(
+                    key.as_str(),
+                    "access_token" | "refresh_token" | "accessToken" | "refreshToken"
+                ) {
+                    if let Some(token) = value.as_str().map(str::trim).filter(|v| !v.is_empty()) {
+                        output.insert(token.to_string());
+                    }
+                } else if value.is_array() || value.is_object() {
+                    collect_local_gpt_tokens(value, output);
+                }
+            }
+        }
+        Value::String(token) => {
+            let token = token.trim();
+            if !token.is_empty() {
+                output.insert(token.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_local_gpt_tokens(content: &str) -> BTreeSet<String> {
+    let mut tokens = BTreeSet::new();
+    if let Ok(value) = serde_json::from_str::<Value>(content) {
+        collect_local_gpt_tokens(&value, &mut tokens);
+    } else {
+        for line in content.lines() {
+            let token = line.trim();
+            if !token.is_empty() && !token.starts_with('#') {
+                tokens.insert(token.to_string());
+            }
+        }
+    }
+    tokens
+}
+
+#[tauri::command]
+pub async fn import_local_gpt_accounts(
+    service: String,
+    content: String,
+) -> Result<LocalGptAccountImportResult, String> {
+    let tokens = parse_local_gpt_tokens(&content);
+    if tokens.is_empty() {
+        return Err("文件中没有找到 access_token / refresh_token 或逐行 Token".to_string());
+    }
+    let normalized = service.trim().to_ascii_lowercase();
+    if normalized == "chat2api" {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .map_err(|error| error.to_string())?
+            .post("http://127.0.0.1:5005/tokens/upload")
+            .form(&[(
+                "text",
+                tokens.iter().cloned().collect::<Vec<_>>().join("\n"),
+            )])
+            .send()
+            .await
+            .map_err(|error| format!("Chat2API 账号导入失败，请先启动服务：{error}"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "Chat2API 账号导入返回 HTTP {}",
+                response.status().as_u16()
+            ));
+        }
+        let value: Value = response.json().await.map_err(|error| error.to_string())?;
+        let total = value
+            .get("tokens_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(tokens.len() as u64) as usize;
+        return Ok(LocalGptAccountImportResult {
+            service: "chat2api".to_string(),
+            imported: tokens.len(),
+            total,
+            restart_required: false,
+        });
+    }
+    if normalized == "aurora" {
+        let path = std::env::var("CLE_AURORA_PATH")
+            .ok()
+            .and_then(|path| {
+                PathBuf::from(path)
+                    .parent()
+                    .map(|parent| parent.join("access_tokens.txt"))
+            })
+            .unwrap_or_else(|| PathBuf::from(r"F:\自动注册\AuroraProxy\access_tokens.txt"));
+        let existing = fs::read_to_string(&path).unwrap_or_default();
+        let mut merged = parse_local_gpt_tokens(&existing);
+        let before = merged.len();
+        merged.extend(tokens);
+        let payload = merged.iter().cloned().collect::<Vec<_>>().join("\n") + "\n";
+        fs::write(&path, payload)
+            .map_err(|error| format!("写入 Aurora 账号池 {} 失败：{error}", path.display()))?;
+        return Ok(LocalGptAccountImportResult {
+            service: "aurora".to_string(),
+            imported: merged.len().saturating_sub(before),
+            total: merged.len(),
+            restart_required: true,
+        });
+    }
+    Err("service 仅支持 chat2api 或 aurora".to_string())
+}
+
+#[cfg(test)]
+mod local_gpt_account_tests {
+    use super::parse_local_gpt_tokens;
+
+    #[test]
+    fn parses_plain_and_json_account_exports_without_duplicates() {
+        let plain = parse_local_gpt_tokens("token-a\n# comment\ntoken-a\ntoken-b\n");
+        assert_eq!(plain.len(), 2);
+
+        let json = parse_local_gpt_tokens(
+            r#"{"accounts":[{"access_token":"access"},{"refreshToken":"refresh"}],"note":"ignored"}"#,
+        );
+        assert!(json.contains("access"));
+        assert!(json.contains("refresh"));
+        assert_eq!(json.len(), 2);
+    }
 }

@@ -1,0 +1,36 @@
+/* Tiny first-paint layer. The full material system is loaded with App so it
+   can remain last in the cascade, while this file prevents a white WebView
+   flash during the dynamic application import. */
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+/* Night (graphite) is the default canvas, so it is also the default first
+   paint. Day is the explicit opt-in branch below. Both track the ramps in
+   liquid-glass-system.css so there is no seam when the app stylesheet lands. */
+
+html {
+  background: #0b0c0e;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(46% 38% at 66% 30%, rgba(222, 226, 232, 0.34), transparent 62%),
+    radial-gradient(54% 44% at 86% 58%, rgba(134, 140, 148, 0.44), transparent 64%),
+    linear-gradient(154deg, #3e4248 0%, #26292e 44%, #131518 84%, #0b0c0e 100%);
+}
+
+html[data-visual-theme='day'] {
+  background: #141f33;
+}
+
+html[data-visual-theme='day'] body {
+  background:
+    radial-gradient(46% 38% at 66% 30%, rgba(214, 224, 238, 0.6), transparent 62%),
+    radial-gradient(62% 50% at 46% 70%, rgba(92, 127, 174, 0.66), transparent 66%),
+    linear-gradient(154deg, #33507c 0%, #40639a 22%, #3a5b8c 64%, #141f33 100%);
+}

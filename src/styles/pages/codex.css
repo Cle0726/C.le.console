@@ -2493,7 +2493,7 @@
     radial-gradient(circle at 18% 18%, rgba(14, 165, 233, 0.52), transparent 34%),
     radial-gradient(circle at 58% 82%, rgba(132, 204, 22, 0.58), transparent 28%),
     radial-gradient(circle at 82% 72%, rgba(249, 115, 22, 0.52), transparent 30%),
-    radial-gradient(circle at 75% 18%, rgba(168, 85, 247, 0.35), transparent 42%),
+    radial-gradient(circle at 75% 18%, rgba(112, 135, 155, 0.35), transparent 42%),
     linear-gradient(135deg, #e0f2fe 0%, #ddd6fe 100%);
 }
 
@@ -2536,7 +2536,7 @@
   width: 74px;
   height: 74px;
   border-radius: 24px;
-  background: linear-gradient(135deg, #38bdf8 0%, #6366f1 56%, #7c3aed 100%);
+  background: linear-gradient(135deg, #9eb4c6 0%, #7890a5 56%, #60778c 100%);
   color: #fff;
   box-shadow:
     0 18px 36px rgba(79, 70, 229, 0.36),
@@ -2760,7 +2760,7 @@
 [data-theme="dark"] .codex-reset-credit-confirm-visual {
   background:
     radial-gradient(circle at 26% 20%, rgba(14, 165, 233, 0.26), transparent 34%),
-    radial-gradient(circle at 78% 20%, rgba(99, 102, 241, 0.2), transparent 38%),
+    radial-gradient(circle at 78% 20%, rgba(127, 150, 170, 0.2), transparent 38%),
     radial-gradient(circle at 72% 82%, rgba(20, 184, 166, 0.13), transparent 32%),
     linear-gradient(135deg, #0c1626 0%, #12213a 54%, #1a2341 100%);
 }
@@ -3032,6 +3032,80 @@
   color: white;
 }
 
+/* Account-card text fitting -------------------------------------------------
+   Long authorization failures must wrap inside the card instead of pushing
+   the recovery action over the message. The footer becomes a conventional
+   static separator so date, speed and actions keep independent rows. */
+.codex-account-card .quota-error-inline:not(.table) {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 7px;
+  row-gap: 7px;
+  box-sizing: border-box;
+}
+
+.codex-account-card .quota-error-inline:not(.table) > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.codex-account-card .quota-error-inline:not(.table) > .btn {
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.codex-account-card .codex-card-bottom {
+  padding-top: 10px;
+  border-top: 1px solid var(--border-light);
+}
+
+.codex-account-card .codex-card-bottom .card-footer {
+  margin-top: 0;
+  padding-top: 8px;
+  border-top: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+/* The first-run gateway guide used to be absolutely painted over the address,
+   key and help copy. In grid cards it now participates in header layout and
+   grows the card naturally; list/compact cards keep their anchored popover. */
+.codex-local-access-card--grid .folder-inline-info,
+.codex-local-access-card--grid .codex-local-access-title-row,
+.codex-local-access-card--grid .codex-local-access-title-mode-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.codex-local-access-card--grid .codex-local-access-title-mode-select {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.codex-local-access-card--grid .codex-local-access-gateway-guide {
+  position: relative;
+  left: auto;
+  top: auto;
+  width: min(286px, 100%);
+  margin-top: 10px;
+  box-sizing: border-box;
+}
+
+.codex-local-access-card--grid .codex-local-access-gateway-guide::before {
+  left: 22px;
+  top: -7px;
+}
+
+@media (max-width: 520px) {
+  .codex-account-card .quota-error-inline:not(.table) > .btn {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+}
+
 /* Compact 布局（新增，不影响原 grid/list） */
 .codex-accounts-page .codex-compact-list {
   display: grid;
@@ -3122,7 +3196,7 @@
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: #7c3aed;
+  background: #60788e;
 }
 
 .codex-accounts-page .codex-compact-quota-secondary .codex-compact-dot {
@@ -8666,7 +8740,7 @@
   height: 6px;
   border-radius: 999px;
   flex-shrink: 0;
-  background: #7c3aed;
+  background: #60788e;
 }
 
 .codex-wakeup-account-chip-quota-secondary

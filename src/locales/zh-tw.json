@@ -228,6 +228,7 @@
     "windsurf": "Windsurf",
     "dashboard": "儀表板",
     "morePlatforms": "更多平台",
+    "multiModelApiService": "多模型 API 代理",
     "instances": "應用多開",
     "manual": "使用手冊",
     "gemini": "Gemini Cli",

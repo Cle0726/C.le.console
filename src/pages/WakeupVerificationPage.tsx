@@ -374,7 +374,7 @@ export function WakeupVerificationPage({ onNavigate }: WakeupVerificationPagePro
     () =>
       filterAntigravityModelOptions(availableModels, {
         allowedModelKeys: quotaModelKeys,
-        includeNonRecommended: false,
+        includeNonRecommended: true,
       }),
     [availableModels, quotaModelKeys],
   );
@@ -533,7 +533,7 @@ export function WakeupVerificationPage({ onNavigate }: WakeupVerificationPagePro
       const models = await invoke<AvailableModel[]>('fetch_available_models');
       const filtered = filterAntigravityModelOptions(models || [], {
         allowedModelKeys,
-        includeNonRecommended: false,
+        includeNonRecommended: true,
       });
       if (filtered.length > 0) {
         setAvailableModels(filtered);

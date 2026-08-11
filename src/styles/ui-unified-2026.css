@@ -1,0 +1,448 @@
+/*
+ * Unified UI layer
+ *
+ * This file is intentionally loaded last. It consolidates the older spatial,
+ * industrial and liquid-glass layers into one predictable visual hierarchy:
+ * floating navigation, calm content surfaces and high-contrast state feedback.
+ */
+
+:root {
+  --ui-accent: #0a84ff;
+  --ui-accent-soft: color-mix(in srgb, var(--ui-accent) 13%, transparent);
+  --ui-success: #30d158;
+  --ui-warning: #ff9f0a;
+  --ui-danger: #ff453a;
+  --ui-radius-xs: 8px;
+  --ui-radius-sm: 12px;
+  --ui-radius-md: 16px;
+  --ui-radius-lg: 22px;
+  --ui-radius-xl: 28px;
+  --ui-space-1: 6px;
+  --ui-space-2: 10px;
+  --ui-space-3: 14px;
+  --ui-space-4: 18px;
+  --ui-space-5: 24px;
+  --ui-spring: cubic-bezier(.2, .82, .2, 1);
+  --ui-line: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  --ui-line-strong: color-mix(in srgb, var(--text-primary) 20%, transparent);
+  --ui-surface: color-mix(in srgb, var(--bg-card) 94%, transparent);
+  --ui-surface-raised: color-mix(in srgb, var(--bg-card) 98%, white 2%);
+  --ui-shadow-1: 0 8px 24px rgba(12, 23, 38, .08);
+  --ui-shadow-2: 0 18px 52px rgba(10, 20, 34, .14);
+}
+
+html[data-theme='dark'],
+html[data-visual-theme='night'] {
+  --ui-line: rgba(255, 255, 255, .11);
+  --ui-line-strong: rgba(255, 255, 255, .2);
+  --ui-surface: rgba(25, 34, 47, .9);
+  --ui-surface-raised: rgba(31, 41, 55, .96);
+  --ui-shadow-1: 0 10px 30px rgba(0, 0, 0, .25);
+  --ui-shadow-2: 0 24px 66px rgba(0, 0, 0, .42);
+}
+
+html {
+  color-scheme: light;
+  scrollbar-color: color-mix(in srgb, var(--text-secondary) 38%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+html[data-theme='dark'],
+html[data-visual-theme='night'] {
+  color-scheme: dark;
+}
+
+body {
+  overflow: hidden;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-secondary) 34%, transparent) transparent;
+}
+
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  min-height: 34px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary) 30%, transparent);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-secondary) 48%, transparent);
+  background-clip: padding-box;
+}
+
+.app-container,
+.main-wrapper,
+.main-content,
+.content-area,
+.codex-api-service-page,
+.codex-api-service-content {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.main-wrapper {
+  box-sizing: border-box;
+  padding-block: 54px 32px;
+  padding-inline-end: clamp(16px, 2.5vw, 34px);
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+}
+
+/* A compact, consistent page identity bar replaces the oversized dead zone. */
+.page-top-strip {
+  min-height: 46px !important;
+  padding: 0 4px 10px !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--ui-line) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.page-top-strip::after {
+  width: 52px !important;
+  height: 3px !important;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--ui-accent), color-mix(in srgb, var(--ui-accent) 24%, transparent)) !important;
+  box-shadow: 0 0 16px color-mix(in srgb, var(--ui-accent) 24%, transparent);
+}
+
+.page-top-strip-label {
+  color: var(--text-primary) !important;
+  -webkit-text-fill-color: currentColor !important;
+  font-size: clamp(20px, 2.2vw, 28px) !important;
+  font-weight: 760 !important;
+  letter-spacing: -.035em !important;
+  text-transform: none !important;
+}
+
+.page-tabs-row {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 8px !important;
+  gap: 8px !important;
+  border: 1px solid var(--ui-line) !important;
+  border-radius: var(--ui-radius-lg) !important;
+}
+
+.page-tabs,
+.filter-tabs {
+  min-width: 0;
+  gap: 6px !important;
+}
+
+.filter-tab,
+.page-tabs-leading .platform-group-switcher-trigger {
+  min-height: 40px;
+  border-radius: var(--ui-radius-sm) !important;
+  font-weight: 650;
+}
+
+.filter-tab {
+  min-width: 0;
+  padding-inline: 14px !important;
+}
+
+.page-tabs-leading,
+.page-tabs-leading .platform-group-switcher {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.page-tabs-leading .platform-group-switcher-trigger {
+  max-width: min(100%, 300px);
+  padding-inline: 13px !important;
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 18%, var(--ui-line)) !important;
+  background: var(--ui-accent-soft) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .2);
+}
+
+.btn,
+.folder-icon-btn,
+.modal-close,
+.qs-close,
+.single-select-dropdown-trigger {
+  border-radius: var(--ui-radius-sm) !important;
+}
+
+.btn,
+button,
+[role='button'] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn:not(:disabled),
+.folder-icon-btn:not(:disabled),
+.filter-tab:not(:disabled),
+.single-select-dropdown-trigger:not(:disabled) {
+  will-change: transform;
+}
+
+.btn:hover:not(:disabled),
+.folder-icon-btn:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.008);
+}
+
+.btn:active:not(:disabled),
+.folder-icon-btn:active:not(:disabled) {
+  transform: translateY(0) scale(.97);
+}
+
+.modal,
+.qs-modal,
+.global-modal,
+.mm-modal {
+  overflow: hidden;
+  border: 1px solid var(--ui-line-strong) !important;
+  border-radius: var(--ui-radius-xl) !important;
+  background: var(--ui-surface-raised) !important;
+  box-shadow: var(--ui-shadow-2) !important;
+}
+
+.modal-header,
+.modal-footer,
+.qs-header {
+  border-color: var(--ui-line) !important;
+}
+
+input,
+select,
+textarea,
+.single-select-dropdown-trigger {
+  min-width: 0;
+  border-color: var(--ui-line-strong) !important;
+  background-color: color-mix(in srgb, var(--ui-surface-raised) 86%, transparent) !important;
+}
+
+/* API service: wrap data instead of creating an off-screen desktop canvas. */
+.codex-api-service-page {
+  gap: 10px;
+}
+
+.codex-api-service-content {
+  gap: 12px;
+}
+
+.codex-api-service-hero,
+.codex-api-service-panel,
+.codex-api-service-summary-card {
+  border-color: var(--ui-line) !important;
+  background: var(--ui-surface) !important;
+  box-shadow: var(--ui-shadow-1) !important;
+}
+
+.codex-api-service-hero {
+  padding: 12px 14px !important;
+  border-radius: var(--ui-radius-md) !important;
+}
+
+.codex-api-service-panel,
+.codex-api-service-summary-card {
+  border-radius: var(--ui-radius-md) !important;
+}
+
+.codex-api-service-hero-actions {
+  flex-wrap: wrap !important;
+}
+
+.codex-api-service-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(144px, 100%), 1fr)) !important;
+  overflow: visible !important;
+  gap: 10px !important;
+}
+
+.codex-api-service-summary-card {
+  min-width: 0 !important;
+  padding: 13px 14px !important;
+}
+
+.codex-api-service-summary-card::before {
+  width: 3px !important;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, var(--ui-accent), color-mix(in srgb, var(--ui-accent) 22%, transparent)) !important;
+}
+
+.codex-api-service-summary-card strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.codex-api-service-message {
+  border-radius: var(--ui-radius-md) !important;
+}
+
+.codex-api-service-status.running,
+.codex-api-service-pill.success,
+.mm-api-status.running {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-success) 8%, transparent),
+              0 0 18px color-mix(in srgb, var(--ui-success) 13%, transparent) !important;
+}
+
+.codex-api-service-grid,
+.codex-api-service-grid.two,
+.codex-api-service-grid.accounts {
+  min-width: 0;
+}
+
+.codex-api-service-panel,
+.codex-api-service-table,
+.codex-api-service-log-panel,
+.codex-api-service-copy-row,
+.codex-api-service-input-row {
+  max-width: 100%;
+}
+
+/* High WebView zoom keeps a desktop CSS viewport. These explicit bands make
+   the layout responsive to the user's accessibility setting as well. */
+html[data-ui-scale-band='large'] .main-wrapper,
+html[data-ui-scale-band='xlarge'] .main-wrapper {
+  padding-block-start: 48px;
+  padding-inline-end: 18px;
+}
+
+html[data-ui-scale-band='large'] .page-tabs-row-with-leading,
+html[data-ui-scale-band='xlarge'] .page-tabs-row-with-leading {
+  grid-template-columns: minmax(150px, .72fr) minmax(0, 1fr);
+  justify-items: stretch;
+}
+
+html[data-ui-scale-band='large'] .page-tabs-row-with-leading .page-tabs,
+html[data-ui-scale-band='xlarge'] .page-tabs-row-with-leading .page-tabs {
+  grid-column: 2;
+  justify-self: stretch;
+  overflow-x: auto;
+  justify-content: flex-start;
+}
+
+html[data-ui-scale-band='large'] .codex-api-service-hero,
+html[data-ui-scale-band='xlarge'] .codex-api-service-hero {
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+html[data-ui-scale-band='large'] .codex-api-service-hero-actions,
+html[data-ui-scale-band='xlarge'] .codex-api-service-hero-actions {
+  justify-content: flex-start;
+}
+
+html[data-ui-scale-band='large'] .codex-api-service-grid.two,
+html[data-ui-scale-band='large'] .codex-api-service-grid.accounts,
+html[data-ui-scale-band='xlarge'] .codex-api-service-grid.two,
+html[data-ui-scale-band='xlarge'] .codex-api-service-grid.accounts {
+  grid-template-columns: 1fr !important;
+}
+
+html[data-ui-scale-band='xlarge'] .codex-api-service-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
+html[data-ui-scale-band='xlarge'] .codex-api-service-hero-actions .btn {
+  flex: 1 1 140px;
+}
+
+@media (max-width: 900px) {
+  .main-wrapper {
+    margin-inline-start: 96px;
+    padding-inline: 4px 16px;
+  }
+
+  .app-container-side-nav-classic .main-wrapper {
+    margin-inline-start: calc(var(--side-nav-classic-width-expanded) + 14px);
+  }
+
+  .app-container-side-nav-classic-collapsed .main-wrapper {
+    margin-inline-start: calc(var(--side-nav-classic-width-collapsed) + 14px);
+  }
+
+  .page-tabs-row-with-leading {
+    grid-template-columns: 1fr !important;
+  }
+
+  .page-tabs-leading,
+  .page-tabs-row-with-leading .page-tabs {
+    grid-column: 1 !important;
+    justify-self: stretch !important;
+  }
+
+  .page-tabs-row-with-leading .page-tabs {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .codex-api-service-hero {
+    grid-template-columns: 1fr !important;
+    align-items: start !important;
+  }
+
+  .codex-api-service-hero-actions {
+    justify-content: flex-start !important;
+  }
+}
+
+@media (max-width: 680px) {
+  .industrial-chrome-status,
+  .industrial-chrome-index,
+  .industrial-chrome-year-time,
+  .industrial-chrome-year-rule {
+    display: none !important;
+  }
+
+  .industrial-chrome-date { inset-inline-start: 18px !important; }
+  .industrial-chrome-year { inset-inline-end: 18px !important; }
+
+  .main-wrapper,
+  .app-container-side-nav-classic .main-wrapper,
+  .app-container-side-nav-classic-collapsed .main-wrapper {
+    margin-inline-start: 0;
+    padding: 50px 12px 24px;
+  }
+
+  .page-top-strip {
+    min-height: 40px !important;
+  }
+
+  .page-tabs-row {
+    border-radius: var(--ui-radius-md) !important;
+  }
+
+  .codex-api-service-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .codex-api-service-summary-grid { grid-template-columns: 1fr !important; }
+  .codex-api-service-hero-actions .btn { width: 100%; }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .btn:hover:not(:disabled),
+  .folder-icon-btn:hover:not(:disabled),
+  .filter-tab:hover:not(:disabled),
+  .nav-item:hover:not(:disabled) {
+    transform: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+
+  .cursor-aura,
+  body::before {
+    display: none !important;
+  }
+}

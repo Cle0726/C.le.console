@@ -132,8 +132,8 @@
 }
 
 .codex-api-service-pill.mode-legacy {
-  border-color: color-mix(in srgb, #6366f1 24%, transparent);
-  background: color-mix(in srgb, #6366f1 12%, transparent);
+  border-color: color-mix(in srgb, #7f96aa 24%, transparent);
+  background: color-mix(in srgb, #7f96aa 12%, transparent);
   color: #4338ca;
 }
 
@@ -163,7 +163,7 @@
 
 .codex-api-service-hero-actions {
   gap: 5px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 .codex-api-service-hero-actions .btn {
@@ -1669,7 +1669,7 @@
 }
 
 [data-theme="dark"] .codex-api-service-pill.mode-legacy {
-  color: #c4b5fd;
+  color: #adc0d0;
 }
 
 @media (max-width: 1180px) {

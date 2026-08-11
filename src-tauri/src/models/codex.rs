@@ -110,6 +110,8 @@ pub struct CodexAccount {
     pub account_id: Option<String>,
     pub organization_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_identity: Option<CodexAgentIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_structure: Option<String>,
@@ -190,6 +192,27 @@ pub struct CodexTokens {
     pub access_token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
+}
+
+/// Codex Agent Identity credentials used by current Cockpit/Sub2API exports.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodexAgentIdentity {
+    #[serde(alias = "agentRuntimeId")]
+    pub agent_runtime_id: String,
+    #[serde(alias = "agentPrivateKey")]
+    pub agent_private_key: String,
+    #[serde(default, alias = "taskId", skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(alias = "accountId")]
+    pub account_id: String,
+    #[serde(alias = "chatgptUserId")]
+    pub chatgpt_user_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, alias = "planType", skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    #[serde(default, alias = "chatgptAccountIsFedramp")]
+    pub chatgpt_account_is_fedramp: bool,
 }
 
 /// Codex 配额数据（5小时配额 + 周配额）
@@ -274,6 +297,12 @@ pub struct CodexAuthFile {
     pub base_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<CodexAuthTokens>,
+    #[serde(
+        default,
+        alias = "agentIdentity",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_identity: Option<CodexAgentIdentity>,
     #[serde(default)]
     pub last_refresh: Option<serde_json::Value>, // 可以是字符串或数字
 }
@@ -387,6 +416,7 @@ impl CodexAccount {
             auth_file_plan_type: None,
             account_id: None,
             organization_id: None,
+            agent_identity: None,
             account_name: None,
             account_structure: None,
             account_note: None,
@@ -451,6 +481,10 @@ impl CodexAccount {
 
     pub fn is_api_key_auth(&self) -> bool {
         self.auth_mode == CodexAuthMode::Apikey
+    }
+
+    pub fn is_agent_identity_auth(&self) -> bool {
+        self.agent_identity.is_some()
     }
 
     pub fn update_last_used(&mut self) {

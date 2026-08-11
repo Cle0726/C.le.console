@@ -1,0 +1,2904 @@
+/*
+ * C.le. visual material override
+ *
+ * Scope rule: colors, materials, borders, shadows and interaction feedback only.
+ * Existing page structure, dimensions, spacing, grid and component placement stay
+ * under the ownership of the original page styles.
+ */
+
+:root {
+  color-scheme: light;
+
+  --font-sans: "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei UI",
+    "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei UI",
+    "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+
+  /* Premium neutral blue-grey with restrained saturation. */
+  --glass-accent: #65798d;
+  --glass-accent-hover: #52687d;
+  --glass-accent-alt: #8998a6;
+  --glass-accent-on: #f7f9fb;
+  --glass-accent-soft: rgba(101, 121, 141, 0.14);
+  --glass-accent-soft-strong: rgba(101, 121, 141, 0.22);
+
+  --primary: var(--glass-accent);
+  --primary-hover: var(--glass-accent-hover);
+  --primary-light: var(--glass-accent-soft);
+  --accent: var(--glass-accent-alt);
+  --success: #648a7a;
+  --warning: #a18861;
+  --warning-strong: #8f744f;
+  --danger: #aa666d;
+
+  --ui-accent: var(--glass-accent);
+  --ui-accent-soft: var(--glass-accent-soft);
+  --ui-success: var(--success);
+  --ui-warning: var(--warning);
+  --ui-danger: var(--danger);
+
+  --bg-primary: #e8edf1;
+  --bg-secondary: rgba(244, 247, 249, 0.9);
+  --bg-surface: rgba(240, 244, 247, 0.86);
+  --bg-tertiary: rgba(215, 224, 231, 0.72);
+  --bg-card: rgba(241, 245, 248, 0.78);
+  --bg-hover: rgba(76, 98, 119, 0.08);
+
+  --text-primary: #202a33;
+  --text-secondary: #5e6c78;
+  --text-muted: #82909b;
+  --text-inverse: #f5f8fa;
+
+  --border: rgba(56, 76, 94, 0.16);
+  --border-light: rgba(255, 255, 255, 0.58);
+  --glass-edge: rgba(255, 255, 255, 0.58);
+  --glass-edge-low: rgba(57, 77, 95, 0.18);
+  --glass-edge-strong: rgba(70, 91, 110, 0.34);
+  --glass-highlight: rgba(255, 255, 255, 0.84);
+
+  /* Clear crystal rather than opaque/frosted glass. */
+  --glass-static-bg: rgba(235, 241, 245, 0.12);
+  --glass-float-bg: rgba(239, 244, 248, 0.18);
+  --glass-modal-bg: rgba(236, 242, 246, 0.82);
+  --glass-content-bg: rgba(235, 241, 245, 0.14);
+  --glass-control-bg: rgba(234, 241, 246, 0.065);
+  --glass-control-bg-hover: rgba(245, 249, 251, 0.135);
+  --glass-control-edge: rgba(255, 255, 255, 0.88);
+  --glass-control-edge-dark: rgba(55, 75, 93, 0.23);
+  --glass-control-glint: rgba(255, 255, 255, 0.82);
+  --glass-control-shadow: 0 11px 29px rgba(35, 52, 67, 0.15),
+    0 2px 7px rgba(35, 52, 67, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    inset 0 -1px 0 rgba(55, 75, 93, 0.13);
+  --glass-static-blur: 7px;
+  --glass-content-blur: 9px;
+  --glass-float-blur: 14px;
+  --glass-modal-blur: 28px;
+  /*
+   * Refraction is a thin surface highlight, not an opaque texture sheet.
+   * Keeping it below the content plane prevents the "frosted plastic" look.
+   */
+  --water-panel-opacity: 0.26;
+  --water-panel-opacity-soft: 0.14;
+  --water-control-opacity: 0.38;
+  --water-specular: rgba(255, 255, 255, 0.38);
+  --water-specular-soft: rgba(194, 216, 232, 0.12);
+
+  --glass-shadow-static: 0 8px 28px rgba(43, 61, 77, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  --glass-shadow-float: 0 20px 54px rgba(34, 50, 65, 0.17),
+    0 3px 10px rgba(34, 50, 65, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  --glass-shadow-modal: 0 34px 92px rgba(28, 42, 54, 0.27),
+    0 8px 26px rgba(28, 42, 54, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
+
+  --shadow-sm: var(--glass-shadow-static);
+  --shadow-md: var(--glass-shadow-float);
+  --shadow-lg: var(--glass-shadow-modal);
+
+  --gradient-primary: linear-gradient(136deg, #73899d 0%, #5e7387 54%, #536779 100%);
+  --gradient-success: linear-gradient(136deg, #759889, #5c7f70);
+  --gradient-danger: linear-gradient(136deg, #b8757b, #96575f);
+
+  --glass-ease: cubic-bezier(0.22, 0.72, 0.2, 1);
+  --glass-spring: cubic-bezier(0.2, 0.9, 0.24, 1.06);
+  --ui-spring: var(--glass-spring);
+  --lg26-pointer-x: 50vw;
+  --lg26-pointer-y: 28vh;
+}
+
+html:not([data-visual-theme])[data-theme='dark'],
+html[data-visual-theme='night'] {
+  color-scheme: dark;
+
+  /*
+   * Night palette:
+   * - graphite carries the depth without collapsing into pure black;
+   * - neutral silver is the primary focus/selection signal;
+   * - steel grey is reserved for a faint cold undertone only.
+   */
+  --glass-accent: #aeb7bd;
+  --glass-accent-hover: #c5ccd0;
+  --glass-accent-alt: #87949c;
+  --glass-accent-on: #151b20;
+  --glass-accent-soft: rgba(174, 183, 189, 0.13);
+  --glass-accent-soft-strong: rgba(174, 183, 189, 0.21);
+  --fog-depth: #1c2128;
+  --fog-mid-deep: #3a4451;
+  --fog-mid: #4a5563;
+  --fog-light: #6b7684;
+  --fog-lift: #8791a0;
+  --fog-highlight: #a7b0ba;
+  --fog-highlight-strong: #c4cad2;
+
+  --primary: var(--glass-accent);
+  --primary-hover: var(--glass-accent-hover);
+  --primary-light: var(--glass-accent-soft);
+  --accent: var(--glass-accent-alt);
+  --success: #82a598;
+  --warning: #b39b72;
+  --warning-strong: #c1aa80;
+  --danger: #bd7c84;
+
+  --bg-primary: var(--fog-depth);
+  --bg-secondary: rgba(37, 43, 50, 0.88);
+  --bg-surface: rgba(45, 52, 60, 0.8);
+  --bg-tertiary: rgba(68, 77, 85, 0.58);
+  --bg-card: rgba(48, 56, 64, 0.66);
+  --bg-hover: rgba(196, 202, 210, 0.09);
+
+  --text-primary: #edf0f2;
+  --text-secondary: #bec5ca;
+  --text-muted: #8f9aa2;
+  --text-inverse: #151b20;
+
+  --border: rgba(194, 202, 207, 0.16);
+  --border-light: rgba(220, 225, 228, 0.1);
+  --glass-edge: rgba(220, 226, 229, 0.19);
+  --glass-edge-low: rgba(206, 214, 219, 0.15);
+  --glass-edge-strong: rgba(218, 225, 229, 0.34);
+  --glass-highlight: rgba(232, 236, 238, 0.23);
+
+  /* Rear glass 13%, front/content glass 21%, controls one darker step. */
+  --glass-static-bg: rgba(196, 202, 210, 0.13);
+  --glass-float-bg: rgba(196, 202, 210, 0.24);
+  --glass-modal-bg: rgba(28, 33, 40, 0.9);
+  --glass-content-bg: rgba(196, 202, 210, 0.21);
+  --glass-control-bg: rgba(22, 27, 32, 0.56);
+  --glass-control-bg-hover: rgba(40, 47, 53, 0.68);
+  --glass-control-edge: rgba(226, 232, 235, 0.32);
+  --glass-control-edge-dark: rgba(2, 5, 8, 0.44);
+  --glass-control-glint: rgba(235, 239, 241, 0.34);
+  --water-panel-opacity: 0.22;
+  --water-panel-opacity-soft: 0.12;
+  --water-control-opacity: 0.32;
+  --water-specular: rgba(232, 237, 239, 0.19);
+  --water-specular-soft: rgba(157, 170, 178, 0.085);
+  --glass-control-shadow: 0 13px 32px rgba(0, 0, 0, 0.36),
+    0 2px 8px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(233, 237, 239, 0.24),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.34);
+
+  --glass-shadow-static: 0 10px 32px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(204, 220, 232, 0.08);
+  --glass-shadow-float: 0 24px 64px rgba(0, 0, 0, 0.4),
+    0 4px 14px rgba(0, 0, 0, 0.23),
+    inset 0 1px 0 rgba(204, 220, 232, 0.14);
+  --glass-shadow-modal: 0 38px 104px rgba(0, 0, 0, 0.6),
+    0 10px 32px rgba(0, 0, 0, 0.31),
+    inset 0 1px 0 rgba(204, 220, 232, 0.17);
+
+  --gradient-primary: linear-gradient(136deg, #c5ccd0 0%, #a7b0b6 52%, #8d989f 100%);
+  --gradient-success: linear-gradient(136deg, #8caea1, #708f84);
+  --gradient-danger: linear-gradient(136deg, #c58990, #a3656e);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html {
+  background: #e8edf1;
+  font-family: var(--font-sans);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html:not([data-visual-theme])[data-theme='dark'],
+html[data-visual-theme='night'] {
+  background: var(--fog-depth);
+}
+
+body {
+  position: relative;
+  isolation: isolate;
+  color: var(--text-primary);
+  background:
+    radial-gradient(76rem 54rem at -9% -10%, rgba(177, 199, 216, 0.76), transparent 62%),
+    radial-gradient(64rem 46rem at 108% 8%, rgba(224, 231, 237, 0.68), transparent 64%),
+    radial-gradient(50rem 36rem at 48% 112%, rgba(180, 202, 218, 0.5), transparent 68%),
+    linear-gradient(146deg, #eef3f6 0%, #e3e9ee 50%, #d7e1e8 100%) !important;
+  background-attachment: fixed !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] body,
+html[data-visual-theme='night'] body {
+  background:
+    radial-gradient(82rem 58rem at -8% -12%, rgba(132, 140, 148, 0.42), transparent 61%),
+    radial-gradient(66rem 48rem at 105% 8%, rgba(102, 112, 120, 0.31), transparent 64%),
+    radial-gradient(58rem 42rem at 46% 116%, rgba(67, 76, 84, 0.38), transparent 68%),
+    radial-gradient(46rem 30rem at 62% 34%, rgba(173, 180, 185, 0.11), transparent 68%),
+    linear-gradient(148deg, #394149 0%, #292f36 30%, #1c2128 72%, #242a30 100%) !important;
+}
+
+/* Low-contrast ambient reflection. It never participates in document layout. */
+body::before {
+  content: '';
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.28;
+  background: radial-gradient(
+    34rem 28rem at var(--lg26-pointer-x) var(--lg26-pointer-y),
+    rgba(255, 255, 255, 0.18),
+    transparent 74%
+  );
+  transition: opacity 240ms var(--glass-ease);
+}
+
+/* Slow ambient refraction behind the application. It is transform-only so the
+   WebView compositor can keep it on the GPU without repainting page content. */
+body::after {
+  content: '';
+  position: fixed;
+  z-index: 0;
+  inset: -18%;
+  pointer-events: none;
+  opacity: 0.3;
+  background:
+    radial-gradient(34% 29% at 22% 28%, rgba(191, 211, 226, 0.28), transparent 72%),
+    radial-gradient(30% 27% at 76% 66%, rgba(129, 158, 182, 0.2), transparent 74%);
+  filter: blur(26px) saturate(0.82);
+  transform: translate3d(-1.5%, -0.8%, 0) scale(1.02);
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+  animation: glass-ambient-drift 18s ease-in-out infinite alternate;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] body::before,
+html[data-visual-theme='night'] body::before {
+  opacity: 0.2;
+  background: radial-gradient(
+    36rem 30rem at var(--lg26-pointer-x) var(--lg26-pointer-y),
+    rgba(164, 187, 211, 0.1),
+    transparent 75%
+  );
+}
+
+html:not([data-visual-theme])[data-theme='dark'] body::after,
+html[data-visual-theme='night'] body::after {
+  inset: -22%;
+  opacity: 0.56;
+  background:
+    radial-gradient(38% 32% at 16% 24%, rgba(196, 202, 210, 0.2), rgba(135, 145, 160, 0.1) 42%, transparent 74%),
+    radial-gradient(40% 35% at 78% 18%, rgba(107, 118, 132, 0.28), rgba(74, 85, 99, 0.13) 46%, transparent 76%),
+    radial-gradient(44% 38% at 64% 78%, rgba(135, 145, 160, 0.17), rgba(58, 68, 81, 0.12) 48%, transparent 76%),
+    radial-gradient(34% 30% at 27% 82%, rgba(74, 85, 99, 0.24), transparent 73%),
+    radial-gradient(20% 18% at 48% 36%, rgba(196, 202, 210, 0.11), transparent 72%);
+  filter: blur(54px) saturate(0.52) contrast(1.04);
+  mix-blend-mode: screen;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+::selection {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--glass-accent) 30%, transparent);
+}
+
+body,
+button,
+input,
+textarea,
+select {
+  font-family: var(--font-sans);
+}
+
+h1,
+h2,
+h3,
+.page-title,
+.modal-title,
+.settings-title,
+.jimeng-title {
+  font-family: var(--font-display);
+  color: var(--text-primary);
+}
+
+p,
+.description,
+.subtitle,
+.hint,
+.helper-text {
+  color: var(--text-secondary);
+}
+
+.kicker,
+.eyebrow,
+.page-kicker,
+.account-toolbar-kicker,
+.jimeng-kicker,
+.floating-card-hud-strip {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Static glass: visual treatment only; no sizing or placement overrides. */
+:where(
+  .side-nav,
+  .top-spatial-nav,
+  .page-tabs-row,
+  .toolbar,
+  .account-selection-toolbar,
+  .account-command-dock,
+  .page-top-strip,
+  .compact-status-panel,
+  .jimeng-tabs,
+  .jimeng-service-bar
+) {
+  border-color: var(--glass-edge-low) !important;
+  background-color: var(--glass-static-bg) !important;
+  background-image:
+    radial-gradient(120% 110% at 8% -28%, rgba(255, 255, 255, 0.15), transparent 46%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 46%) !important;
+  -webkit-backdrop-filter: blur(var(--glass-static-blur)) saturate(158%) contrast(1.08) brightness(1.035) !important;
+  backdrop-filter: blur(var(--glass-static-blur)) saturate(158%) contrast(1.08) brightness(1.035) !important;
+  box-shadow: var(--glass-shadow-static) !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] :where(.side-nav, .top-spatial-nav, .page-tabs-row, .toolbar),
+html[data-visual-theme='night'] :where(.side-nav, .top-spatial-nav, .page-tabs-row, .toolbar) {
+  background-image:
+    linear-gradient(135deg, rgba(196, 202, 210, 0.12) 0%, rgba(167, 176, 186, 0.045) 15%, transparent 34%),
+    linear-gradient(180deg, rgba(196, 202, 210, 0.07), transparent 42%) !important;
+}
+
+/* IndustrialChrome is a full-window HUD coordinate layer, not a panel. Applying
+   backdrop-filter to it blurs every real page underneath. Keep the HUD itself
+   transparent and put glass only on its interactive controls. */
+.industrial-chrome {
+  background: transparent !important;
+  border-color: transparent !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+:where(.industrial-lite-toggle, .industrial-theme-toggle) {
+  border-color: var(--glass-edge-low) !important;
+  background-color: color-mix(in srgb, var(--glass-static-bg) 88%, transparent) !important;
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 5px 16px rgba(26, 41, 54, 0.09) !important;
+  -webkit-backdrop-filter: saturate(108%) blur(8px) !important;
+  backdrop-filter: saturate(108%) blur(8px) !important;
+}
+
+/* Existing content surfaces keep their original geometry. */
+:where(
+  .dashboard-data-scene-header,
+  .scene-header,
+  .launchpad-primary,
+  .launchpad-secondary,
+  .model-gallery-card,
+  .main-card,
+  .stat-card,
+  .account-card,
+  .account-mini-card,
+  .account-overview-card,
+  .settings-card,
+  .settings-section,
+  .glass-card,
+  .codex-account-card,
+  .codex-provider-card,
+  .codex-provider-detail-card,
+  .codex-api-service-panel,
+  .codex-api-service-summary-card,
+  .codex-api-service-account-card,
+  .codex-local-access-card,
+  .codex-local-access-stat-card,
+  .codex-local-access-config-card,
+  .codex-api-service-hero,
+  .mm-api-panel,
+  .mm-api-summary-card,
+  .mm-api-hero,
+  .mm-provider-strip,
+  .mm-account,
+  .mm-test-panel,
+  .jimeng-panel,
+  .jimeng-studio,
+  .jimeng-stat-grid article,
+  .jimeng-canvas-panel,
+  .egress-route-panel,
+  .egress-source-panel,
+  .cle-api-panel-section
+) {
+  border-color: var(--glass-edge-low) !important;
+  background-color: var(--glass-content-bg) !important;
+  background-image:
+    radial-gradient(130% 100% at 4% -20%, rgba(255, 255, 255, 0.12), transparent 43%),
+    radial-gradient(90% 80% at 102% 110%, color-mix(in srgb, var(--glass-accent) 7%, transparent), transparent 52%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 58%) !important;
+  background-size: 165% 150%, 140% 140%, 100% 100% !important;
+  background-position: 0% 0%, 100% 100%, 0 0 !important;
+  -webkit-backdrop-filter: blur(var(--glass-content-blur)) saturate(152%) contrast(1.075) brightness(1.025) !important;
+  backdrop-filter: blur(var(--glass-content-blur)) saturate(152%) contrast(1.075) brightness(1.025) !important;
+  box-shadow:
+    0 14px 38px rgba(37, 54, 69, 0.1),
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 -1px 0 color-mix(in srgb, var(--glass-accent) 8%, transparent) !important;
+  transition:
+    border-color 180ms var(--glass-ease),
+    box-shadow 190ms var(--glass-ease),
+    background-color 180ms var(--glass-ease),
+    background-position 520ms var(--glass-ease),
+    transform 210ms var(--glass-spring) !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] :where(
+  .dashboard-data-scene-header, .scene-header, .launchpad-primary,
+  .launchpad-secondary, .model-gallery-card, .main-card, .stat-card,
+  .account-card, .account-mini-card, .account-overview-card,
+  .settings-card, .settings-section, .glass-card, .codex-account-card,
+  .codex-provider-card, .codex-provider-detail-card, .codex-api-service-panel,
+  .codex-api-service-summary-card, .codex-api-service-account-card,
+  .codex-local-access-card, .codex-local-access-stat-card,
+  .codex-local-access-config-card, .codex-api-service-hero, .mm-api-panel,
+  .mm-api-summary-card, .mm-api-hero, .mm-provider-strip, .mm-account, .mm-test-panel,
+  .jimeng-panel, .jimeng-studio, .jimeng-stat-grid article,
+  .jimeng-canvas-panel, .egress-route-panel, .egress-source-panel,
+  .cle-api-panel-section
+),
+html[data-visual-theme='night'] :where(
+  .dashboard-data-scene-header, .scene-header, .launchpad-primary,
+  .launchpad-secondary, .model-gallery-card, .main-card, .stat-card,
+  .account-card, .account-mini-card, .account-overview-card,
+  .settings-card, .settings-section, .glass-card, .codex-account-card,
+  .codex-provider-card, .codex-provider-detail-card, .codex-api-service-panel,
+  .codex-api-service-summary-card, .codex-api-service-account-card,
+  .codex-local-access-card, .codex-local-access-stat-card,
+  .codex-local-access-config-card, .codex-api-service-hero, .mm-api-panel,
+  .mm-api-summary-card, .mm-api-hero, .mm-provider-strip, .mm-account, .mm-test-panel,
+  .jimeng-panel, .jimeng-studio, .jimeng-stat-grid article,
+  .jimeng-canvas-panel, .egress-route-panel, .egress-source-panel,
+  .cle-api-panel-section
+) {
+  background-image:
+    linear-gradient(135deg, rgba(196, 202, 210, 0.2) 0%, rgba(167, 176, 186, 0.085) 12%, transparent 31%),
+    radial-gradient(58% 46% at 7% 3%, rgba(196, 202, 210, 0.15), transparent 68%),
+    radial-gradient(92% 82% at 102% 110%, rgba(107, 118, 132, 0.1), transparent 56%) !important;
+  box-shadow:
+    0 18px 48px rgba(9, 12, 16, 0.28),
+    inset 0 1px 0 rgba(226, 230, 235, 0.3),
+    inset 0 -1px 0 rgba(167, 176, 186, 0.07) !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :where(
+    .main-card, .stat-card, .account-card, .settings-card,
+    .codex-api-service-panel, .codex-api-service-summary-card,
+    .jimeng-panel, .jimeng-studio, .jimeng-stat-grid article
+  ):hover {
+    border-color: var(--glass-edge-strong) !important;
+    box-shadow: 0 15px 40px rgba(36, 54, 69, 0.13), inset 0 1px 0 var(--glass-highlight) !important;
+    background-position: 18% 8%, 82% 86%, 0 0 !important;
+    transform: translate3d(0, -1px, 0);
+  }
+}
+
+/*
+ * Page atmosphere. These declarations do not touch grid, padding, dimensions
+ * or component placement; they only let the shared steel-blue environment
+ * remain visible behind every product area.
+ */
+:where(
+  .dashboard-scene,
+  .accounts-page,
+  .ghcp-accounts-page,
+  .codex-accounts-page,
+  .codex-api-service-page,
+  .mm-api-page,
+  .settings-content,
+  .jimeng-page
+) {
+  background-color: transparent !important;
+  background-image:
+    radial-gradient(44rem 30rem at 12% 0%, color-mix(in srgb, var(--glass-accent) 7%, transparent), transparent 70%),
+    radial-gradient(42rem 28rem at 96% 18%, rgba(205, 220, 232, 0.055), transparent 72%) !important;
+}
+
+/*
+ * Secondary content glass. These are the surfaces that were still rendered as
+ * flat opaque blocks by page-local styles.
+ */
+:where(
+  .settings-group,
+  .about-container,
+  .grid-view-container,
+  .account-table-container,
+  .account-table,
+  .tag-group-section,
+  .folder-inline-card,
+  .empty-state,
+  .codex-local-access-card,
+  .codex-api-service-table,
+  .codex-api-service-log-panel,
+  .codex-api-service-copy-row,
+  .codex-api-service-input-row,
+  .codex-api-service-compat-panel,
+  .codex-api-service-key-card,
+  .codex-api-service-timeout-section,
+  .mm-model-table,
+  .mm-key,
+  .mm-repair-report,
+  .jimeng-command-bar,
+  .jimeng-account-list article,
+  .jimeng-task-list article
+) {
+  border-color: var(--glass-edge-low) !important;
+  background-color: color-mix(in srgb, var(--glass-content-bg) 88%, transparent) !important;
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.065), transparent 34%),
+    radial-gradient(90% 90% at 0% 0%, color-mix(in srgb, var(--glass-accent) 6%, transparent), transparent 62%) !important;
+  -webkit-backdrop-filter: blur(var(--glass-content-blur)) saturate(150%) contrast(1.07) brightness(1.02) !important;
+  backdrop-filter: blur(var(--glass-content-blur)) saturate(150%) contrast(1.07) brightness(1.02) !important;
+  box-shadow:
+    0 10px 28px rgba(32, 49, 63, 0.08),
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 82%, transparent) !important;
+}
+
+/* Rows stay structurally identical while reading as panes inside the glass. */
+:where(
+  .settings-row,
+  .account-table tbody tr,
+  .codex-api-service-log-row,
+  .codex-api-service-pricing-row,
+  .codex-api-service-account-model-row,
+  .mm-model-table .row,
+  .mm-repair-check,
+  .jimeng-check-list > div
+) {
+  border-color: var(--glass-edge-low) !important;
+  background-color: color-mix(in srgb, var(--glass-static-bg) 48%, transparent) !important;
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.025), transparent 46%) !important;
+  transition:
+    background-color 170ms var(--glass-ease),
+    border-color 170ms var(--glass-ease),
+    box-shadow 180ms var(--glass-ease) !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :where(
+    .settings-row,
+    .account-table tbody tr,
+    .codex-api-service-log-row,
+    .codex-api-service-pricing-row,
+    .codex-api-service-account-model-row,
+    .mm-model-table .row,
+    .mm-repair-check,
+    .jimeng-check-list > div
+  ):hover {
+    border-color: var(--glass-edge-strong) !important;
+    background-color: color-mix(in srgb, var(--glass-accent) 7%, var(--glass-static-bg)) !important;
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--glass-accent) 42%, transparent) !important;
+  }
+}
+
+/* Floating glass. */
+:where(
+  .quick-settings-popover,
+  .spatial-nav-more-panel,
+  .side-nav-more-popover,
+  .dropdown-menu,
+  .account-select-menu,
+  .codex-speed-menu-options,
+  .codex-auto-repair-mode-menu,
+  .codex-provider-card-select-menu,
+  .codex-api-service-client-host-menu,
+  .codex-local-access-address-menu,
+  .codex-local-access-title-mode-menu,
+  .codex-visibility-repair-instance-menu,
+  .export-json-toolbar-dropdown,
+  .single-select-dropdown-menu,
+  .multi-select-filter-dropdown-menu,
+  .platform-group-switcher-menu,
+  .filter-popover,
+  [role='menu'],
+  [role='listbox']
+) {
+  border-color: var(--glass-edge-strong) !important;
+  background-color: var(--glass-float-bg) !important;
+  background-image: linear-gradient(180deg, var(--glass-highlight) 0, transparent 2px, transparent 44%) !important;
+  -webkit-backdrop-filter: blur(var(--glass-float-blur)) saturate(160%) contrast(1.085) brightness(1.025) !important;
+  backdrop-filter: blur(var(--glass-float-blur)) saturate(160%) contrast(1.085) brightness(1.025) !important;
+  box-shadow: var(--glass-shadow-float) !important;
+  transform-origin: var(--glass-origin, top center);
+  animation: glass-float-in 170ms var(--glass-ease) both;
+}
+
+/* Modal glass: opaque enough to keep attention on content. */
+:where(
+  .modal-overlay,
+  .global-modal-overlay,
+  .qs-overlay,
+  .confirm-overlay,
+  .close-dialog-overlay,
+  .wechat-qr-backdrop,
+  .floating-card-close-confirm-backdrop,
+  [class*='-modal-overlay'],
+  [class*='-dialog-overlay'],
+  [class*='-confirm-overlay']
+) {
+  background: rgba(12, 18, 24, 0.46) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(82%) !important;
+  backdrop-filter: blur(12px) saturate(82%) !important;
+}
+
+:where(
+  .modal,
+  .global-modal,
+  .qs-modal,
+  .confirm-dialog,
+  .close-dialog,
+  .wechat-qr-modal,
+  .floating-card-close-confirm-dialog,
+  [role='dialog'],
+  [aria-modal='true']
+) {
+  border-color: var(--glass-edge-strong) !important;
+  background-color: var(--glass-modal-bg) !important;
+  background-image: linear-gradient(180deg, var(--glass-highlight) 0, transparent 2px, transparent 36%) !important;
+  -webkit-backdrop-filter: blur(var(--glass-modal-blur)) saturate(132%) contrast(1.04) !important;
+  backdrop-filter: blur(var(--glass-modal-blur)) saturate(132%) contrast(1.04) !important;
+  box-shadow: var(--glass-shadow-modal) !important;
+  animation: glass-modal-in 230ms var(--glass-spring) both;
+}
+
+/* Buttons: new finish, original placement and dimensions. */
+:where(button:not(.industrial-theme-toggle), .btn, .button, [role='button']:not(.industrial-theme-toggle)) {
+  transition: color 150ms var(--glass-ease), border-color 160ms var(--glass-ease),
+    background-color 170ms var(--glass-ease), background-position 280ms var(--glass-ease),
+    box-shadow 180ms var(--glass-ease), filter 160ms var(--glass-ease),
+    transform 150ms var(--glass-ease) !important;
+}
+
+:where(
+  button:not(.industrial-theme-toggle),
+  .btn,
+  .button,
+  [role='button']:not(.industrial-theme-toggle),
+  .jimeng-button,
+  .floating-card-button,
+  .folder-icon-btn,
+  .card-action-btn,
+  .action-btn,
+  .view-btn,
+  .filter-tab,
+  .page-tab,
+  .single-select-dropdown-trigger,
+  .platform-group-switcher-trigger
+) {
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: color-mix(
+    in srgb,
+    var(--glass-control-edge) 72%,
+    var(--glass-control-edge-dark)
+  ) !important;
+  background-color: var(--glass-control-bg) !important;
+  background-image:
+    radial-gradient(
+      112% 156% at var(--button-glow-x, 18%) var(--button-glow-y, -28%),
+      var(--glass-control-glint) 0%,
+      color-mix(in srgb, var(--glass-control-glint) 44%, transparent) 18%,
+      transparent 48%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--glass-control-glint) 40%, transparent) 0%,
+      transparent 34%,
+      color-mix(in srgb, var(--glass-accent) 9%, transparent) 100%
+    ) !important;
+  background-blend-mode: screen, normal !important;
+  background-clip: padding-box !important;
+  -webkit-backdrop-filter: blur(9px) saturate(172%) contrast(1.09) brightness(1.035) !important;
+  backdrop-filter: blur(9px) saturate(172%) contrast(1.09) brightness(1.035) !important;
+  box-shadow: var(--glass-control-shadow) !important;
+  background-size: 190% 190%, 100% 100% !important;
+  background-position: 100% 0%, 0 0 !important;
+}
+
+:where(
+  button:not(.industrial-theme-toggle),
+  .btn,
+  .button,
+  [role='button']:not(.industrial-theme-toggle),
+  .jimeng-button,
+  .floating-card-button,
+  .folder-icon-btn,
+  .card-action-btn,
+  .action-btn,
+  .view-btn,
+  .filter-tab,
+  .page-tab,
+  .single-select-dropdown-trigger,
+  .platform-group-switcher-trigger
+).is-pointer-lit {
+  border-color: color-mix(in srgb, var(--glass-accent) 34%, var(--glass-edge-strong)) !important;
+  box-shadow:
+    0 14px 34px color-mix(in srgb, var(--glass-accent) 16%, transparent),
+    0 3px 9px rgba(24, 40, 54, 0.12),
+    inset 0 1px 0 var(--glass-control-glint),
+    inset 0 -1px 0 color-mix(in srgb, var(--glass-accent) 16%, transparent) !important;
+  background-color: var(--glass-control-bg-hover) !important;
+  background-position: 0% 100%, 0 0 !important;
+}
+
+:where(
+  .btn-primary,
+  .primary-btn,
+  .jimeng-button.primary,
+  .jimeng-generate,
+  .floating-card-button--primary,
+  button[data-variant='primary'],
+  button.primary
+) {
+  color: var(--glass-accent-on) !important;
+  border-color: color-mix(in srgb, var(--glass-accent) 62%, transparent) !important;
+  background-color: color-mix(in srgb, var(--glass-accent) 36%, transparent) !important;
+  background-image:
+    radial-gradient(
+      108% 150% at var(--button-glow-x, 18%) var(--button-glow-y, -24%),
+      rgba(255, 255, 255, 0.28),
+      transparent 46%
+    ),
+    linear-gradient(
+      136deg,
+      color-mix(in srgb, var(--glass-accent-hover) 56%, transparent),
+      color-mix(in srgb, var(--glass-accent) 32%, transparent)
+    ) !important;
+  background-blend-mode: screen, normal !important;
+  box-shadow: 0 10px 27px color-mix(in srgb, var(--glass-accent) 23%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.54),
+    inset 0 -1px 0 color-mix(in srgb, var(--glass-accent-hover) 40%, transparent) !important;
+  background-size: 180% 180% !important;
+  animation: glass-primary-sheen 5.2s ease-in-out infinite !important;
+}
+
+html body .btn-primary,
+#root .btn.btn-primary,
+#root .primary-btn,
+#root .jimeng-generate,
+#root .floating-card-button--primary,
+#root button[data-variant='primary'],
+#root button.primary {
+  color: var(--glass-accent-on) !important;
+  border-color: color-mix(in srgb, var(--glass-accent) 62%, transparent) !important;
+  background-color: color-mix(in srgb, var(--glass-accent) 36%, transparent) !important;
+  background-image:
+    radial-gradient(
+      108% 150% at var(--button-glow-x, 18%) var(--button-glow-y, -24%),
+      rgba(255, 255, 255, 0.28),
+      transparent 46%
+    ),
+    linear-gradient(
+      136deg,
+      color-mix(in srgb, var(--glass-accent-hover) 56%, transparent),
+      color-mix(in srgb, var(--glass-accent) 32%, transparent)
+    ) !important;
+  background-blend-mode: screen, normal !important;
+  box-shadow: 0 10px 27px color-mix(in srgb, var(--glass-accent) 23%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.54),
+    inset 0 -1px 0 color-mix(in srgb, var(--glass-accent-hover) 40%, transparent) !important;
+  background-size: 180% 180% !important;
+  animation: glass-primary-sheen 5.2s ease-in-out infinite !important;
+}
+
+:where(
+  .btn-primary,
+  .primary-btn,
+  .jimeng-button.primary,
+  .jimeng-generate,
+  .floating-card-button--primary,
+  button[data-variant='primary'],
+  button.primary
+).is-pointer-lit {
+  background-image:
+    radial-gradient(
+      95% 140% at var(--button-glow-x, 50%) var(--button-glow-y, 20%),
+      rgba(255, 255, 255, 0.58),
+      transparent 48%
+    ),
+    linear-gradient(
+      136deg,
+      color-mix(in srgb, var(--glass-accent-hover) 70%, transparent),
+      color-mix(in srgb, var(--glass-accent) 48%, transparent)
+    ) !important;
+  background-blend-mode: screen, normal !important;
+}
+
+:where(.btn-danger, button.danger, button[data-variant='danger']) {
+  color: #fff !important;
+  border-color: color-mix(in srgb, var(--danger) 70%, transparent) !important;
+  background-color: color-mix(in srgb, var(--danger) 62%, transparent) !important;
+  background-image:
+    radial-gradient(
+      108% 150% at var(--button-glow-x, 18%) var(--button-glow-y, -24%),
+      rgba(255, 255, 255, 0.5),
+      transparent 46%
+    ),
+    linear-gradient(
+      136deg,
+      color-mix(in srgb, var(--danger) 76%, transparent),
+      color-mix(in srgb, var(--danger) 46%, transparent)
+    ) !important;
+  box-shadow: 0 9px 24px color-mix(in srgb, var(--danger) 23%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42) !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :where(button:not(.industrial-theme-toggle), .btn, .button, [role='button']:not(.industrial-theme-toggle)):hover:not(:disabled) {
+    border-color: var(--glass-edge-strong) !important;
+    filter: brightness(1.045) saturate(1.02);
+    background-position: 0% 100%, 0 0 !important;
+    box-shadow:
+      0 16px 38px color-mix(in srgb, var(--glass-accent) 14%, transparent),
+      0 4px 10px rgba(24, 40, 54, 0.11),
+      inset 0 1px 0 var(--glass-control-glint),
+      inset 0 -1px 0 color-mix(in srgb, var(--glass-accent) 16%, transparent) !important;
+    transform:
+      translate3d(
+        var(--button-shift-x, 0px),
+        calc(-1px + var(--button-shift-y, 0px)),
+        0
+      );
+  }
+
+  :where(
+    .btn-primary, .primary-btn, .jimeng-button.primary, .jimeng-generate,
+    .floating-card-button--primary, button[data-variant='primary'], button.primary
+  ):hover:not(:disabled) {
+    transform:
+      translate3d(
+        var(--button-shift-x, 0px),
+        calc(-2px + var(--button-shift-y, 0px)),
+        0
+      );
+    box-shadow: 0 11px 28px color-mix(in srgb, var(--glass-accent) 23%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
+  }
+}
+
+:where(button, .btn, [role='button']):active:not(:disabled) {
+  transform: translateY(0) scale(0.988);
+  transition-duration: 80ms !important;
+}
+
+:where(button, .btn, [role='button']).is-glass-pressed:not(:disabled) {
+  transform:
+    translate3d(0, 0, 0)
+    scale(0.965) !important;
+  filter: brightness(0.97) saturate(0.84) !important;
+  box-shadow:
+    inset 0 3px 8px rgba(25, 42, 56, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 3px 8px rgba(31, 48, 62, 0.08) !important;
+}
+
+:where(button, .btn, [role='button']).is-glass-rebound:not(:disabled) {
+  animation: glass-button-rebound 410ms var(--glass-spring) both !important;
+}
+
+:where(button, .btn, input, textarea, select, [role='button'], [role='option']):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--glass-accent) 72%, transparent) !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 5px var(--glass-accent-soft) !important;
+}
+
+:where(button, .btn, [role='button']):disabled,
+:where(button, .btn, [role='button'])[aria-disabled='true'] {
+  filter: saturate(0.45);
+  opacity: 0.5;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Inputs retain their page-defined size and placement. */
+:where(input, textarea, select, .input, .select, .textarea) {
+  color: var(--text-primary) !important;
+  border-color: var(--glass-edge-low) !important;
+  background-color: color-mix(in srgb, var(--bg-secondary) 44%, transparent) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(148%) contrast(1.055) !important;
+  backdrop-filter: blur(8px) saturate(148%) contrast(1.055) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16) !important;
+  transition: border-color 160ms var(--glass-ease), background-color 160ms var(--glass-ease),
+    box-shadow 180ms var(--glass-ease) !important;
+}
+
+:where(input, textarea)::placeholder {
+  color: var(--text-muted) !important;
+  opacity: 0.78;
+}
+
+:where(input, textarea, select):hover:not(:disabled) {
+  border-color: var(--glass-edge-strong) !important;
+}
+
+:where(input, textarea, select):focus {
+  border-color: color-mix(in srgb, var(--glass-accent) 60%, transparent) !important;
+  background-color: color-mix(in srgb, var(--bg-secondary) 58%, transparent) !important;
+}
+
+/* Selected navigation keeps the existing tab geometry. */
+:where(
+  .filter-tab.active,
+  .page-tab.active,
+  .nav-item.active,
+  .view-btn.active,
+  .add-tab.active,
+  .spatial-nav-item.active,
+  .spatial-nav-item[aria-current='page'],
+  .jimeng-tabs button.active,
+  .jimeng-segmented button.active,
+  .jimeng-mode-grid button.active,
+  [role='tab'][aria-selected='true']
+) {
+  color: var(--glass-accent-on) !important;
+  border-color: color-mix(in srgb, var(--glass-accent) 46%, transparent) !important;
+  background-color: color-mix(in srgb, var(--glass-accent) 36%, transparent) !important;
+  background-image:
+    radial-gradient(
+      105% 148% at var(--button-glow-x, 18%) var(--button-glow-y, -24%),
+      rgba(255, 255, 255, 0.26),
+      transparent 47%
+    ),
+    linear-gradient(
+      136deg,
+      color-mix(in srgb, var(--glass-accent-hover) 54%, transparent),
+      color-mix(in srgb, var(--glass-accent) 30%, transparent)
+    ) !important;
+  background-blend-mode: screen, normal !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.52),
+    inset 0 -1px 0 rgba(42, 61, 77, 0.2),
+    0 10px 27px color-mix(in srgb, var(--glass-accent) 22%, transparent) !important;
+  background-size: 180% 180% !important;
+  animation: glass-selected-breathe 4.6s ease-in-out infinite !important;
+}
+
+:where(.success, .status-success, .alert-success) { --status-color: var(--success); }
+:where(.warning, .status-warning, .alert-warning) { --status-color: var(--warning); }
+:where(.error, .danger, .status-error, .alert-error) { --status-color: var(--danger); }
+
+:where(.alert, .notice, .status-banner, .error-banner, .success-banner) {
+  border-color: color-mix(in srgb, var(--status-color, var(--glass-accent)) 30%, transparent) !important;
+  background: color-mix(in srgb, var(--status-color, var(--glass-accent)) 9%, var(--glass-content-bg)) !important;
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--status-color, var(--glass-accent)) 72%, transparent) !important;
+}
+
+/* Jimeng receives the same material palette without layout replacement. */
+.jimeng-page {
+  --jm-accent: var(--glass-accent) !important;
+  --jm-accent-bright: color-mix(in srgb, var(--glass-accent) 72%, var(--text-primary)) !important;
+  --jm-accent-soft: var(--glass-accent-soft) !important;
+  --jm-line: var(--glass-edge-low) !important;
+  --jm-line-strong: var(--glass-edge-strong) !important;
+  --jm-surface: var(--glass-content-bg) !important;
+  --jm-surface-raised: var(--glass-float-bg) !important;
+  --jm-panel: var(--glass-content-bg) !important;
+  --jm-border: var(--glass-edge-low) !important;
+}
+
+.jimeng-visual-review-shell {
+  color: var(--text-primary) !important;
+  background:
+    radial-gradient(58rem 34rem at 8% -4%, rgba(184, 201, 215, 0.4), transparent 66%),
+    radial-gradient(52rem 30rem at 96% 10%, rgba(214, 224, 232, 0.34), transparent 68%),
+    var(--bg-primary) !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] .jimeng-visual-review-shell,
+html[data-visual-theme='night'] .jimeng-visual-review-shell {
+  background:
+    radial-gradient(58rem 34rem at 8% -4%, rgba(46, 66, 83, 0.38), transparent 66%),
+    radial-gradient(52rem 30rem at 96% 10%, rgba(38, 55, 70, 0.28), transparent 68%),
+    var(--bg-primary) !important;
+}
+
+.jimeng-hero-mark,
+:where(.jimeng-tabs button.active, .jimeng-segmented button.active, .jimeng-mode-grid button.active) {
+  color: var(--glass-accent-on) !important;
+  border-color: color-mix(in srgb, var(--glass-accent) 48%, transparent) !important;
+  background-color: color-mix(in srgb, var(--glass-accent) 36%, transparent) !important;
+  background-image:
+    radial-gradient(110% 145% at 18% -22%, rgba(255, 255, 255, 0.28), transparent 48%),
+    linear-gradient(
+      136deg,
+      color-mix(in srgb, var(--glass-accent-hover) 52%, transparent),
+      color-mix(in srgb, var(--glass-accent) 28%, transparent)
+    ) !important;
+  background-blend-mode: screen, normal !important;
+  -webkit-backdrop-filter: blur(10px) saturate(165%) contrast(1.08) brightness(1.025) !important;
+  backdrop-filter: blur(10px) saturate(165%) contrast(1.08) brightness(1.025) !important;
+  box-shadow: 0 10px 27px color-mix(in srgb, var(--glass-accent) 21%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+}
+
+:where(.jimeng-eyebrow, .jimeng-endpoint-row b, .jimeng-device-intro > svg, .jimeng-device-status > svg) {
+  color: var(--glass-accent) !important;
+}
+
+.jimeng-hero::after {
+  opacity: 0.16 !important;
+}
+
+.jimeng-modal-backdrop {
+  background: rgba(10, 16, 22, 0.52) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(82%) !important;
+  backdrop-filter: blur(12px) saturate(82%) !important;
+}
+
+.jimeng-modal {
+  border-color: var(--glass-edge-strong) !important;
+  background: var(--glass-modal-bg) !important;
+  -webkit-backdrop-filter: blur(var(--glass-modal-blur)) saturate(132%) contrast(1.04) !important;
+  backdrop-filter: blur(var(--glass-modal-blur)) saturate(132%) contrast(1.04) !important;
+  box-shadow: var(--glass-shadow-modal) !important;
+}
+
+/* Infinite canvas outer chrome only; canvas layout remains untouched. */
+.infinite-workspace-page {
+  --workspace-line: var(--glass-edge-low) !important;
+  --workspace-panel: var(--glass-static-bg) !important;
+  color: var(--text-primary) !important;
+  background: var(--bg-primary) !important;
+}
+
+.infinite-workspace-bar,
+.infinite-workspace-credit {
+  border-color: var(--glass-edge-low) !important;
+  color: var(--text-muted) !important;
+  background: var(--glass-static-bg) !important;
+  -webkit-backdrop-filter: blur(var(--glass-static-blur)) saturate(154%) contrast(1.07) !important;
+  backdrop-filter: blur(var(--glass-static-blur)) saturate(154%) contrast(1.07) !important;
+  box-shadow: var(--glass-shadow-static) !important;
+}
+
+.infinite-workspace-nav {
+  border-color: var(--glass-edge-strong) !important;
+  background: var(--glass-float-bg) !important;
+  box-shadow: inset 0 1px 0 var(--glass-highlight) !important;
+}
+
+.infinite-workspace-nav button.is-active,
+.infinite-workspace-gate button {
+  color: var(--glass-accent-on) !important;
+  background: var(--gradient-primary) !important;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--glass-accent) 17%, transparent) !important;
+}
+
+.infinite-workspace-stage,
+.infinite-workspace-frame {
+  background: color-mix(in srgb, var(--bg-primary) 93%, #0e151c) !important;
+}
+
+.infinite-workspace-gate {
+  color: var(--text-primary) !important;
+  background:
+    radial-gradient(circle at 50% 42%, var(--glass-accent-soft), transparent 27rem),
+    var(--bg-primary) !important;
+}
+
+.infinite-workspace-gate-mark {
+  color: var(--glass-accent) !important;
+  border-color: var(--glass-edge-strong) !important;
+  background: var(--glass-content-bg) !important;
+  box-shadow: var(--glass-shadow-static) !important;
+}
+
+/* Keep iconography crisp over translucent surfaces. */
+:where(button, .btn, .nav-item, .filter-tab, .page-tab, .toolbar, .modal-header, .panel-title, .card-title) > svg:not([data-logo]) {
+  flex: 0 0 auto;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cursor-aura { display: none !important; }
+
+.ambient-interaction-layer,
+.ambient-interaction-layer::before,
+.ambient-depth,
+.ambient-grid,
+.ambient-caustic,
+.ambient-prism,
+.ambient-specks,
+.ambient-beam,
+.ambient-grain {
+  pointer-events: none !important;
+}
+
+.ambient-depth {
+  position: absolute;
+  inset: -2.5%;
+  transform: translate3d(var(--ambient-parallax-x, 0px), var(--ambient-parallax-y, 0px), 0);
+  transition: transform 360ms cubic-bezier(.18,.72,.2,1);
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.ambient-grid {
+  opacity: 0.1 !important;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.44), transparent 78%);
+}
+
+.ambient-beam {
+  opacity: 0.17 !important;
+  filter: blur(14px) saturate(0.6) !important;
+  animation-duration: 20s !important;
+}
+
+.ambient-caustic {
+  position: absolute;
+  inset: -28%;
+  opacity: 0.12;
+  background:
+    conic-gradient(
+      from 18deg at 54% 48%,
+      transparent 0 16%,
+      rgba(196, 214, 228, 0.24) 22%,
+      transparent 29% 52%,
+      rgba(116, 145, 169, 0.16) 59%,
+      transparent 68% 100%
+    );
+  filter: blur(22px) saturate(0.68);
+  transform: translate3d(-2%, -1%, 0) rotate(-4deg) scale(1.04);
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+  animation: glass-caustic-drift 26s ease-in-out infinite alternate;
+}
+
+.ambient-prism {
+  position: absolute;
+  width: 72vw;
+  height: 8vw;
+  min-height: 72px;
+  border-radius: 50%;
+  opacity: 0.17;
+  filter: blur(14px) saturate(0.72);
+  mix-blend-mode: screen;
+  backface-visibility: hidden;
+  will-change: transform, opacity;
+}
+
+.ambient-prism-a {
+  top: 11%;
+  left: -34%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(194, 213, 227, 0.08) 22%,
+    rgba(131, 160, 183, 0.3) 48%,
+    rgba(231, 239, 245, 0.12) 66%,
+    transparent
+  );
+  transform: rotate(-13deg) translate3d(-4%, 0, 0);
+  animation: glass-prism-a 13s ease-in-out infinite alternate;
+}
+
+.ambient-prism-b {
+  right: -36%;
+  bottom: 12%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(225, 235, 242, 0.1) 20%,
+    rgba(110, 141, 166, 0.25) 52%,
+    rgba(196, 214, 227, 0.08) 72%,
+    transparent
+  );
+  transform: rotate(16deg) translate3d(4%, 0, 0);
+  animation: glass-prism-b 15s ease-in-out infinite alternate;
+}
+
+.ambient-specks {
+  position: absolute;
+  inset: 7% 4% 12%;
+  opacity: 0.22;
+  background-image:
+    radial-gradient(circle at 9% 18%, rgba(238, 246, 250, .72) 0 1px, transparent 1.7px),
+    radial-gradient(circle at 26% 72%, rgba(127, 156, 178, .55) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 63% 14%, rgba(225, 236, 244, .68) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 84% 64%, rgba(121, 151, 174, .5) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 48% 88%, rgba(224, 235, 243, .6) 0 1px, transparent 1.6px);
+  background-size: 240px 210px, 280px 260px, 330px 230px, 300px 290px, 370px 320px;
+  animation: glass-specks-drift 18s linear infinite;
+  will-change: transform, opacity;
+}
+
+.ambient-beam-a {
+  background: radial-gradient(circle, rgba(178, 198, 214, 0.3), transparent 70%) !important;
+}
+
+.ambient-beam-b {
+  background: radial-gradient(circle, rgba(208, 220, 229, 0.24), transparent 72%) !important;
+}
+
+.ambient-beam-c {
+  top: 16%;
+  left: 35%;
+  width: 34vw;
+  opacity: 0.11 !important;
+  border-color: rgba(105, 132, 154, 0.12) !important;
+  background: radial-gradient(circle, rgba(141, 169, 191, 0.18), transparent 72%) !important;
+  animation-duration: 29s !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] .ambient-beam-a,
+html[data-visual-theme='night'] .ambient-beam-a {
+  background: radial-gradient(circle, rgba(74, 103, 127, 0.25), transparent 72%) !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] .ambient-beam-b,
+html[data-visual-theme='night'] .ambient-beam-b {
+  background: radial-gradient(circle, rgba(102, 127, 148, 0.17), transparent 74%) !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] .ambient-beam-c,
+html[data-visual-theme='night'] .ambient-beam-c {
+  background: radial-gradient(circle, rgba(120, 148, 171, 0.12), transparent 75%) !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] .ambient-prism,
+html[data-visual-theme='night'] .ambient-prism {
+  opacity: 0.2;
+  mix-blend-mode: screen;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] .ambient-specks,
+html[data-visual-theme='night'] .ambient-specks {
+  opacity: 0.27;
+}
+
+.ambient-grain {
+  opacity: 0.016 !important;
+  mix-blend-mode: soft-light !important;
+}
+
+/* Pointer-responsive surface refraction. The transform remains sub-degree so
+   content stays readable while the glass feels physically present. */
+:where(
+  .spatial-command-hero,
+  .main-card,
+  .stat-card,
+  .account-card,
+  .codex-account-card,
+  .settings-card,
+  .settings-group,
+  .codex-api-service-panel,
+  .codex-api-service-summary-card,
+  .mm-api-hero,
+  .mm-api-summary-card,
+  .mm-api-panel,
+  .folder-inline-card,
+  .model-gallery-card,
+  .jimeng-hero,
+  .jimeng-stat-grid article,
+  .jimeng-panel,
+  .jimeng-studio
+).is-pointer-active {
+  transform:
+    perspective(1200px)
+    rotateX(var(--tilt-x, 0deg))
+    rotateY(var(--tilt-y, 0deg))
+    translate3d(0, -1px, 0) !important;
+  transform-origin: var(--card-x, 50%) var(--card-y, 50%);
+  border-color: color-mix(in srgb, var(--glass-accent) 32%, var(--glass-edge-strong)) !important;
+  background-image:
+    radial-gradient(
+      520px circle at var(--card-x, 50%) var(--card-y, 50%),
+      color-mix(in srgb, var(--glass-highlight) 38%, transparent),
+      transparent 34%
+    ),
+    linear-gradient(
+      118deg,
+      color-mix(in srgb, var(--glass-accent) 8%, transparent),
+      transparent 38% 62%,
+      color-mix(in srgb, var(--glass-highlight) 13%, transparent)
+    ) !important;
+  background-blend-mode: screen, normal !important;
+  box-shadow:
+    var(--glass-shadow-float),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 color-mix(in srgb, var(--glass-accent) 12%, transparent) !important;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+/*
+ * Water-surface refraction layer.
+ *
+ * Unlike an opaque glass fill, this layer captures the actual backdrop,
+ * displaces it through the shared SVG kernels mounted by
+ * AmbientInteractionLayer, and adds a moving caustic highlight. It is painted
+ * behind component content, so text and icons stay perfectly sharp.
+ */
+.liquid-water-filter-defs {
+  position: fixed;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+html:not([data-performance-mode='lite']) body #root :is(
+  .side-nav,
+  .top-spatial-nav,
+  .page-tabs-row,
+  .toolbar,
+  .account-selection-toolbar,
+  .account-command-dock,
+  .page-top-strip,
+  .compact-status-panel,
+  .jimeng-tabs,
+  .jimeng-service-bar,
+  .dashboard-data-scene-header,
+  .scene-header,
+  .launchpad-primary,
+  .launchpad-secondary,
+  .model-gallery-card,
+  .main-card,
+  .stat-card,
+  .account-card,
+  .account-mini-card,
+  .account-overview-card,
+  .settings-card,
+  .settings-section,
+  .settings-group,
+  .glass-card,
+  .codex-account-card,
+  .codex-provider-card,
+  .codex-provider-detail-card,
+  .codex-api-service-panel,
+  .codex-api-service-summary-card,
+  .codex-api-service-account-card,
+  .codex-local-access-card,
+  .codex-local-access-stat-card,
+  .codex-local-access-config-card,
+  .codex-api-service-hero,
+  .mm-api-panel,
+  .mm-api-summary-card,
+  .mm-api-hero,
+  .mm-provider-strip,
+  .mm-account,
+  .mm-test-panel,
+  .jimeng-panel,
+  .jimeng-studio,
+  .jimeng-stat-grid article,
+  .jimeng-canvas-panel,
+  .egress-route-panel,
+  .egress-source-panel,
+  .cle-api-panel-section
+) {
+  position: relative;
+  isolation: isolate;
+}
+
+html:not([data-performance-mode='lite']) body #root :is(
+  .side-nav,
+  .top-spatial-nav,
+  .page-tabs-row,
+  .toolbar,
+  .account-selection-toolbar,
+  .account-command-dock,
+  .page-top-strip,
+  .compact-status-panel,
+  .jimeng-tabs,
+  .jimeng-service-bar,
+  .dashboard-data-scene-header,
+  .scene-header,
+  .launchpad-primary,
+  .launchpad-secondary,
+  .model-gallery-card,
+  .main-card,
+  .stat-card,
+  .account-card,
+  .account-mini-card,
+  .account-overview-card,
+  .settings-card,
+  .settings-section,
+  .settings-group,
+  .glass-card,
+  .codex-account-card,
+  .codex-provider-card,
+  .codex-provider-detail-card,
+  .codex-api-service-panel,
+  .codex-api-service-summary-card,
+  .codex-api-service-account-card,
+  .codex-local-access-card,
+  .codex-local-access-stat-card,
+  .codex-local-access-config-card,
+  .codex-api-service-hero,
+  .mm-api-panel,
+  .mm-api-summary-card,
+  .mm-api-hero,
+  .mm-provider-strip,
+  .mm-account,
+  .mm-test-panel,
+  .jimeng-panel,
+  .jimeng-studio,
+  .jimeng-stat-grid article,
+  .jimeng-canvas-panel,
+  .egress-route-panel,
+  .egress-source-panel,
+  .cle-api-panel-section
+)::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: var(--water-panel-opacity);
+  background:
+    radial-gradient(
+      92% 150% at var(--card-x, 16%) var(--card-y, -20%),
+      var(--water-specular) 0%,
+      transparent 24%
+    ),
+    radial-gradient(
+      74% 120% at 96% 110%,
+      var(--water-specular-soft) 0%,
+      transparent 48%
+    ),
+    linear-gradient(
+      112deg,
+      transparent 0 32%,
+      color-mix(in srgb, var(--water-specular) 54%, transparent) 46%,
+      transparent 58% 100%
+    );
+  background-size: 148% 164%, 138% 152%, 230% 100%;
+  background-position: 0% 0%, 100% 100%, 115% 0%;
+  -webkit-backdrop-filter: saturate(126%) contrast(1.035) brightness(1.018);
+  backdrop-filter: saturate(126%) contrast(1.035) brightness(1.018);
+  filter: none;
+  box-shadow:
+    inset 1px 1px 0 color-mix(in srgb, var(--water-specular) 72%, transparent),
+    inset -1px -1px 0 color-mix(in srgb, var(--glass-accent) 18%, transparent);
+  /* Keep the refraction and specular highlight, but hold the large panel
+     caustic still so account grids do not continuously repaint. */
+  animation: none;
+}
+
+html:not([data-performance-mode='lite']) body #root :is(
+  button:not(.industrial-theme-toggle),
+  .btn,
+  .button,
+  [role='button']:not(.industrial-theme-toggle)
+) {
+  position: relative;
+  isolation: isolate;
+}
+
+html:not([data-performance-mode='lite']) body #root :is(
+  button:not(.industrial-theme-toggle),
+  .btn,
+  .button,
+  [role='button']:not(.industrial-theme-toggle)
+)::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: var(--water-control-opacity);
+  background:
+    radial-gradient(
+      92% 150% at var(--button-glow-x, 18%) var(--button-glow-y, -26%),
+      var(--water-specular) 0%,
+      transparent 31%
+    ),
+    linear-gradient(
+      112deg,
+      transparent 0 30%,
+      color-mix(in srgb, var(--water-specular) 56%, transparent) 47%,
+      transparent 61% 100%
+    );
+  background-size: 160% 170%, 235% 100%;
+  background-position: 100% 0%, 118% 0%;
+  -webkit-backdrop-filter: saturate(138%) contrast(1.05) brightness(1.025);
+  backdrop-filter: saturate(138%) contrast(1.05) brightness(1.025);
+  filter: none;
+  box-shadow:
+    inset 1px 1px 0 color-mix(in srgb, var(--water-specular) 82%, transparent),
+    inset -1px -1px 0 color-mix(in srgb, var(--glass-accent) 24%, transparent);
+  transition:
+    opacity 180ms var(--glass-ease),
+    background-position 380ms var(--glass-ease),
+    filter 180ms var(--glass-ease);
+  /* Idle controls keep their static highlight. Motion starts only while the
+     pointer is actually lighting the control. */
+  animation: none;
+}
+
+html:not([data-performance-mode='lite']) body #root :is(
+  button,
+  .btn,
+  .button,
+  [role='button']
+).is-pointer-lit:not(:disabled)::before {
+  opacity: 1;
+  background-position: 0% 100%, 22% 0%;
+  filter: brightness(1.055) saturate(1.06);
+  animation: cle-water-control-drift 7.6s ease-in-out infinite alternate;
+}
+
+html:not([data-performance-mode='lite']) body #root :is(
+  button,
+  .btn,
+  .button,
+  [role='button']
+).is-glass-pressed:not(:disabled)::before {
+  animation: cle-water-control-press 420ms var(--glass-spring) both;
+}
+
+@keyframes cle-water-caustic-drift {
+  0% {
+    background-position: 0% 0%, 100% 100%, 115% 0%;
+    opacity: var(--water-panel-opacity-soft);
+  }
+  48% {
+    background-position: 28% 12%, 72% 86%, 48% 0%;
+  }
+  100% {
+    background-position: 12% 24%, 88% 72%, -24% 0%;
+    opacity: var(--water-panel-opacity);
+  }
+}
+
+@keyframes cle-water-control-drift {
+  from {
+    background-position: 100% 0%, 118% 0%;
+  }
+  to {
+    background-position: 0% 100%, -18% 0%;
+  }
+}
+
+@keyframes cle-water-control-press {
+  0% {
+    opacity: 1;
+    background-size: 160% 170%, 235% 100%;
+  }
+  45% {
+    opacity: 0.62;
+    background-size: 74% 92%, 160% 100%;
+  }
+  100% {
+    opacity: var(--water-control-opacity);
+    background-size: 160% 170%, 235% 100%;
+  }
+}
+
+html:not([data-performance-mode='lite']) :where(
+  .ambient-depth,
+  .ambient-caustic,
+  .ambient-prism,
+  .ambient-specks,
+  .startup-greeting,
+  .startup-greeting-aurora,
+  .startup-greeting-orbit,
+  .main-wrapper.page-transition-entering-a,
+  .main-wrapper.page-transition-entering-b,
+  button.is-pointer-lit,
+  .btn.is-pointer-lit
+) {
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+
+/* Page changes retain the established layout and animate only the composited
+   content plane. The diagonal veil masks lazy-page paint without blocking UI. */
+.main-wrapper.page-transition-entering-a,
+.main-wrapper.page-transition-entering-b {
+  pointer-events: none;
+  transform-origin: 48% 24%;
+  animation: glass-page-enter 500ms var(--glass-spring) both;
+}
+
+.main-wrapper.page-transition-entering-a::after,
+.main-wrapper.page-transition-entering-b::after {
+  content: '';
+  position: fixed;
+  z-index: 12000;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    linear-gradient(
+      112deg,
+      transparent 18%,
+      color-mix(in srgb, var(--glass-accent) 9%, transparent) 39%,
+      color-mix(in srgb, var(--glass-highlight) 56%, transparent) 50%,
+      transparent 68%
+    );
+  transform: translate3d(-108%, 0, 0) skewX(-8deg);
+  will-change: transform, opacity;
+  animation: glass-page-veil 520ms var(--glass-ease) both;
+}
+
+.loading-state {
+  position: relative;
+  overflow: hidden;
+  border-color: var(--glass-edge-low) !important;
+  background: color-mix(in srgb, var(--glass-content-bg) 72%, transparent) !important;
+}
+
+.loading-state::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 28%, rgba(255, 255, 255, 0.24) 48%, transparent 68%);
+  transform: translate3d(-110%, 0, 0);
+  animation: glass-loading-sweep 1.45s ease-in-out infinite;
+}
+
+@keyframes glass-float-in {
+  from { opacity: 0; translate: 0 -4px; scale: 0.99; }
+  to { opacity: 1; translate: 0 0; scale: 1; }
+}
+
+@keyframes glass-modal-in {
+  0% { opacity: 0; translate: 0 10px; scale: 0.98; }
+  72% { opacity: 1; translate: 0 -1px; scale: 1.001; }
+  100% { opacity: 1; translate: 0 0; scale: 1; }
+}
+
+@keyframes glass-ambient-drift {
+  0% {
+    opacity: 0.22;
+    transform: translate3d(-1.5%, -0.8%, 0) scale(1.02) rotate(-0.4deg);
+  }
+  55% {
+    opacity: 0.32;
+    transform: translate3d(1.2%, 0.9%, 0) scale(1.055) rotate(0.35deg);
+  }
+  100% {
+    opacity: 0.25;
+    transform: translate3d(0.3%, -1.1%, 0) scale(1.035) rotate(0.1deg);
+  }
+}
+
+@keyframes glass-caustic-drift {
+  0% {
+    opacity: 0.08;
+    transform: translate3d(-3%, -2%, 0) rotate(-5deg) scale(1.02);
+  }
+  48% {
+    opacity: 0.16;
+    transform: translate3d(2%, 1.5%, 0) rotate(2deg) scale(1.08);
+  }
+  100% {
+    opacity: 0.11;
+    transform: translate3d(1%, -1%, 0) rotate(5deg) scale(1.04);
+  }
+}
+
+@keyframes glass-prism-a {
+  0% { opacity: .1; transform: rotate(-13deg) translate3d(-8%, -8%, 0) scaleX(.9); }
+  52% { opacity: .24; transform: rotate(-10deg) translate3d(22%, 16%, 0) scaleX(1.12); }
+  100% { opacity: .14; transform: rotate(-15deg) translate3d(40%, 3%, 0) scaleX(.98); }
+}
+
+@keyframes glass-prism-b {
+  0% { opacity: .12; transform: rotate(16deg) translate3d(8%, 7%, 0) scaleX(.92); }
+  48% { opacity: .22; transform: rotate(12deg) translate3d(-18%, -12%, 0) scaleX(1.08); }
+  100% { opacity: .13; transform: rotate(18deg) translate3d(-38%, 4%, 0) scaleX(1); }
+}
+
+@keyframes glass-specks-drift {
+  0% { opacity: .14; transform: translate3d(0, 0, 0); }
+  50% { opacity: .28; transform: translate3d(12px, -16px, 0); }
+  100% { opacity: .14; transform: translate3d(24px, -32px, 0); }
+}
+
+@keyframes glass-button-rebound {
+  0% {
+    transform:
+      perspective(760px)
+      translate3d(0, 0, 1px)
+      rotateX(var(--button-tilt-x, 0deg))
+      rotateY(var(--button-tilt-y, 0deg))
+      scale3d(.965, .965, .965);
+  }
+  58% {
+    transform:
+      perspective(760px)
+      translate3d(
+        var(--button-shift-x, 0px),
+        calc(-3px + var(--button-shift-y, 0px)),
+        calc(var(--button-depth, 7px) + 3px)
+      )
+      rotateX(var(--button-tilt-x, 0deg))
+      rotateY(var(--button-tilt-y, 0deg))
+      scale3d(1.025, 1.025, 1.025);
+  }
+  100% {
+    transform:
+      perspective(760px)
+      translate3d(
+        var(--button-shift-x, 0px),
+        calc(-2px + var(--button-shift-y, 0px)),
+        var(--button-depth, 7px)
+      )
+      rotateX(var(--button-tilt-x, 0deg))
+      rotateY(var(--button-tilt-y, 0deg))
+      scale3d(1.012, 1.012, 1.012);
+  }
+}
+
+@keyframes glass-page-enter {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 17px, 0) scale(0.986);
+  }
+  64% {
+    opacity: 1;
+    transform: translate3d(0, -1px, 0) scale(1.001);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes glass-page-veil {
+  0% { opacity: 0; transform: translate3d(-108%, 0, 0) skewX(-8deg); }
+  24% { opacity: 0.68; }
+  76% { opacity: 0.24; }
+  100% { opacity: 0; transform: translate3d(108%, 0, 0) skewX(-8deg); }
+}
+
+@keyframes glass-loading-sweep {
+  0% { opacity: 0; transform: translate3d(-110%, 0, 0); }
+  22% { opacity: 0.42; }
+  78% { opacity: 0.22; }
+  100% { opacity: 0; transform: translate3d(110%, 0, 0); }
+}
+
+@keyframes glass-primary-sheen {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes glass-selected-breathe {
+  0%, 100% {
+    background-position: 0% 50%;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.28),
+      inset 0 -1px 0 rgba(42, 61, 77, 0.18),
+      0 9px 22px color-mix(in srgb, var(--glass-accent) 15%, transparent);
+  }
+  50% {
+    background-position: 100% 50%;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.34),
+      inset 0 -1px 0 rgba(42, 61, 77, 0.14),
+      0 11px 28px color-mix(in srgb, var(--glass-accent) 23%, transparent);
+  }
+}
+
+html[data-performance-mode='lite'] {
+  --glass-static-blur: 6px;
+  --glass-float-blur: 11px;
+  --glass-modal-blur: 18px;
+}
+
+html[data-performance-mode='lite'] body::before {
+  opacity: 0.13;
+}
+
+html[data-performance-mode='lite'] body::after {
+  opacity: 0.14;
+  filter: blur(18px) saturate(0.76);
+  animation-duration: 28s;
+}
+
+html[data-performance-mode='lite'] .ambient-beam {
+  opacity: 0.1 !important;
+  filter: blur(16px) saturate(0.55) !important;
+  animation-duration: 30s !important;
+}
+
+html[data-performance-mode='lite'] .ambient-caustic {
+  opacity: 0.07;
+  filter: blur(22px) saturate(0.58);
+  animation-duration: 38s;
+}
+
+html[data-performance-mode='lite'] .ambient-prism {
+  opacity: 0.1;
+  filter: blur(15px) saturate(0.58);
+  animation-duration: 22s;
+}
+
+html[data-performance-mode='lite'] .ambient-specks {
+  opacity: 0.13;
+  animation-duration: 30s;
+}
+
+html[data-performance-mode='lite'] .main-wrapper.page-transition-entering-a,
+html[data-performance-mode='lite'] .main-wrapper.page-transition-entering-b {
+  animation-duration: 320ms;
+}
+
+html[data-performance-mode='lite'] .main-wrapper.page-transition-entering-a::after,
+html[data-performance-mode='lite'] .main-wrapper.page-transition-entering-b::after {
+  animation-duration: 340ms;
+}
+
+html[data-performance-mode='lite'] .ambient-grain {
+  opacity: 0.008 !important;
+}
+
+/*
+ * Material authority layer.
+ *
+ * Several legacy themes still carry high-specificity `background: ... !important`
+ * declarations. Keep this block late and deliberately scoped through #root so
+ * every interactive control receives the same translucent material without
+ * altering its original geometry or layout.
+ */
+html body #root :is(
+  button:not(.industrial-theme-toggle),
+  .btn,
+  .button,
+  [role='button']:not(.industrial-theme-toggle)
+) {
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: color-mix(
+    in srgb,
+    var(--glass-control-edge) 72%,
+    var(--glass-control-edge-dark)
+  ) !important;
+  background-color: var(--glass-control-bg) !important;
+  background-image:
+    radial-gradient(
+      112% 156% at var(--button-glow-x, 18%) var(--button-glow-y, -28%),
+      var(--glass-control-glint) 0%,
+      color-mix(in srgb, var(--glass-control-glint) 44%, transparent) 18%,
+      transparent 48%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--glass-control-glint) 40%, transparent) 0%,
+      transparent 34%,
+      color-mix(in srgb, var(--glass-accent) 9%, transparent) 100%
+    ) !important;
+  background-blend-mode: screen, normal !important;
+  background-clip: padding-box !important;
+  -webkit-backdrop-filter: blur(9px) saturate(172%) contrast(1.09) brightness(1.035) !important;
+  backdrop-filter: blur(9px) saturate(172%) contrast(1.09) brightness(1.035) !important;
+  box-shadow: var(--glass-control-shadow) !important;
+}
+
+html body #root :is(
+  .btn-primary,
+  .primary-btn,
+  .jimeng-button.primary,
+  .jimeng-generate,
+  .floating-card-button--primary,
+  button[data-variant='primary'],
+  button.primary,
+  .filter-tab.active,
+  .page-tab.active,
+  .nav-item.active,
+  .view-btn.active,
+  .add-tab.active,
+  .spatial-nav-item.active,
+  .spatial-nav-item[aria-current='page'],
+  .jimeng-tabs button.active,
+  .jimeng-segmented button.active,
+  .jimeng-mode-grid button.active,
+  [role='tab'][aria-selected='true']
+) {
+  color: var(--glass-accent-on) !important;
+  border-color: color-mix(in srgb, var(--glass-accent) 62%, transparent) !important;
+  background-color: color-mix(in srgb, var(--glass-accent) 36%, transparent) !important;
+  background-image:
+    radial-gradient(
+      108% 150% at var(--button-glow-x, 18%) var(--button-glow-y, -24%),
+      rgba(255, 255, 255, 0.28),
+      transparent 46%
+    ),
+    linear-gradient(
+      136deg,
+      color-mix(in srgb, var(--glass-accent-hover) 54%, transparent),
+      color-mix(in srgb, var(--glass-accent) 30%, transparent)
+    ) !important;
+  background-blend-mode: screen, normal !important;
+  box-shadow:
+    0 11px 29px color-mix(in srgb, var(--glass-accent) 24%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.56),
+    inset 0 -1px 0 color-mix(in srgb, var(--glass-accent-hover) 42%, transparent) !important;
+}
+
+html body #root :is(
+  .btn-danger.btn-danger,
+  button.danger.danger,
+  button[data-variant='danger'][data-variant='danger']
+) {
+  color: #fff !important;
+  border-color: color-mix(in srgb, var(--danger) 70%, transparent) !important;
+  background-color: color-mix(in srgb, var(--danger) 72%, transparent) !important;
+  background-image:
+    radial-gradient(
+      108% 150% at var(--button-glow-x, 18%) var(--button-glow-y, -24%),
+      rgba(255, 255, 255, 0.25),
+      transparent 42%
+    ),
+    linear-gradient(
+      136deg,
+      color-mix(in srgb, var(--danger) 82%, transparent),
+      color-mix(in srgb, var(--danger) 58%, transparent)
+    ) !important;
+  box-shadow:
+    0 10px 26px color-mix(in srgb, var(--danger) 24%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.44) !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  html body #root :is(
+    button:not(.industrial-theme-toggle),
+    .btn,
+    .button,
+    [role='button']:not(.industrial-theme-toggle)
+  ):hover:not(:disabled) {
+    border-color: color-mix(
+      in srgb,
+      var(--glass-accent) 42%,
+      var(--glass-control-edge)
+    ) !important;
+    background-position: 0% 100%, 0 0 !important;
+    filter: brightness(1.05) saturate(1.04) !important;
+    box-shadow:
+      0 17px 40px color-mix(in srgb, var(--glass-accent) 17%, transparent),
+      0 4px 11px rgba(24, 40, 54, 0.12),
+      inset 0 1px 0 var(--glass-control-glint),
+      inset 0 -1px 0 color-mix(in srgb, var(--glass-accent) 18%, transparent) !important;
+    transform:
+      translate3d(
+        var(--button-shift-x, 0px),
+        calc(-1px + var(--button-shift-y, 0px)),
+        0
+      );
+  }
+}
+
+html body #root :is(
+  button,
+  .btn,
+  .button,
+  [role='button']
+).is-pointer-lit:not(:disabled) {
+  transform:
+    perspective(760px)
+    translate3d(
+      var(--button-shift-x, 0px),
+      calc(-2px + var(--button-shift-y, 0px)),
+      var(--button-depth, 7px)
+    )
+    rotateX(var(--button-tilt-x, 0deg))
+    rotateY(var(--button-tilt-y, 0deg))
+    scale3d(1.012, 1.012, 1.012) !important;
+  transform-origin: var(--button-origin-x, 50%) var(--button-origin-y, 50%);
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  will-change: transform;
+}
+
+html body #root :is(
+  button:not(.industrial-theme-toggle),
+  .btn,
+  .button,
+  [role='button']:not(.industrial-theme-toggle)
+).is-glass-pressed:not(:disabled) {
+  transform:
+    perspective(760px)
+    translate3d(0, 0, 1px)
+    rotateX(var(--button-tilt-x, 0deg))
+    rotateY(var(--button-tilt-y, 0deg))
+    scale3d(0.965, 0.965, 0.965) !important;
+  filter: brightness(0.96) saturate(0.9) !important;
+  box-shadow:
+    inset 0 4px 10px rgba(22, 39, 54, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 3px 9px rgba(31, 48, 62, 0.09) !important;
+}
+
+html body #root :is(
+  button:not(.industrial-theme-toggle),
+  .btn,
+  .button,
+  [role='button']:not(.industrial-theme-toggle)
+):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--glass-accent) 76%, transparent) !important;
+  outline-offset: 3px !important;
+  box-shadow:
+    0 0 0 5px var(--glass-accent-soft-strong),
+    var(--glass-control-shadow) !important;
+}
+
+html body #root :is(
+  button:not(.industrial-theme-toggle),
+  .btn,
+  .button,
+  [role='button']:not(.industrial-theme-toggle)
+):is(:disabled, [aria-disabled='true']) {
+  filter: saturate(0.45) !important;
+  opacity: 0.5 !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+html[data-performance-mode='lite'] :where(
+  .filter-tab.active,
+  .page-tab.active,
+  .nav-item.active,
+  .view-btn.active,
+  .btn-primary,
+  .primary-btn,
+  .jimeng-generate
+) {
+  animation-duration: 8s !important;
+}
+
+/*
+ * Dashboard clarity guard
+ *
+ * The launchpad uses a full-card transparent hit target. Treating that target
+ * as a glass button applies backdrop blur over the WebGL model underneath and
+ * makes the whole hero look out of focus. Keep the hit plane optically empty,
+ * and let the actual card surface own the glass material.
+ */
+html body #root .dashboard-scene .launchpad-primary-open {
+  border: 0 !important;
+  background: transparent !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+html body #root .dashboard-scene .launchpad-primary-open::before {
+  content: none !important;
+  display: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  filter: none !important;
+  animation: none !important;
+}
+
+/* Large navigational tiles are content panes, not oversized control buttons. */
+html body #root .dashboard-scene :is(
+  .launchpad-secondary,
+  .model-gallery-card
+) {
+  background-color: var(--glass-content-bg) !important;
+  background-image:
+    radial-gradient(120% 96% at 8% -18%, rgba(255, 255, 255, 0.1), transparent 42%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.028), transparent 58%) !important;
+  -webkit-backdrop-filter:
+    blur(var(--glass-content-blur))
+    saturate(142%)
+    contrast(1.055)
+    brightness(1.018) !important;
+  backdrop-filter:
+    blur(var(--glass-content-blur))
+    saturate(142%)
+    contrast(1.055)
+    brightness(1.018) !important;
+  box-shadow:
+    0 14px 38px rgba(20, 34, 46, 0.12),
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 -1px 0 color-mix(in srgb, var(--glass-accent) 9%, transparent) !important;
+}
+
+/* On the dashboard the primary stage is the restrained rear pane. The smaller
+   information tiles sit one optical level closer and therefore use the denser
+   content material above. */
+html:not([data-visual-theme])[data-theme='dark'] body #root .dashboard-scene .launchpad-primary,
+html[data-visual-theme='night'] body #root .dashboard-scene .launchpad-primary {
+  background-color: var(--glass-static-bg) !important;
+  background-image:
+    linear-gradient(135deg, rgba(196, 202, 210, 0.13) 0%, rgba(167, 176, 186, 0.04) 15%, transparent 34%),
+    radial-gradient(84% 68% at 8% 2%, rgba(196, 202, 210, 0.08), transparent 72%) !important;
+  /* The main model stage is already painted over the dashboard canvas. A
+     second backdrop blur washed the WebGL wireframe behind a foggy film. */
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow:
+    0 20px 58px rgba(8, 11, 15, 0.24),
+    inset 0 1px 0 rgba(226, 230, 235, 0.24),
+    inset 0 -1px 0 rgba(74, 85, 99, 0.16) !important;
+}
+
+/* Preserve the dashboard's fine grid; never replace it with broad water noise. */
+html body #root .dashboard-scene .launchpad-primary::before {
+  z-index: 0;
+  opacity: 0.075;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--text-primary) 13%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--text-primary) 13%, transparent) 1px, transparent 1px);
+  background-size: 42px 42px;
+  background-position: 0 0;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  filter: none;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 72%, transparent);
+  animation: none;
+}
+
+html body #root .dashboard-scene .launchpad-secondary::before {
+  content: none !important;
+  display: none !important;
+}
+
+/*
+ * Reference-detail pass:
+ * - the C.le. avatar floats above the glass via a thin silver rim and broad
+ *   shadow;
+ * - neutral metadata pills are outline-first instead of opaque lozenges;
+ * - action controls remain one density step darker than display surfaces.
+ */
+html:not([data-visual-theme])[data-theme='dark'] body #root :is(.spatial-nav-avatar, .brand-logo),
+html[data-visual-theme='night'] body #root :is(.spatial-nav-avatar, .brand-logo) {
+  border: 2px solid rgba(226, 230, 235, 0.58) !important;
+  box-shadow:
+    0 18px 42px rgba(5, 8, 12, 0.5),
+    0 4px 12px rgba(5, 8, 12, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.48) !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] body #root :where(
+  .badge,
+  .pill,
+  .mini-tag,
+  .model-tag,
+  .compact-plan-badge,
+  .floating-card-meta-pill,
+  .jimeng-auth-badge,
+  .installed-version-badge,
+  .group-account-badge
+),
+html[data-visual-theme='night'] body #root :where(
+  .badge,
+  .pill,
+  .mini-tag,
+  .model-tag,
+  .compact-plan-badge,
+  .floating-card-meta-pill,
+  .jimeng-auth-badge,
+  .installed-version-badge,
+  .group-account-badge
+) {
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent) !important;
+  border-color: rgba(196, 202, 210, 0.32) !important;
+  background-color: rgba(196, 202, 210, 0.025) !important;
+  background-image: linear-gradient(135deg, rgba(226, 230, 235, 0.07), transparent 42%) !important;
+  box-shadow: inset 0 1px 0 rgba(226, 230, 235, 0.1) !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] body #root :where(
+  button.icon-button,
+  .icon-btn,
+  .nav-item,
+  .filter-tab
+) svg:not([data-logo]),
+html[data-visual-theme='night'] body #root :where(
+  button.icon-button,
+  .icon-btn,
+  .nav-item,
+  .filter-tab
+) svg:not([data-logo]) {
+  fill: none !important;
+  stroke: currentColor;
+}
+
+/*
+ * Focus-distance motion governor
+ *
+ * The material hierarchy remains static < content < floating < modal.  The
+ * expensive refraction layers only move while the user is interacting; their
+ * current frame is retained at rest, so the glass does not visually disappear.
+ * One-shot page/modal feedback and explicit loading indicators are deliberately
+ * excluded and keep their original timing.
+ */
+html[data-frame-interacting='false'] body::after,
+html[data-frame-interacting='false'] .ambient-caustic,
+html[data-frame-interacting='false'] .ambient-prism,
+html[data-frame-interacting='false'] .ambient-specks,
+html[data-frame-interacting='false'] :where(
+  .btn-primary,
+  .primary-btn,
+  .jimeng-button.primary,
+  .jimeng-generate,
+  .floating-card-button--primary,
+  button[data-variant='primary'],
+  button.primary,
+  .filter-tab.active,
+  .page-tab.active,
+  .nav-item.active,
+  .spatial-nav-item.active,
+  .view-btn.active,
+  .industrial-tab.active,
+  .spatial-nav-item[aria-current='page'],
+  .jimeng-tabs button.active,
+  .jimeng-segmented button.active,
+  .jimeng-mode-grid button.active,
+  [role='tab'][aria-selected='true']
+) {
+  animation-play-state: paused !important;
+}
+
+html[data-frame-interacting='false'] .ambient-depth,
+html[data-frame-interacting='false'] body::after,
+html[data-frame-interacting='false'] .ambient-caustic,
+html[data-frame-interacting='false'] .ambient-prism,
+html[data-frame-interacting='false'] .ambient-specks,
+html[data-frame-interacting='false'] body #root :is(
+  .content-card,
+  .dashboard-card,
+  .stat-card,
+  .account-card,
+  .service-card,
+  .settings-card,
+  .panel,
+  .card,
+  .jimeng-panel,
+  .jimeng-hero,
+  .jimeng-canvas-panel,
+  .egress-route-panel,
+  .egress-source-panel,
+  .cle-api-panel-section
+)::before,
+html[data-frame-interacting='false'] body #root :is(
+  button:not(.industrial-theme-toggle),
+  .btn,
+  .button,
+  [role='button']:not(.industrial-theme-toggle)
+)::before {
+  animation-play-state: paused !important;
+  will-change: auto !important;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html[data-performance-mode='lite'] {
+    --glass-static-bg: rgba(235, 241, 245, 0.96);
+    --glass-float-bg: rgba(239, 244, 248, 0.99);
+    --glass-modal-bg: #ecf2f6;
+    --glass-content-bg: rgba(235, 241, 245, 0.99);
+  }
+
+  html[data-performance-mode='lite']:not([data-visual-theme])[data-theme='dark'],
+  html[data-performance-mode='lite'][data-visual-theme='night'] {
+    --glass-static-bg: rgba(20, 29, 38, 0.97);
+    --glass-float-bg: rgba(25, 36, 46, 0.99);
+    --glass-modal-bg: #121b23;
+    --glass-content-bg: rgba(23, 33, 42, 0.99);
+  }
+
+  html[data-performance-mode='lite'] :where(
+    .side-nav,
+    .top-spatial-nav,
+    .industrial-chrome,
+    [role='dialog'],
+    [role='menu'],
+    [role='listbox']
+  ) {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * 2026-08 graphite-night correction
+ * -------------------------------------------------------------------------
+ * The latest build includes both Jimeng API and Infinite Canvas. This layer
+ * only corrects their shared material language: neutral night colour,
+ * continuous corners and lower saturation. Geometry and page flow stay owned
+ * by the existing components.
+ */
+
+html:not([data-visual-theme])[data-theme='dark'] :where(
+  .side-nav,
+  .top-spatial-nav,
+  .page-tabs-row,
+  .toolbar,
+  .account-selection-toolbar,
+  .account-command-dock,
+  .page-top-strip,
+  .compact-status-panel,
+  .jimeng-tabs,
+  .jimeng-service-bar,
+  .infinite-workspace-bar,
+  .infinite-workspace-credit,
+  .infinite-workspace-nav
+),
+html[data-visual-theme='night'] :where(
+  .side-nav,
+  .top-spatial-nav,
+  .page-tabs-row,
+  .toolbar,
+  .account-selection-toolbar,
+  .account-command-dock,
+  .page-top-strip,
+  .compact-status-panel,
+  .jimeng-tabs,
+  .jimeng-service-bar,
+  .infinite-workspace-bar,
+  .infinite-workspace-credit,
+  .infinite-workspace-nav
+) {
+  background-color: rgba(128, 138, 145, 0.105) !important;
+  background-image:
+    linear-gradient(135deg, rgba(234, 238, 240, 0.13) 0%, rgba(189, 197, 202, 0.045) 16%, transparent 35%),
+    linear-gradient(180deg, rgba(226, 231, 233, 0.06), transparent 43%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(82%) contrast(1.06) brightness(1.025) !important;
+  backdrop-filter: blur(12px) saturate(82%) contrast(1.06) brightness(1.025) !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] :where(
+  .dashboard-data-scene-header, .scene-header, .launchpad-primary,
+  .launchpad-secondary, .model-gallery-card, .main-card, .stat-card,
+  .account-card, .account-mini-card, .account-overview-card,
+  .settings-card, .settings-section, .glass-card, .codex-account-card,
+  .codex-provider-card, .codex-provider-detail-card, .codex-api-service-panel,
+  .codex-api-service-summary-card, .codex-api-service-account-card,
+  .codex-local-access-card, .codex-local-access-stat-card,
+  .codex-local-access-config-card, .codex-api-service-hero, .mm-api-panel,
+  .mm-api-summary-card, .mm-api-hero, .mm-provider-strip, .mm-account,
+  .mm-test-panel, .jimeng-panel, .jimeng-studio, .jimeng-stat-grid article,
+  .jimeng-canvas-panel, .egress-route-panel, .egress-source-panel,
+  .cle-api-panel-section
+),
+html[data-visual-theme='night'] :where(
+  .dashboard-data-scene-header, .scene-header, .launchpad-primary,
+  .launchpad-secondary, .model-gallery-card, .main-card, .stat-card,
+  .account-card, .account-mini-card, .account-overview-card,
+  .settings-card, .settings-section, .glass-card, .codex-account-card,
+  .codex-provider-card, .codex-provider-detail-card, .codex-api-service-panel,
+  .codex-api-service-summary-card, .codex-api-service-account-card,
+  .codex-local-access-card, .codex-local-access-stat-card,
+  .codex-local-access-config-card, .codex-api-service-hero, .mm-api-panel,
+  .mm-api-summary-card, .mm-api-hero, .mm-provider-strip, .mm-account,
+  .mm-test-panel, .jimeng-panel, .jimeng-studio, .jimeng-stat-grid article,
+  .jimeng-canvas-panel, .egress-route-panel, .egress-source-panel,
+  .cle-api-panel-section
+) {
+  background-color: rgba(129, 139, 146, 0.13) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(80%) contrast(1.06) brightness(1.02) !important;
+  backdrop-filter: blur(12px) saturate(80%) contrast(1.06) brightness(1.02) !important;
+}
+
+html:not([data-visual-theme])[data-theme='dark'] .jimeng-visual-review-shell,
+html[data-visual-theme='night'] .jimeng-visual-review-shell {
+  background:
+    radial-gradient(58rem 34rem at 8% -4%, rgba(125, 136, 144, 0.3), transparent 66%),
+    radial-gradient(52rem 30rem at 96% 10%, rgba(83, 96, 106, 0.24), transparent 68%),
+    var(--bg-primary) !important;
+}
+
+/* Continuous iOS corner family. */
+html body #root :is(
+  .dashboard-data-scene-header, .scene-header, .launchpad-primary,
+  .launchpad-secondary, .main-card, .settings-section,
+  .codex-api-service-hero, .mm-api-hero, .jimeng-studio,
+  .jimeng-canvas-panel, .infinite-workspace-stage, .infinite-workspace-frame
+) {
+  border-radius: 28px !important;
+}
+
+html body #root :is(
+  .model-gallery-card, .stat-card, .account-card, .account-mini-card,
+  .account-overview-card, .settings-card, .glass-card, .codex-account-card,
+  .codex-provider-card, .codex-provider-detail-card,
+  .codex-api-service-panel, .codex-api-service-summary-card,
+  .codex-api-service-account-card, .codex-local-access-card,
+  .codex-local-access-stat-card, .codex-local-access-config-card,
+  .mm-api-panel, .mm-api-summary-card, .mm-provider-strip, .mm-account,
+  .mm-test-panel, .jimeng-panel, .jimeng-stat-grid article,
+  .egress-route-panel, .egress-source-panel, .cle-api-panel-section,
+  .settings-group, .about-container, .grid-view-container,
+  .account-table-container, .folder-inline-card, .empty-state,
+  .codex-api-service-table, .codex-api-service-log-panel, .mm-model-table
+) {
+  border-radius: 22px !important;
+}
+
+html body #root :is(
+  .side-nav, .top-spatial-nav, .page-tabs-row, .toolbar,
+  .account-selection-toolbar, .account-command-dock, .page-top-strip,
+  .compact-status-panel, .jimeng-tabs, .jimeng-service-bar,
+  .infinite-workspace-bar, .infinite-workspace-credit, .infinite-workspace-nav
+) {
+  border-radius: 22px !important;
+}
+
+html body #root :is(
+  .quick-settings-popover, .spatial-nav-more-panel, .side-nav-more-popover,
+  .dropdown-menu, .account-select-menu, .single-select-dropdown-menu,
+  .multi-select-filter-dropdown-menu, .platform-group-switcher-menu,
+  .filter-popover, [role='menu'], [role='listbox']
+) {
+  border-radius: 20px !important;
+}
+
+html body #root :is(
+  button:not(.industrial-theme-toggle), .btn, .button,
+  [role='button']:not(.industrial-theme-toggle), .jimeng-button,
+  .floating-card-button, .folder-icon-btn, .card-action-btn, .action-btn,
+  .view-btn, .filter-tab, .page-tab, .single-select-dropdown-trigger,
+  .platform-group-switcher-trigger
+) {
+  border-radius: 14px !important;
+}
+
+html body #root :is(input, textarea, select, .input, .select, .textarea, .search-box) {
+  border-radius: 15px !important;
+}
+
+html body #root :is(
+  .modal, .global-modal, .qs-modal, .confirm-dialog, .close-dialog,
+  .wechat-qr-modal, .floating-card-close-confirm-dialog,
+  [role='dialog'], [aria-modal='true']
+) {
+  border-radius: 30px !important;
+}
+
+html body #root :is(
+  .badge, .pill, .tag, .status-pill, .status-badge,
+  [class$='-badge'], [class$='-pill']
+) {
+  border-radius: 999px !important;
+}
+
+/* Startup waits for actual resources and keeps a neutral graphite material. */
+.startup-greeting {
+  cursor: default !important;
+  background:
+    radial-gradient(ellipse 56% 50% at 4% -8%, rgba(161, 170, 177, 0.46), transparent 68%),
+    radial-gradient(ellipse 46% 38% at 92% 14%, rgba(91, 105, 115, 0.32), transparent 69%),
+    radial-gradient(ellipse 58% 46% at 50% 112%, rgba(64, 73, 81, 0.38), transparent 72%),
+    linear-gradient(145deg, #4a535b 0%, #30373e 36%, #20262c 66%, #151a1f 100%) !important;
+  filter: saturate(0.72);
+  animation-duration: 760ms !important;
+}
+
+.startup-greeting.is-ready {
+  cursor: pointer !important;
+}
+
+.startup-greeting-aurora-a {
+  background: radial-gradient(ellipse, rgba(156, 168, 176, 0.48), rgba(88, 101, 111, 0.15) 48%, transparent 72%) !important;
+}
+
+.startup-greeting-aurora-b {
+  background: radial-gradient(ellipse, rgba(189, 198, 203, 0.34), rgba(77, 89, 98, 0.13) 52%, transparent 74%) !important;
+}
+
+.startup-greeting-core {
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 28px !important;
+  background: linear-gradient(145deg, rgba(235, 239, 241, 0.17), rgba(97, 108, 116, 0.08)) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(82%) !important;
+  backdrop-filter: blur(28px) saturate(82%) !important;
+}
+
+.startup-greeting-stages > span {
+  border-radius: 14px !important;
+  background-color: rgba(194, 202, 207, 0.035) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(82%) !important;
+  backdrop-filter: blur(12px) saturate(82%) !important;
+}
+
+.startup-greeting-stages > span:is(.is-active, .is-complete) {
+  border-color: rgba(222, 227, 230, 0.3) !important;
+  background-color: rgba(178, 187, 193, 0.12) !important;
+}
+
+.startup-greeting-progress span {
+  background: linear-gradient(90deg, #77838b, #b7c0c5 68%, #eef1f2) !important;
+  box-shadow: 0 0 14px rgba(184, 196, 202, 0.42) !important;
+  transform: scaleX(var(--startup-progress, 0)) !important;
+  animation: none !important;
+  transition: transform 180ms linear !important;
+}
+
+.startup-greeting.is-ready .startup-greeting-core {
+  border-color: rgba(255, 255, 255, 0.62);
+  box-shadow:
+    0 24px 62px rgba(0, 0, 0, 0.32),
+    0 0 34px rgba(187, 198, 204, 0.11),
+    inset 0 1px rgba(255, 255, 255, 0.5) !important;
+}
+
+/*
+ * Startup type containment
+ *
+ * Keep the opening copy inside the viewport at Windows text scaling and in a
+ * short window.  This affects the opening sequence only; application type and
+ * layout remain untouched.
+ */
+.startup-greeting-content {
+  box-sizing: border-box;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100dvh - 132px);
+  padding-inline: clamp(0px, 2vw, 18px);
+}
+
+.startup-greeting h1 {
+  max-width: 100%;
+  font-family:
+    "SF Pro Display", "SF Pro SC", "PingFang SC", "Microsoft YaHei UI",
+    "Microsoft YaHei", system-ui, sans-serif;
+  font-size: clamp(38px, min(6.8vw, 10.2dvh), 88px);
+  line-height: 1.08;
+  overflow-wrap: normal;
+  text-wrap: balance;
+}
+
+.startup-greeting-brand {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.startup-greeting :is(
+  .startup-greeting-eyebrow,
+  .startup-greeting-en,
+  .startup-greeting-quote-en,
+  .startup-greeting-meta,
+  .startup-greeting-stages > span
+) {
+  font-synthesis: none;
+}
+
+.startup-greeting :is(
+  .startup-greeting-eyebrow,
+  .startup-greeting-en,
+  .startup-greeting-quote-en,
+  .startup-greeting-meta
+) {
+  overflow-wrap: anywhere;
+}
+
+.startup-greeting-stages {
+  max-width: 100%;
+}
+
+.startup-greeting-stages > span {
+  box-sizing: border-box;
+  min-width: 0;
+  flex: 0 1 112px;
+  overflow: hidden;
+}
+
+.startup-greeting-stages > span,
+.startup-greeting-stages > span small {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@media (max-height: 700px) {
+  .startup-greeting-content {
+    max-height: calc(100dvh - 92px);
+  }
+
+  .startup-greeting-core {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 12px;
+    border-radius: 22px !important;
+  }
+
+  .startup-greeting-core img {
+    width: 48px;
+    height: 48px;
+    border-radius: 15px;
+  }
+
+  .startup-greeting-eyebrow {
+    margin-bottom: 10px;
+  }
+
+  .startup-greeting-en {
+    margin-top: 8px;
+  }
+
+  .startup-greeting-rule {
+    margin-block: 14px 12px;
+  }
+
+  .startup-greeting-content .startup-greeting-quote-en {
+    margin-top: 6px;
+  }
+
+  .startup-greeting-stages {
+    margin-top: 13px;
+  }
+}
+
+@media (max-height: 540px) {
+  .startup-greeting-content {
+    max-height: calc(100dvh - 72px);
+  }
+
+  .startup-greeting-core {
+    width: 52px;
+    height: 52px;
+    margin-bottom: 8px;
+    border-radius: 18px !important;
+  }
+
+  .startup-greeting-core img {
+    width: 40px;
+    height: 40px;
+    border-radius: 13px;
+  }
+
+  .startup-greeting-core-ring {
+    inset: -5px;
+  }
+
+  .startup-greeting-core-pulse {
+    inset: -10px;
+  }
+
+  .startup-greeting-eyebrow {
+    margin-bottom: 7px;
+    font-size: 8px;
+  }
+
+  .startup-greeting h1 {
+    font-size: clamp(32px, min(6.2vw, 9dvh), 56px);
+  }
+
+  .startup-greeting-en,
+  .startup-greeting-content .startup-greeting-quote-en {
+    display: none;
+  }
+
+  .startup-greeting-rule {
+    margin-block: 10px;
+  }
+
+  .startup-greeting-content p {
+    font-size: clamp(12px, 1.5vw, 15px);
+  }
+
+  .startup-greeting-stages {
+    margin-top: 9px;
+  }
+
+  .startup-greeting-stages > span {
+    padding-block: 6px;
+  }
+
+  .startup-greeting-meta-top {
+    top: 16px;
+  }
+
+  .startup-greeting-meta-bottom {
+    bottom: 14px;
+  }
+
+  .startup-greeting-progress {
+    bottom: 34px;
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Full-suite material convergence
+ * -------------------------------------------------------------------------
+ * These are existing surfaces discovered by the route audit.  Only material,
+ * corner continuity and feedback are normalized; their layout metrics remain
+ * owned by the original page styles.
+ */
+html body #root :is(
+  .grid-view-container,
+  .account-table-container,
+  .settings-group,
+  .ghcp-account-card,
+  .empty-state,
+  .list-panel,
+  .query-section,
+  .query-result-box,
+  .card-quota-grid
+) {
+  border: 1px solid var(--glass-edge) !important;
+  border-radius: 22px !important;
+  background-color: var(--glass-content-bg) !important;
+  background-image:
+    radial-gradient(46% 58% at 0% 0%, rgba(255, 255, 255, 0.17), transparent 68%),
+    linear-gradient(145deg, rgba(230, 234, 237, 0.035), rgba(7, 11, 15, 0.075)) !important;
+  -webkit-backdrop-filter:
+    blur(var(--glass-content-blur)) saturate(82%) contrast(1.055) brightness(1.022) !important;
+  backdrop-filter:
+    blur(var(--glass-content-blur)) saturate(82%) contrast(1.055) brightness(1.022) !important;
+  box-shadow:
+    0 16px 42px rgba(8, 12, 16, 0.2),
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 -1px 0 rgba(9, 13, 17, 0.17) !important;
+}
+
+html body #root :is(
+  .page-tabs,
+  .page-tabs.filter-tabs,
+  .jimeng-command-bar,
+  .codex-overview-selection-bar,
+  .launchpad-model-switcher,
+  .platform-layout-bulk-header
+) {
+  border: 1px solid var(--glass-edge) !important;
+  border-radius: 18px !important;
+  background-color: var(--glass-static-bg) !important;
+  background-image:
+    radial-gradient(42% 74% at 0% 0%, rgba(255, 255, 255, 0.18), transparent 68%),
+    linear-gradient(145deg, rgba(230, 234, 237, 0.035), rgba(7, 11, 15, 0.07)) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(82%) contrast(1.055) brightness(1.025) !important;
+  backdrop-filter: blur(16px) saturate(82%) contrast(1.055) brightness(1.025) !important;
+  box-shadow:
+    0 12px 30px rgba(8, 12, 16, 0.18),
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 -1px 0 rgba(9, 13, 17, 0.16) !important;
+}
+
+html body #root :is(
+  .ghcp-flow-notice,
+  .quota-error-inline,
+  .mfa-page-desc
+) {
+  border: 1px solid color-mix(in srgb, currentColor 18%, var(--glass-edge)) !important;
+  border-radius: 16px !important;
+  background-color: color-mix(in srgb, var(--glass-static-bg) 76%, transparent) !important;
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.115), transparent 34%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(80%) !important;
+  backdrop-filter: blur(12px) saturate(80%) !important;
+  box-shadow:
+    0 9px 24px rgba(8, 12, 16, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14) !important;
+}
+
+/* Rows remain rows: translucent grouping, not a new nested card layout. */
+html body #root :is(.settings-row, .platform-layout-row) {
+  border-color: color-mix(in srgb, var(--glass-edge) 72%, transparent) !important;
+  border-radius: 14px !important;
+  background-color: color-mix(in srgb, var(--glass-content-bg) 54%, transparent) !important;
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.065), transparent 30%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.075) !important;
+}
+
+html body #root :is(.settings-row, .platform-layout-row):hover {
+  border-color: var(--glass-edge-strong) !important;
+  background-color: color-mix(in srgb, var(--glass-content-bg) 76%, transparent) !important;
+}
+
+/* Modal shells are the front-most glass; their header/footer stay optically one
+   piece rather than appearing as opaque slabs inside the modal. */
+html body #root :is(
+  .modal.modal,
+  .global-modal.global-modal,
+  .qs-modal.qs-modal,
+  [role='dialog'][role='dialog'],
+  [aria-modal='true'][aria-modal='true']
+) {
+  border: 1px solid var(--glass-edge-strong) !important;
+  border-radius: 30px !important;
+  background-color: var(--glass-modal-bg) !important;
+  background-image:
+    radial-gradient(44% 54% at 0% 0%, rgba(255, 255, 255, 0.22), transparent 68%),
+    linear-gradient(145deg, rgba(230, 234, 237, 0.045), rgba(6, 10, 14, 0.09)) !important;
+  -webkit-backdrop-filter: blur(38px) saturate(84%) contrast(1.06) brightness(1.03) !important;
+  backdrop-filter: blur(38px) saturate(84%) contrast(1.06) brightness(1.03) !important;
+  box-shadow:
+    0 34px 92px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2) !important;
+  overflow: hidden;
+}
+
+html body #root :is(.modal-header, .modal-footer, .log-viewer-footer) {
+  border-color: color-mix(in srgb, var(--glass-edge) 72%, transparent) !important;
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.055), transparent 28%) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html body #root .log-viewer-content {
+  border: 1px solid var(--glass-edge) !important;
+  border-radius: 18px !important;
+  background-color: rgba(17, 22, 28, 0.64) !important;
+  background-image:
+    radial-gradient(42% 54% at 0% 0%, rgba(255, 255, 255, 0.1), transparent 68%),
+    linear-gradient(145deg, rgba(224, 230, 233, 0.025), rgba(4, 8, 12, 0.08)) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(78%) !important;
+  backdrop-filter: blur(18px) saturate(78%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Native selection controls keep their native meaning but join the continuous
+   corner family. */
+html body #root :is(
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea,
+  select
+) {
+  border-radius: 14px !important;
+}
+
+html body #root input[type='checkbox'] {
+  border-radius: 5px !important;
+}
+
+html body #root input[type='radio'] {
+  border-radius: 50% !important;
+}
+
+html body #root input[type='range'] {
+  border-radius: 999px !important;
+}
+
+/* The theme toggle is deliberately exempt from generic button paint; give it
+   its own iOS-style continuous capsule feedback. */
+html body #root .industrial-theme-toggle {
+  border: 1px solid var(--glass-edge) !important;
+  border-radius: 999px !important;
+  background-color: var(--glass-control-bg) !important;
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.16), transparent 42%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(82%) !important;
+  backdrop-filter: blur(14px) saturate(82%) !important;
+  box-shadow:
+    0 7px 18px rgba(8, 12, 16, 0.18),
+    inset 0 1px 0 var(--glass-control-glint) !important;
+  transition:
+    transform 180ms var(--glass-spring),
+    background-color 170ms var(--glass-ease),
+    box-shadow 180ms var(--glass-ease) !important;
+}
+
+html body #root .industrial-theme-toggle:active {
+  transform: scale(0.94) !important;
+}

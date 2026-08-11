@@ -94,6 +94,7 @@ import {
   formatCodexResetTime,
   formatCodexResetTimeAbsolute,
   isCodexApiKeyAccount,
+  isCodexAgentIdentityAccount,
   isCodexChatCompletionsApiKeyAccount,
   isCodexNewApiAccount,
   isCodexPendingOAuthAccount,
@@ -4714,6 +4715,14 @@ export function CodexAccountsPage() {
       const showSuccessMessage = options?.showSuccessMessage ?? true;
       const currentKind = await resolveCurrentCodexLaunchCredentialKind();
       const targetAccount = accounts.find((account) => account.id === accountId);
+      if (isCodexAgentIdentityAccount(targetAccount)) {
+        const error = t(
+          "codex.agentIdentity.apiOnly",
+          "Agent Identity 账号仅用于 API 服务，不能切换到 Codex 客户端或 CLI。",
+        );
+        setMessage({ text: error, tone: "error" });
+        throw new Error(error);
+      }
       const targetKind = targetAccount
         ? getCodexLaunchCredentialKind(targetAccount)
         : null;
@@ -6924,7 +6933,12 @@ export function CodexAccountsPage() {
       const authFailureText =
         formatCodexAuthFailureMessage(normalizedRawMessage);
       const displayText =
-        authFailureText !== normalizedRawMessage
+        errorCode.toLowerCase() === "deactivated_workspace"
+          ? t(
+              "codex.quotaError.deactivatedWorkspace",
+              "Codex 工作区已停用，当前账号无法继续刷新额度。",
+            )
+          : authFailureText !== normalizedRawMessage
           ? authFailureText
           : errorCode ||
             (isRefreshRequestFailure
@@ -9592,7 +9606,7 @@ export function CodexAccountsPage() {
       defaultValue: "{{count}} 个账号",
     });
     const localAccessGatewayMode =
-      localAccessCollection?.gatewayMode ?? "sidecar";
+      localAccessCollection?.gatewayMode ?? "legacy";
     const localAccessGatewayModeOptions = [
       {
         value: "sidecar",

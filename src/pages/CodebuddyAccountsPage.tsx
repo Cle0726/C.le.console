@@ -45,6 +45,7 @@ import {
   removeAccountsOverviewFilterField,
   writeAccountsOverviewFilterField,
 } from '../utils/accountsOverviewFilterPersistence';
+import { isAccountLoginRequired, isAccountRefreshError } from '../utils/accountAuthStatus';
 
 const CB_FLOW_NOTICE_COLLAPSED_KEY = 'agtools.codebuddy.flow_notice_collapsed';
 const CB_CURRENT_ACCOUNT_ID_KEY = 'agtools.codebuddy.current_account_id';
@@ -447,7 +448,8 @@ export function CodebuddyAccountsPage() {
     const hasQuotaData =
       model.resources.length > 0 || model.extra.total > 0 || model.extra.remain > 0 || model.extra.used > 0;
     const refreshFailed = !!account.quota_query_last_error?.trim();
-    const shouldShowQuota = hasQuotaData && !refreshFailed;
+    // A failed refresh must not hide the last valid official quota snapshot.
+    const shouldShowQuota = hasQuotaData;
     const statusText = refreshFailed
       ? t('codebuddy.quotaQuery.failedRefreshCompact', '配额查询失败')
       : t('codebuddy.quotaQuery.empty', '暂无可用配额数据');
@@ -485,6 +487,13 @@ export function CodebuddyAccountsPage() {
       const moreTagCount = Math.max(0, accountTags.length - visibleTags.length);
       const isSelected = selected.has(account.id);
       const isCurrent = currentAccountId === account.id;
+      const requiresLogin = isAccountLoginRequired(
+        account.status,
+        account.status_reason,
+        account.quota_query_last_error,
+      );
+      const hasStatusError = isAccountRefreshError(account.status) || requiresLogin;
+      const statusTitle = account.status_reason || account.quota_query_last_error || undefined;
       return (
         <div key={groupKey ? `${groupKey}-${account.id}` : account.id}
           className={`ghcp-account-card ${isCurrent ? 'current' : ''} ${isSelected ? 'selected' : ''}`}>
@@ -494,6 +503,14 @@ export function CodebuddyAccountsPage() {
             </div>
             <span className="account-email" title={maskAccountText(displayEmail)}>{maskAccountText(displayEmail)}</span>
             {isCurrent && <span className="current-tag">{t('accounts.status.current', '当前')}</span>}
+            {hasStatusError && (
+              <span className="status-pill warning" title={statusTitle}>
+                <CircleAlert size={12} />
+                {requiresLogin
+                  ? t('accounts.status.loginRequired', '需重新登录')
+                  : t('accounts.status.refreshFailed', '刷新失败')}
+              </span>
+            )}
             <span className={`tier-badge ${tierBadgeClass}`}>{planBadge}</span>
           </div>
           {accountTags.length > 0 && (
@@ -531,12 +548,27 @@ export function CodebuddyAccountsPage() {
       const tierBadgeClass = resolveTierBadgeClass(planBadge);
       const isSelected = selected.has(account.id);
       const isCurrent = currentAccountId === account.id;
+      const requiresLogin = isAccountLoginRequired(
+        account.status,
+        account.status_reason,
+        account.quota_query_last_error,
+      );
+      const hasStatusError = isAccountRefreshError(account.status) || requiresLogin;
+      const statusTitle = account.status_reason || account.quota_query_last_error || undefined;
       return (
         <tr key={account.id} className={`${isCurrent ? 'current-row' : ''} ${isSelected ? 'selected-row' : ''}`}>
           <td><input type="checkbox" checked={isSelected} onChange={() => toggleSelect(account.id)} /></td>
           <td>
             <span className="table-email" title={maskAccountText(displayEmail)}>{maskAccountText(displayEmail)}</span>
             {isCurrent && <span className="current-tag">{t('accounts.status.current', '当前')}</span>}
+            {hasStatusError && (
+              <span className="status-pill warning" title={statusTitle}>
+                <CircleAlert size={12} />
+                {requiresLogin
+                  ? t('accounts.status.loginRequired', '需重新登录')
+                  : t('accounts.status.refreshFailed', '刷新失败')}
+              </span>
+            )}
           </td>
           <td><span className={`tier-badge ${tierBadgeClass}`}>{planBadge}</span></td>
           <td>

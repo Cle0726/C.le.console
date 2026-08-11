@@ -5,6 +5,54 @@ const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '..');
 
+function stopLockedReleaseExecutables() {
+  if (process.platform !== 'win32' || process.argv[2] !== 'build') {
+    return;
+  }
+
+  // tauri-build replaces every external binary in target/release before it
+  // compiles the app. Windows refuses to remove a running executable, so an
+  // independently running API sidecar left behind by the previous release
+  // otherwise makes tauri-build panic with ERROR_ACCESS_DENIED.
+  const releaseDir = path.join(repoRoot, 'target', 'release');
+  const escapedReleaseDir = releaseDir.replace(/'/g, "''");
+  const command = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = 'Stop'
+$releaseDir = [IO.Path]::GetFullPath('${escapedReleaseDir}').TrimEnd('\\')
+$lockedNames = @(
+  'cle-cliproxy.exe',
+  'cockpit-cliproxy.exe',
+  'jimeng-api.exe',
+  'cle-console.exe',
+  'cle_console.exe'
+)
+$processes = Get-CimInstance Win32_Process | Where-Object {
+  if (-not $_.ExecutablePath) { return $false }
+  $executable = [IO.Path]::GetFullPath($_.ExecutablePath)
+  $directory = [IO.Path]::GetDirectoryName($executable).TrimEnd('\\')
+  $name = [IO.Path]::GetFileName($executable)
+  $isReleaseExecutable = $lockedNames -contains $name -or $name.StartsWith('C.le.', [StringComparison]::OrdinalIgnoreCase)
+  $directory.Equals($releaseDir, [StringComparison]::OrdinalIgnoreCase) -and $isReleaseExecutable
+}
+foreach ($process in $processes) {
+  Stop-Process -Id $process.ProcessId -Force
+  Write-Output ("Stopped release executable holding a build artifact: " + $process.Name + " (PID " + $process.ProcessId + ")")
+}
+`;
+  const result = spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command],
+    { encoding: 'utf8' },
+  );
+
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.status !== 0) {
+    if (result.stderr) process.stderr.write(result.stderr);
+    process.exit(result.status ?? 1);
+  }
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
@@ -37,9 +85,15 @@ function runFinal(command, args, options = {}) {
   process.exit(typeof result.status === 'number' ? result.status : 1);
 }
 
+// Run before either the configured-toolchain path or its fallback. The
+// fallback exits through runFinal(), so doing this only in the temp-script
+// branch would leave locked sidecars untouched on machines without vcvars64.
+stopLockedReleaseExecutables();
+
 function runTauriDirect() {
-  run('npm.cmd', ['run', 'sync-version'], { shell: process.platform === 'win32' });
-  runFinal('npx.cmd', ['tauri', ...process.argv.slice(2)], { shell: process.platform === 'win32' });
+  run(process.execPath, [path.join(repoRoot, 'scripts', 'sync-version.js')]);
+  const tauriCliPath = path.join(path.dirname(require.resolve('@tauri-apps/cli/package.json')), 'tauri.js');
+  runFinal(process.execPath, [tauriCliPath, ...process.argv.slice(2)]);
 }
 
 if (process.platform !== 'win32') {

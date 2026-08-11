@@ -1,0 +1,77 @@
+export type JimengRegion = 'cn' | 'us' | 'hk' | 'jp' | 'sg';
+
+export interface JimengAccount {
+  id: string;
+  name: string;
+  region: JimengRegion;
+  authMethod: 'session' | 'oauthDevice';
+  sessionId: string;
+  oauthHome: string;
+  proxyUrl: string;
+  priority: number;
+  enabled: boolean;
+}
+
+export interface JimengApiConfig {
+  enabled: boolean;
+  port: number;
+  debugLogs: boolean;
+  accounts: JimengAccount[];
+}
+
+export interface JimengModel {
+  id: string;
+  kind: 'image' | 'video';
+  regions: JimengRegion[];
+}
+
+export interface JimengApiState {
+  config: JimengApiConfig;
+  running: boolean;
+  baseUrl: string;
+  version: string;
+  lastError?: string | null;
+  models: JimengModel[];
+  selfHeal?: JimengSelfHealState;
+}
+
+export interface JimengSelfHealState {
+  status: 'idle' | 'healthy' | 'degraded' | 'recovering' | string;
+  consecutiveFailures: number;
+  restartAttempts: number;
+  restartFailures: number;
+  lastSuccessAt?: string | null;
+  lastRepairAt?: string | null;
+  nextRestartAt?: string | null;
+  lastError?: string | null;
+}
+
+export interface JimengMediaRequest {
+  accountId?: string | null;
+  payload: Record<string, unknown>;
+  imagePaths?: string[];
+  videoPaths?: string[];
+}
+
+export interface JimengRepairReport {
+  ok: boolean;
+  restarted: boolean;
+  checks: Array<{
+    id: string;
+    status: 'ok' | 'warning' | 'error';
+    detail: string;
+  }>;
+  state: JimengApiState;
+}
+
+export interface JimengDeviceFlow {
+  flowId: string;
+  accountId: string;
+  verificationUri: string;
+  userCode: string;
+  expiresAt: string;
+  pollInterval: number;
+  status: 'pending' | 'authorized' | 'expired' | 'failed';
+  message?: string;
+  account?: JimengAccount;
+}

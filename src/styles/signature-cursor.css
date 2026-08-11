@@ -1,0 +1,436 @@
+@media (hover: hover) and (pointer: fine) {
+  html.has-signature-cursor,
+  html.has-signature-cursor body,
+  html.has-signature-cursor body #root,
+  html.has-signature-cursor body #root :is(*, *::before, *::after),
+  html.has-signature-cursor body > :not(.signature-cursor-layer) :is(*, *::before, *::after) {
+    cursor: none !important;
+  }
+}
+
+.signature-cursor-layer {
+  --fish-ink: rgba(22, 28, 32, .96);
+  --fish-paper: rgba(247, 249, 250, .97);
+  --click-ray: rgba(226, 232, 240, .62);
+  --click-action: rgba(226, 240, 255, .9);
+  --click-glow: rgba(226, 238, 255, .45);
+  position: fixed;
+  z-index: 2147483647;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  contain: strict;
+  isolation: isolate;
+  transition: opacity .12s ease;
+}
+
+.signature-cursor-layer.is-enabled { visibility: visible; }
+.signature-cursor-layer.is-visible { opacity: 1; }
+
+.signature-cursor-mark {
+  --fish-turn: 0deg;
+  --fish-state-angle: 0deg;
+  --fish-state-scale: 1;
+  --fish-press-angle: 0deg;
+  --fish-press-scale: 1;
+  position: absolute;
+  top: -12px;
+  left: -2px;
+  width: 34px;
+  height: 24px;
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .3));
+}
+
+.signature-cursor-mark::after {
+  content: "";
+  position: absolute;
+  z-index: 4;
+  left: 32px;
+  top: 3px;
+  color: color-mix(in srgb, var(--fish-ink) 82%, transparent);
+  font: 700 10px/1 "Cascadia Mono", monospace;
+  letter-spacing: -.08em;
+  opacity: 0;
+  transform: translate3d(-3px, 0, 0) scale(.85);
+  transition: opacity .14s ease, transform .18s cubic-bezier(.2,.8,.2,1);
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--fish-paper) 72%, transparent);
+}
+
+.signature-cursor-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform-origin: 3px 13px;
+  transform:
+    rotate(calc(var(--fish-turn) + var(--fish-state-angle) + var(--fish-press-angle)))
+    scale(var(--fish-state-scale))
+    scale(var(--fish-press-scale));
+  transition: transform .14s cubic-bezier(.2,.8,.2,1), opacity .14s ease;
+}
+
+.signature-fish-body,
+.signature-fish-tail {
+  fill: var(--fish-paper);
+  stroke: var(--fish-ink);
+  stroke-width: 1.45;
+  stroke-linejoin: round;
+}
+
+.signature-fish-tail {
+  transform-origin: 28px 13px;
+  animation: signatureFishTail 1.35s ease-in-out infinite;
+}
+
+.signature-fish-fin,
+.signature-fish-gill,
+.signature-fish-mouth {
+  fill: none;
+  stroke: var(--fish-ink);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .76;
+}
+
+.signature-fish-eye { fill: var(--fish-ink); }
+
+.signature-fish-body {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: signatureFishBodyBreathe 2.8s ease-in-out infinite;
+}
+
+.signature-fish-fin {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: signatureFishFin 1.8s ease-in-out infinite;
+}
+
+.signature-fish-eye {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: signatureFishBlink 4.8s ease-in-out infinite;
+}
+
+.signature-fish-wake {
+  position: absolute;
+  z-index: -1;
+  left: 29px;
+  top: 6px;
+  width: 24px;
+  height: 16px;
+  opacity: 0;
+  transition: opacity .16s ease;
+}
+
+.signature-fish-wake i {
+  position: absolute;
+  right: 0;
+  width: 14px;
+  height: 1px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fish-ink) 48%, transparent);
+  transform-origin: left center;
+  animation: signatureFishWake .72s ease-out infinite;
+}
+
+.signature-fish-wake i:nth-child(1) { top: 2px; width: 11px; animation-delay: -.44s; }
+.signature-fish-wake i:nth-child(2) { top: 7px; width: 18px; animation-delay: -.2s; }
+.signature-fish-wake i:nth-child(3) { top: 13px; width: 9px; animation-delay: -.58s; }
+
+.signature-cursor-layer[data-motion='cruise'] .signature-fish-wake { opacity: .34; }
+.signature-cursor-layer[data-motion='dart'] .signature-fish-wake { opacity: .68; }
+.signature-cursor-layer[data-motion='dart'] .signature-fish-wake i { animation-duration: .42s; }
+.signature-cursor-layer[data-motion='cruise'] .signature-fish-tail { animation-duration: .82s; }
+.signature-cursor-layer[data-motion='dart'] .signature-fish-tail { animation-duration: .38s; }
+
+/* A short white bow crest at the nose. Motion state is written by
+   SignatureCursorLayer and returns to idle 92ms after the pointer stops, so
+   the foam opens only while the fish is travelling and immediately gathers
+   back into the nose at rest. */
+.signature-fish-bow-foam {
+  position: absolute;
+  z-index: 2;
+  left: -8px;
+  top: 4px;
+  width: 12px;
+  height: 16px;
+  opacity: 0;
+  transform: translate3d(4px, 0, 0) scaleX(.35);
+  transform-origin: right center;
+  transition:
+    opacity .09s ease,
+    transform .16s cubic-bezier(.2, .78, .24, 1);
+}
+
+.signature-fish-bow-foam i {
+  position: absolute;
+  right: 0;
+  width: 11px;
+  height: 7px;
+  border-radius: 55% 15% 15% 55%;
+  filter: drop-shadow(0 0 2px rgba(235, 246, 255, .72));
+}
+
+.signature-fish-bow-foam i:first-child {
+  top: 1px;
+  border-top: 1.8px solid rgba(250, 253, 255, .96);
+  transform: rotate(-12deg);
+}
+
+.signature-fish-bow-foam i:last-child {
+  bottom: 1px;
+  border-bottom: 1.8px solid rgba(250, 253, 255, .96);
+  transform: rotate(12deg);
+}
+
+.signature-cursor-layer[data-motion='cruise'] .signature-fish-bow-foam {
+  opacity: .76;
+  transform: translate3d(0, 0, 0) scaleX(.78);
+}
+
+.signature-cursor-layer[data-motion='dart'] .signature-fish-bow-foam {
+  opacity: 1;
+  transform: translate3d(-1px, 0, 0) scaleX(1);
+}
+
+.signature-cursor-layer[data-mode='action'] .signature-cursor-mark {
+  --fish-state-angle: -4deg;
+  --fish-state-scale: 1.1;
+}
+
+.signature-cursor-layer[data-mode='action'] .signature-cursor-mark::after {
+  content: "›";
+  opacity: .64;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+.signature-cursor-layer[data-mode='action'] .signature-fish-tail {
+  animation-duration: .58s;
+}
+
+.signature-cursor-layer[data-mode='text'] .signature-cursor-mark {
+  --fish-state-angle: 90deg;
+  --fish-state-scale: .82;
+}
+
+.signature-cursor-layer[data-mode='text'] .signature-cursor-mark svg { opacity: .76; }
+.signature-cursor-layer[data-mode='text'] .signature-cursor-mark::after {
+  content: "I";
+  left: 14px;
+  top: -7px;
+  opacity: .72;
+  transform: rotate(-90deg) translate3d(0, 0, 0) scale(.9, 1.25);
+}
+
+.signature-cursor-layer[data-mode='drag'] .signature-cursor-mark {
+  --fish-state-angle: 5deg;
+  --fish-state-scale: 1.06;
+}
+
+.signature-cursor-layer[data-mode='drag'] .signature-cursor-mark::after {
+  content: "≋";
+  opacity: .58;
+  transform: translate3d(1px, 1px, 0) scale(1);
+}
+
+.signature-cursor-layer[data-mode='dragging'] .signature-cursor-mark {
+  --fish-state-angle: -7deg;
+  --fish-state-scale: .94;
+}
+
+.signature-cursor-layer[data-mode='dragging'] .signature-fish-tail {
+  animation-duration: .3s;
+  animation-timing-function: ease-in-out;
+}
+
+.signature-cursor-layer[data-mode='dragging'] .signature-fish-wake {
+  opacity: .72;
+}
+
+.signature-cursor-layer[data-mode='resize'] .signature-cursor-mark {
+  --fish-state-scale: .92;
+}
+
+.signature-cursor-layer[data-mode='resize'] .signature-cursor-mark::after {
+  content: "↔";
+  left: 31px;
+  top: 6px;
+  opacity: .7;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+.signature-cursor-layer[data-mode='busy'] .signature-cursor-mark {
+  --fish-state-angle: -3deg;
+  --fish-state-scale: .96;
+}
+
+.signature-cursor-layer[data-mode='busy'] .signature-cursor-mark svg {
+  animation: signatureFishBusy 1s ease-in-out infinite;
+}
+
+.signature-cursor-layer[data-mode='busy'] .signature-cursor-mark::after {
+  content: "···";
+  left: 31px;
+  top: 3px;
+  opacity: .68;
+  animation: signatureFishThinking .9s steps(3) infinite;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+.signature-cursor-layer[data-mode='disabled'] .signature-cursor-mark {
+  --fish-state-angle: -9deg;
+  --fish-state-scale: .88;
+}
+
+.signature-cursor-layer[data-mode='disabled'] .signature-cursor-mark svg {
+  opacity: .42;
+  opacity: .55;
+}
+
+.signature-cursor-layer[data-mode='disabled'] .signature-cursor-mark::after {
+  content: "";
+  left: 13px;
+  top: -2px;
+  width: 2px;
+  height: 32px;
+  border-radius: 2px;
+  opacity: .58;
+  background: color-mix(in srgb, var(--fish-ink) 74%, transparent);
+  transform: rotate(-42deg) translate3d(0, 0, 0) scale(1);
+}
+
+.signature-cursor-layer.is-pressed .signature-cursor-mark {
+  --fish-press-angle: 3deg;
+  --fish-press-scale: .88;
+}
+
+/* Minimal radial click flare: no rings, no colored beacon, only staggered rays. */
+.signature-click-burst {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  animation: signatureClickContainer .56s ease-out forwards;
+}
+
+.signature-click-burst > i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* The ring: a hairline expanding outward, like a drop meeting a surface. */
+.signature-click-burst > i.sig-ripple {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--click-ray);
+  animation: signatureRipple .52s cubic-bezier(.15, .74, .26, 1) forwards;
+}
+
+/* The bloom: a soft contact point that gives the click weight. It fades twice
+   as fast as the ring, so the two read as one gesture rather than two events. */
+.signature-click-burst > i.sig-bloom {
+  width: 8px;
+  height: 8px;
+  background: radial-gradient(circle, var(--click-glow) 0%, transparent 70%);
+  animation: signatureBloom .28s cubic-bezier(.2, .7, .3, 1) forwards;
+}
+
+/* Secondary button: same gesture, held back. */
+.signature-click-burst.is-secondary { opacity: .55; }
+.signature-click-burst.is-secondary > i.sig-ripple { animation-duration: .42s; }
+
+/* Over something interactive the ring is brighter and a second, delayed ring
+   follows it — a confirmation you can feel without a sound. */
+.signature-click-burst.is-action > i.sig-ripple {
+  border-color: var(--click-action);
+}
+
+.signature-click-burst.is-action::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--click-action);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  opacity: .6;
+  animation: signatureRipple .62s .09s cubic-bezier(.15, .74, .26, 1) forwards;
+}
+
+.signature-click-burst.is-emphasis > i.sig-ripple {
+  animation-duration: .66s;
+}
+
+@keyframes signatureRipple {
+  from {
+    opacity: .85;
+    transform: translate(-50%, -50%) scale(.35);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(2.9);
+  }
+}
+
+@keyframes signatureBloom {
+  from {
+    opacity: .9;
+    transform: translate(-50%, -50%) scale(.6);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.7);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signature-fish-tail,
+  .signature-fish-body,
+  .signature-fish-fin,
+  .signature-fish-eye,
+  .signature-fish-wake i { animation: none; }
+  .signature-fish-bow-foam { transition: none; }
+  .signature-cursor-mark svg { transition: none; }
+  .signature-click-burst { display: none; }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .signature-cursor-layer { display: none !important; }
+}
+
+/* ---- Click ink follows the app palette ------------------------------------
+ * Day rides the blue canvas; night stays neutral so the ripple does not
+ * introduce the only hue on a colourless screen.
+ * -------------------------------------------------------------------------- */
+
+html[data-visual-theme='day'] .signature-cursor-layer {
+  --click-ray: rgba(214, 230, 250, .6);
+  --click-action: rgba(226, 240, 255, .92);
+  --click-glow: rgba(198, 220, 250, .48);
+}
+
+html[data-visual-theme='night'] .signature-cursor-layer,
+html:not([data-visual-theme]) .signature-cursor-layer {
+  --click-ray: rgba(230, 233, 237, .55);
+  --click-action: rgba(244, 245, 247, .9);
+  --click-glow: rgba(226, 229, 233, .4);
+}
+
+/* Reduced motion keeps the contact point and drops the travel. */
+@media (prefers-reduced-motion: reduce) {
+  .signature-click-burst > i.sig-ripple,
+  .signature-click-burst.is-action::after {
+    animation-duration: 1ms !important;
+  }
+}

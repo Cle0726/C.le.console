@@ -5,6 +5,27 @@
     <link rel="icon" type="image/png" href="/src/assets/app-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>C.le.控制台</title>
+    <!--
+      Critical first paint. startup-shell.css is imported from main.tsx, so it
+      only lands after the module graph loads — the WebView paints its default
+      white until then, which is the flash in front of the opening sequence.
+      Inlining the canvas here means the very first frame is already graphite.
+    -->
+    <style>
+      html {
+        background: #0b0c0e;
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(46% 38% at 66% 30%, rgba(222, 226, 232, 0.34), transparent 62%),
+          radial-gradient(54% 44% at 86% 58%, rgba(134, 140, 148, 0.44), transparent 64%),
+          radial-gradient(62% 50% at 46% 70%, rgba(82, 88, 95, 0.6), transparent 66%),
+          linear-gradient(154deg, #3e4248 0%, #26292e 44%, #131518 84%, #0b0c0e 100%);
+        background-attachment: fixed;
+      }
+    </style>
   </head>
 
   <body>

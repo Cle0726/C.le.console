@@ -580,6 +580,7 @@ export function KiroAccountsPage() {
       const hasQuotaData = hasKiroQuotaData(account);
       const statusReason = presentation.accountStatusReason;
       const isBanned = presentation.isBanned;
+      const requiresLogin = presentation.requiresLogin;
       const hasStatusError = presentation.hasStatusError;
       const bannedTitle = statusReason || t('accounts.status.forbidden_tooltip');
       const errorTitle = statusReason || t('accounts.status.refreshFailed');
@@ -600,7 +601,9 @@ export function KiroAccountsPage() {
             {hasStatusError && (
               <span className="status-pill warning" title={errorTitle}>
                 <CircleAlert size={12} />
-                {t('accounts.status.refreshFailed')}
+                {requiresLogin
+                  ? t('accounts.status.loginRequired', '需重新登录')
+                  : t('accounts.status.refreshFailed')}
               </span>
             )}
             {quotaError && (
@@ -732,6 +735,7 @@ export function KiroAccountsPage() {
       const hasQuotaData = hasKiroQuotaData(account);
       const statusReason = presentation.accountStatusReason;
       const isBanned = presentation.isBanned;
+      const requiresLogin = presentation.requiresLogin;
       const hasStatusError = presentation.hasStatusError;
       const bannedTitle = statusReason || t('accounts.status.forbidden_tooltip');
       const errorTitle = statusReason || t('accounts.status.refreshFailed');
@@ -746,7 +750,7 @@ export function KiroAccountsPage() {
               </div>
               {(hasStatusError || isBanned) && (
                 <div className="account-sub-line">
-                  {hasStatusError && (<span className="status-pill warning" title={errorTitle}><CircleAlert size={12} />{t('accounts.status.refreshFailed')}</span>)}
+                  {hasStatusError && (<span className="status-pill warning" title={errorTitle}><CircleAlert size={12} />{requiresLogin ? t('accounts.status.loginRequired', '需重新登录') : t('accounts.status.refreshFailed')}</span>)}
                   {isBanned && (<span className="status-pill forbidden" title={bannedTitle}><Lock size={12} />{t('accounts.status.forbidden')}</span>)}
                 </div>
               )}

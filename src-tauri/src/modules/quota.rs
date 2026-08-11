@@ -14,6 +14,8 @@ const CLOUD_CODE_AUTOPUSH_SANDBOX_BASE_URL: &str =
 const LOAD_CODE_ASSIST_PATH: &str = "v1internal:loadCodeAssist";
 const ONBOARD_USER_PATH: &str = "v1internal:onboardUser";
 const FETCH_AVAILABLE_MODELS_PATH: &str = "v1internal:fetchAvailableModels";
+const RETRIEVE_USER_QUOTA_PATH: &str = "v1internal:retrieveUserQuota";
+const LEGACY_RETRIEVE_USER_QUOTA_PATH: &str = "v1internal:retrieveUserQuotaSummary";
 const DEFAULT_ATTEMPTS: usize = 1;
 const BACKOFF_BASE_MS: u64 = 500;
 const BACKOFF_MAX_MS: u64 = 4000;
@@ -276,6 +278,67 @@ fn truncate_log_text(text: &str, max_len: usize) -> String {
     preview
 }
 
+fn is_retryable_quota_status(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::REQUEST_TIMEOUT
+            | reqwest::StatusCode::TOO_EARLY
+            | reqwest::StatusCode::INTERNAL_SERVER_ERROR
+            | reqwest::StatusCode::BAD_GATEWAY
+            | reqwest::StatusCode::SERVICE_UNAVAILABLE
+            | reqwest::StatusCode::GATEWAY_TIMEOUT
+    )
+}
+
+fn find_json_string_by_key<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    match value {
+        Value::Object(map) => {
+            for key in keys {
+                if let Some(found) = map.get(*key).and_then(Value::as_str) {
+                    if !found.trim().is_empty() {
+                        return Some(found);
+                    }
+                }
+            }
+            map.values()
+                .find_map(|nested| find_json_string_by_key(nested, keys))
+        }
+        Value::Array(items) => items
+            .iter()
+            .find_map(|nested| find_json_string_by_key(nested, keys)),
+        _ => None,
+    }
+}
+
+fn quota_http_error_message(status: reqwest::StatusCode, body: &str) -> String {
+    let parsed = serde_json::from_str::<Value>(body).ok();
+    if let Some(value) = parsed.as_ref() {
+        let reason = find_json_string_by_key(value, &["reason"]).unwrap_or_default();
+        if reason.eq_ignore_ascii_case("VALIDATION_REQUIRED") {
+            let validation_url = find_json_string_by_key(
+                value,
+                &["validation_url", "validationUrl", "validationUri"],
+            );
+            return validation_url
+                .map(|url| format!("Google account verification required: {}", url))
+                .unwrap_or_else(|| "Google account verification required".to_string());
+        }
+    }
+    let detail = parsed
+        .as_ref()
+        .and_then(|value| {
+            value
+                .pointer("/error/message")
+                .or_else(|| value.get("message"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_log_text(value, 300));
+
+    detail.unwrap_or_else(|| format!("Quota API returned HTTP {}", status.as_u16()))
+}
+
 fn header_value(headers: &reqwest::header::HeaderMap, name: reqwest::header::HeaderName) -> String {
     headers
         .get(name)
@@ -372,6 +435,7 @@ fn write_api_cache(
 
 #[derive(Debug, Serialize, Deserialize)]
 struct QuotaResponse {
+    #[serde(default)]
     models: std::collections::HashMap<String, ModelInfo>,
 }
 
@@ -898,6 +962,26 @@ pub async fn fetch_project_id_with_context(
     (None, subscription_tier, credits)
 }
 
+fn upsert_model_quota(
+    quota: &mut QuotaData,
+    name: String,
+    display_name: Option<String>,
+    percentage: i32,
+    reset_time: String,
+) {
+    if let Some(existing) = quota.models.iter_mut().find(|model| model.name == name) {
+        existing.percentage = existing.percentage.min(percentage);
+        if existing.display_name.is_none() {
+            existing.display_name = display_name;
+        }
+        if existing.reset_time.trim().is_empty() && !reset_time.trim().is_empty() {
+            existing.reset_time = reset_time;
+        }
+        return;
+    }
+    quota.add_model(name, display_name, percentage, reset_time);
+}
+
 fn build_quota_data_from_response(
     quota_response: QuotaResponse,
     subscription_tier: Option<String>,
@@ -916,42 +1000,60 @@ fn build_quota_data_from_response(
         if let Some(quota_info) = info.quota_info {
             let percentage = quota_info
                 .remaining_fraction
-                .map(|f| (f * 100.0) as i32)
+                .map(|f| (f * 100.0).round().clamp(0.0, 100.0) as i32)
                 .unwrap_or(0);
             let reset_time = quota_info.reset_time.unwrap_or_default();
-            if name.contains("gemini") || name.contains("claude") {
-                quota_data.add_model(name, display_name, percentage, reset_time);
-            }
+            upsert_model_quota(&mut quota_data, name, display_name, percentage, reset_time);
         }
     }
 
     if let Some(summary) = quota_summary {
-        if let Some(groups) = summary.get("groups").and_then(|v| v.as_array()) {
+        let mut buckets: Vec<&serde_json::Value> = summary
+            .get("buckets")
+            .and_then(|value| value.as_array())
+            .map(|items| items.iter().collect())
+            .unwrap_or_default();
+        if let Some(groups) = summary.get("groups").and_then(|value| value.as_array()) {
             for group in groups {
-                if let Some(buckets) = group.get("buckets").and_then(|v| v.as_array()) {
-                    for bucket in buckets {
-                        let bucket_id = bucket
-                            .get("bucketId")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        let display_name = bucket
-                            .get("displayName")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        let remaining_fraction =
-                            bucket.get("remainingFraction").and_then(|v| v.as_f64());
-                        let reset_time = bucket
-                            .get("resetTime")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-
-                        if let (Some(id), Some(fraction)) = (bucket_id, remaining_fraction) {
-                            let percentage = (fraction * 100.0) as i32;
-                            let reset_str = reset_time.unwrap_or_default();
-                            quota_data.add_model(id, display_name, percentage, reset_str);
-                        }
-                    }
+                if let Some(group_buckets) = group.get("buckets").and_then(|value| value.as_array())
+                {
+                    buckets.extend(group_buckets.iter());
                 }
+            }
+        }
+
+        for bucket in buckets {
+            let bucket_id = bucket
+                .get("modelId")
+                .or_else(|| bucket.get("bucketId"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let display_name = bucket
+                .get("displayName")
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+            let remaining_fraction = bucket
+                .get("remainingFraction")
+                .and_then(|value| value.as_f64())
+                .or_else(|| {
+                    let remaining = bucket.get("remainingAmount")?.as_f64()?;
+                    let limit = bucket
+                        .get("limit")
+                        .or_else(|| bucket.get("totalAmount"))?
+                        .as_f64()?;
+                    (limit > 0.0).then_some(remaining / limit)
+                });
+            let reset_time = bucket
+                .get("resetTime")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+
+            if let (Some(id), Some(fraction)) = (bucket_id, remaining_fraction) {
+                let percentage = (fraction * 100.0).round().clamp(0.0, 100.0) as i32;
+                upsert_model_quota(&mut quota_data, id, display_name, percentage, reset_time);
             }
         }
     }
@@ -1041,108 +1143,106 @@ pub async fn fetch_quota_with_context(
             Ok(response) => {
                 if response.error_for_status_ref().is_err() {
                     let status = response.status();
-
-                    if status == reqwest::StatusCode::FORBIDDEN {
+                    let retryable = is_retryable_quota_status(status);
+                    if retryable && attempt < max_retries {
                         crate::modules::logger::log_warn(&format!(
-                            "账号无权限 (403 Forbidden), 标记为 forbidden 状态: {}",
-                            email
+                            "[Quota] transient fetchAvailableModels failure: status={}, attempt={}/{}",
+                            status, attempt, max_retries
                         ));
-                        let text = response.text().await.unwrap_or_default();
-                        let mut q = QuotaData::new();
-                        q.is_forbidden = true;
-                        q.subscription_tier = subscription_tier.clone();
-                        let message = if text.trim().is_empty() {
-                            "API returned 403 Forbidden".to_string()
-                        } else {
-                            text
-                        };
-                        return Ok(QuotaFetchResult {
-                            quota: q,
-                            error: Some(QuotaFetchError {
-                                code: Some(status.as_u16()),
-                                message,
-                            }),
-                        });
-                    }
-
-                    if attempt < max_retries {
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64))
+                            .await;
                         continue;
                     }
 
-                    let text = response.text().await.unwrap_or_default();
-                    return Err(AppError::Unknown(format!(
-                        "API 错误: {} - {}",
-                        status, text
-                    )));
+                    let body = response.text().await.unwrap_or_default();
+                    let message = quota_http_error_message(status, &body);
+                    crate::modules::logger::log_warn(&format!(
+                        "[Quota] fetchAvailableModels failed: email_hash={}, status={}, retryable={}",
+                        hash_email(email), status, retryable
+                    ));
+                    let mut quota = QuotaData::new();
+                    quota.is_forbidden = status == reqwest::StatusCode::FORBIDDEN;
+                    quota.subscription_tier = subscription_tier.clone();
+                    quota.credits = credits.clone();
+                    return Ok(QuotaFetchResult {
+                        quota,
+                        error: Some(QuotaFetchError {
+                            code: Some(status.as_u16()),
+                            message,
+                        }),
+                    });
                 }
 
                 let body = response.text().await.map_err(AppError::Network)?;
                 let mut payload_value: serde_json::Value = serde_json::from_str(&body)
                     .map_err(|e| AppError::Unknown(format!("API 响应解析失败: {}", e)))?;
 
-                // Fetch retrieveUserQuotaSummary to get weekly and 5h buckets
-                let summary_url = format!("{}/v1internal:retrieveUserQuotaSummary", base_url);
+                // Current Cloud Code returns per-model quota in top-level buckets.
+                // Fall back to the legacy summary route only when the new route is absent.
+                let summary_urls = [
+                    format!("{}/{}", base_url, RETRIEVE_USER_QUOTA_PATH),
+                    format!("{}/{}", base_url, LEGACY_RETRIEVE_USER_QUOTA_PATH),
+                ];
                 let mut quota_summary_val: Option<serde_json::Value> = None;
-                crate::modules::logger::log_info(&format!(
-                    "[Quota] 发送 retrieveUserQuotaSummary, url: {}",
-                    summary_url
-                ));
-                match client
-                    .post(&summary_url)
-                    .bearer_auth(access_token)
-                    .header(reqwest::header::USER_AGENT, &cloud_code_user_agent)
-                    .header(reqwest::header::ACCEPT_ENCODING, "gzip")
-                    .json(&payload)
-                    .send()
-                    .await
-                {
-                    Ok(res) => {
-                        let status = res.status();
-                        crate::modules::logger::log_info(&format!(
-                            "[Quota] retrieveUserQuotaSummary 返回状态码: {}",
-                            status
-                        ));
-                        if status.is_success() {
-                            if let Ok(summary_body) = res.text().await {
-                                crate::modules::logger::log_info(&format!(
-                                    "[Quota] retrieveUserQuotaSummary 响应长度: {}",
-                                    summary_body.len()
-                                ));
-                                if let Ok(val) =
-                                    serde_json::from_str::<serde_json::Value>(&summary_body)
-                                {
-                                    quota_summary_val = Some(val.clone());
-                                    // Merge into payload_value for caching
-                                    if let Some(obj) = payload_value.as_object_mut() {
-                                        obj.insert("quota_summary".to_string(), val);
-                                        crate::modules::logger::log_info(
-                                            "[Quota] 成功将 quota_summary 合并到 payload_value",
-                                        );
+                for (index, summary_url) in summary_urls.iter().enumerate() {
+                    match client
+                        .post(summary_url)
+                        .bearer_auth(access_token)
+                        .header(reqwest::header::USER_AGENT, &cloud_code_user_agent)
+                        .header(reqwest::header::ACCEPT_ENCODING, "gzip")
+                        .json(&payload)
+                        .send()
+                        .await
+                    {
+                        Ok(res) => {
+                            let status = res.status();
+                            if status.is_success() {
+                                match res.text().await {
+                                    Ok(summary_body) => {
+                                        match serde_json::from_str::<serde_json::Value>(
+                                            &summary_body,
+                                        ) {
+                                            Ok(value) => {
+                                                quota_summary_val = Some(value.clone());
+                                                if let Some(obj) = payload_value.as_object_mut() {
+                                                    obj.insert("quota_summary".to_string(), value);
+                                                }
+                                                break;
+                                            }
+                                            Err(error) => {
+                                                crate::modules::logger::log_warn(&format!(
+                                                    "[Quota] retrieveUserQuota JSON parse failed: {}",
+                                                    error
+                                                ));
+                                                break;
+                                            }
+                                        }
                                     }
-                                } else {
-                                    crate::modules::logger::log_error(
-                                        "[Quota] retrieveUserQuotaSummary JSON 解析失败",
-                                    );
+                                    Err(error) => {
+                                        crate::modules::logger::log_warn(&format!(
+                                            "[Quota] retrieveUserQuota body read failed: {}",
+                                            error
+                                        ));
+                                        break;
+                                    }
                                 }
+                            } else if index == 0 && status == reqwest::StatusCode::NOT_FOUND {
+                                continue;
                             } else {
-                                crate::modules::logger::log_error(
-                                    "[Quota] retrieveUserQuotaSummary 读取 body 失败",
-                                );
+                                crate::modules::logger::log_warn(&format!(
+                                    "[Quota] retrieveUserQuota failed: status={}",
+                                    status
+                                ));
+                                break;
                             }
-                        } else {
-                            let err_text = res.text().await.unwrap_or_default();
-                            crate::modules::logger::log_error(&format!(
-                                "[Quota] retrieveUserQuotaSummary 请求未成功: {}, body: {}",
-                                status, err_text
-                            ));
                         }
-                    }
-                    Err(e) => {
-                        crate::modules::logger::log_error(&format!(
-                            "[Quota] retrieveUserQuotaSummary 发送失败: {}",
-                            e
-                        ));
+                        Err(error) => {
+                            crate::modules::logger::log_warn(&format!(
+                                "[Quota] retrieveUserQuota network failed: {}",
+                                error
+                            ));
+                            break;
+                        }
                     }
                 }
 
@@ -1179,4 +1279,135 @@ pub async fn fetch_quota_with_context(
     }
 
     Err(AppError::Unknown("配额查询失败".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_all_available_models_without_name_whitelist() {
+        let response: QuotaResponse = serde_json::from_value(json!({
+            "models": {
+                "imagen-4-ultra": {
+                    "displayName": "Imagen 4 Ultra",
+                    "quotaInfo": { "remainingFraction": 0.75, "resetTime": "2026-08-01T00:00:00Z" }
+                },
+                "veo-3.1-generate": {
+                    "displayName": "Veo 3.1",
+                    "quotaInfo": { "remainingFraction": 0.5, "resetTime": "2026-08-01T00:00:00Z" }
+                }
+            }
+        }))
+        .expect("valid quota response");
+
+        let quota = build_quota_data_from_response(response, None, Vec::new(), None);
+        assert_eq!(quota.models.len(), 2);
+        assert!(quota
+            .models
+            .iter()
+            .any(|model| model.name == "imagen-4-ultra"));
+        assert!(quota
+            .models
+            .iter()
+            .any(|model| model.name == "veo-3.1-generate"));
+    }
+
+    #[test]
+    fn parses_current_top_level_buckets_and_deduplicates_models() {
+        let response: QuotaResponse = serde_json::from_value(json!({
+            "models": {
+                "gemini-3.1-pro-high": {
+                    "quotaInfo": { "remainingFraction": 0.8, "resetTime": "" }
+                }
+            }
+        }))
+        .expect("valid quota response");
+        let summary = json!({
+            "buckets": [
+                {
+                    "modelId": "gemini-3.1-pro-high",
+                    "remainingFraction": 0.6,
+                    "resetTime": "2026-08-02T00:00:00Z"
+                },
+                {
+                    "modelId": "gemini-3.1-flash-image",
+                    "remainingAmount": 25.0,
+                    "limit": 100.0,
+                    "resetTime": "2026-08-03T00:00:00Z"
+                }
+            ]
+        });
+
+        let quota = build_quota_data_from_response(response, None, Vec::new(), Some(summary));
+        assert_eq!(quota.models.len(), 2);
+        let pro = quota
+            .models
+            .iter()
+            .find(|model| model.name == "gemini-3.1-pro-high")
+            .expect("deduplicated pro model");
+        assert_eq!(pro.percentage, 60);
+        assert_eq!(pro.reset_time, "2026-08-02T00:00:00Z");
+        let image = quota
+            .models
+            .iter()
+            .find(|model| model.name == "gemini-3.1-flash-image")
+            .expect("image bucket");
+        assert_eq!(image.percentage, 25);
+    }
+
+    #[test]
+    fn keeps_legacy_group_buckets_compatible() {
+        let response = QuotaResponse {
+            models: std::collections::HashMap::new(),
+        };
+        let summary = json!({
+            "groups": [{
+                "buckets": [{
+                    "bucketId": "3p-weekly",
+                    "remainingFraction": 0.42,
+                    "resetTime": "2026-08-04T00:00:00Z"
+                }]
+            }]
+        });
+        let quota = build_quota_data_from_response(response, None, Vec::new(), Some(summary));
+        assert_eq!(quota.models.len(), 1);
+        assert_eq!(quota.models[0].name, "3p-weekly");
+        assert_eq!(quota.models[0].percentage, 42);
+    }
+
+    #[test]
+    fn retries_only_transient_quota_http_statuses() {
+        assert!(is_retryable_quota_status(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE
+        ));
+        assert!(is_retryable_quota_status(
+            reqwest::StatusCode::GATEWAY_TIMEOUT
+        ));
+        assert!(!is_retryable_quota_status(
+            reqwest::StatusCode::UNAUTHORIZED
+        ));
+        assert!(!is_retryable_quota_status(
+            reqwest::StatusCode::TOO_MANY_REQUESTS
+        ));
+    }
+
+    #[test]
+    fn extracts_safe_quota_http_error_details() {
+        let message = quota_http_error_message(
+            reqwest::StatusCode::FORBIDDEN,
+            r#"{"error":{"message":"account blocked"}}"#,
+        );
+        assert_eq!(message, "account blocked");
+
+        let validation = quota_http_error_message(
+            reqwest::StatusCode::FORBIDDEN,
+            r#"{"error":{"details":[{"reason":"VALIDATION_REQUIRED","metadata":{"validation_url":"https://example.test/verify"}}]}}"#,
+        );
+        assert_eq!(
+            validation,
+            "Google account verification required: https://example.test/verify"
+        );
+    }
 }

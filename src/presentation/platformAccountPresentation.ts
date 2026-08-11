@@ -23,6 +23,7 @@ import {
   getQuotaClass as getAntigravityQuotaClass,
   matchModelName,
 } from "../utils/account";
+import { sortAntigravityQuotaModels } from "../utils/antigravityModels";
 import {
   CB_PACKAGE_CODE,
   getCodebuddyAccountDisplayEmail,
@@ -165,6 +166,7 @@ export interface KiroAccountPresentation extends UnifiedAccountPresentation {
   accountStatus: KiroAccountStatus;
   accountStatusReason: string | null;
   isBanned: boolean;
+  requiresLogin: boolean;
   hasStatusError: boolean;
 }
 
@@ -479,7 +481,7 @@ export function getAntigravityQuotaDisplayItems(
   account: Account,
   _displayGroups: DisplayGroup[],
 ): AgQuotaDisplayItem[] {
-  const models = account.quota?.models || [];
+  const models = sortAntigravityQuotaModels(account.quota?.models || []);
   const result: AgQuotaDisplayItem[] = [];
 
   // Claude 5h
@@ -593,6 +595,21 @@ export function getAntigravityQuotaDisplayItems(
       label: 'Gemini (Weekly)',
       percentage: geminiWeekly.percentage,
       resetTime: geminiWeekly.reset_time,
+    });
+  }
+
+  const represented = new Set(
+    [claude5h, claudeWeekly, gemini5h, geminiWeekly]
+      .filter((model): model is NonNullable<typeof model> => Boolean(model))
+      .map((model) => model.name),
+  );
+  for (const model of models) {
+    if (represented.has(model.name)) continue;
+    result.push({
+      key: `model:${model.name}`,
+      label: model.display_name?.trim() || model.name,
+      percentage: model.percentage,
+      resetTime: model.reset_time,
     });
   }
 
@@ -1485,7 +1502,8 @@ export function buildKiroAccountPresentation(
     accountStatus,
     accountStatusReason,
     isBanned: accountStatus === "banned",
-    hasStatusError: accountStatus === "error",
+    requiresLogin: accountStatus === "login_required",
+    hasStatusError: accountStatus === "error" || accountStatus === "login_required",
     cycleText,
     quotaItems,
   };

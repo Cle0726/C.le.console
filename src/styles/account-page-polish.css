@@ -40,8 +40,8 @@
 
 /* Day canvas: restore the light industrial material even when the legacy
    component theme remains `dark`. */
-html:not([data-visual-theme='night']) .codex-accounts-page,
-html:not([data-visual-theme='night']) .accounts-page {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page,
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page {
   --industrial-ink: #10171c;
   --industrial-inverse: #f1f4f5;
   --industrial-panel: rgba(220, 227, 231, 0.9);
@@ -64,8 +64,8 @@ html:not([data-visual-theme='night']) .accounts-page {
   color: var(--text-primary);
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page > .toolbar,
-html:not([data-visual-theme='night']) .accounts-page > .toolbar {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page > .toolbar,
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page > .toolbar {
   border-color: rgba(15, 22, 27, 0.5) !important;
   background:
     linear-gradient(180deg, rgba(239, 243, 244, 0.95), rgba(210, 219, 224, 0.94)) !important;
@@ -76,9 +76,9 @@ html:not([data-visual-theme='night']) .accounts-page > .toolbar {
   backdrop-filter: blur(20px) saturate(0.7);
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-account-card,
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-local-access-card,
-html:not([data-visual-theme='night']) .accounts-page .account-card {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-account-card,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-local-access-card,
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page .account-card {
   border-color: rgba(15, 22, 27, 0.42) !important;
   color: #11191e;
   background:
@@ -89,31 +89,31 @@ html:not([data-visual-theme='night']) .accounts-page .account-card {
     inset 0 1px rgba(255, 255, 255, 0.64) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-account-card:hover,
-html:not([data-visual-theme='night']) .accounts-page .account-card:hover {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-account-card:hover,
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page .account-card:hover {
   border-color: rgba(15, 22, 27, 0.68) !important;
   box-shadow:
     6px 7px 0 rgba(15, 22, 27, 0.12),
     inset 0 1px rgba(255, 255, 255, 0.72) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-account-card.current,
-html:not([data-visual-theme='night']) .accounts-page .account-card.current {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-account-card.current,
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page .account-card.current {
   border-color: #172128 !important;
   box-shadow:
     0 0 0 1px rgba(239, 243, 244, 0.65),
     5px 6px 0 rgba(15, 22, 27, 0.14) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-account-card.selected,
-html:not([data-visual-theme='night']) .accounts-page .account-card.selected {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-account-card.selected,
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page .account-card.selected {
   background:
     linear-gradient(155deg, rgba(239, 242, 243, 0.98), rgba(193, 204, 211, 0.94)) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-api-service-panel,
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-overview-selection-bar,
-html:not([data-visual-theme='night']) .accounts-page .selection-bar {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-api-service-panel,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-overview-selection-bar,
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page .selection-bar {
   border-color: rgba(15, 22, 27, 0.34) !important;
   color: #11191e;
   background:
@@ -123,14 +123,14 @@ html:not([data-visual-theme='night']) .accounts-page .selection-bar {
 
 /* Card information hierarchy: primary identifiers stay dark, while metadata
    remains secondary but never falls below practical contrast. */
-html:not([data-visual-theme='night']) .codex-accounts-page :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(
   .account-email,
   .account-email-text,
   .folder-inline-name,
   .quota-value,
   .codex-compact-email
 ),
-html:not([data-visual-theme='night']) .accounts-page :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page :is(
   .account-email,
   .folder-inline-name,
   .quota-value
@@ -138,7 +138,7 @@ html:not([data-visual-theme='night']) .accounts-page :is(
   color: #11191e !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(
   .codex-login-subline,
   .codex-provider-inline-text,
   .card-date,
@@ -146,7 +146,7 @@ html:not([data-visual-theme='night']) .codex-accounts-page :is(
   .quota-reset,
   .folder-inline-count
 ),
-html:not([data-visual-theme='night']) .accounts-page :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page :is(
   .card-date,
   .quota-label,
   .quota-reset,
@@ -157,13 +157,13 @@ html:not([data-visual-theme='night']) .accounts-page :is(
   opacity: 1;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .card-footer,
-html:not([data-visual-theme='night']) .accounts-page .card-footer {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .card-footer,
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page .card-footer {
   border-top-color: rgba(15, 22, 27, 0.15) !important;
   background: rgba(177, 188, 195, 0.32) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(
   .card-action-btn,
   .action-btn,
   .folder-icon-btn,
@@ -171,7 +171,7 @@ html:not([data-visual-theme='night']) .codex-accounts-page :is(
   .tag-filter-btn,
   .view-btn
 ),
-html:not([data-visual-theme='night']) .accounts-page :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page :is(
   .card-action-btn,
   .action-btn,
   .folder-icon-btn,
@@ -184,7 +184,7 @@ html:not([data-visual-theme='night']) .accounts-page :is(
   background: rgba(232, 236, 238, 0.7);
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(
   .card-action-btn,
   .action-btn,
   .folder-icon-btn,
@@ -192,7 +192,7 @@ html:not([data-visual-theme='night']) .codex-accounts-page :is(
   .tag-filter-btn,
   .view-btn
 ):hover:not(:disabled),
-html:not([data-visual-theme='night']) .accounts-page :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page :is(
   .card-action-btn,
   .action-btn,
   .folder-icon-btn,
@@ -220,15 +220,15 @@ html:not([data-visual-theme='night']) .accounts-page :is(
   cursor: not-allowed !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(input, select, textarea),
-html:not([data-visual-theme='night']) .accounts-page :is(input, select, textarea) {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(input, select, textarea),
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page :is(input, select, textarea) {
   border-color: rgba(15, 22, 27, 0.34) !important;
   color: #11191e !important;
   background: rgba(232, 236, 238, 0.78) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(input, textarea)::placeholder,
-html:not([data-visual-theme='night']) .accounts-page :is(input, textarea)::placeholder {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(input, textarea)::placeholder,
+html:not([data-visual-theme]):not([data-theme='dark']) .accounts-page :is(input, textarea)::placeholder {
   color: #66747d;
   opacity: 1;
 }
@@ -421,7 +421,7 @@ html[data-visual-theme='night'] .codex-accounts-page .account-toolbar-kicker str
    keep the complete grid / compact / table system on one visual theme and
    prevent dark rows from being paired with day-mode text. */
 
-html:not([data-visual-theme='night']) .codex-accounts-page {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page {
   --account-row-odd: rgba(220, 228, 232, 0.94);
   --account-row-even: rgba(213, 222, 226, 0.94);
   --account-row-hover: rgba(200, 211, 216, 0.97);
@@ -455,7 +455,7 @@ html[data-visual-theme='night'] .codex-accounts-page {
   --plan-plus-bg: rgba(52, 211, 153, 0.13);
   --plan-plus-color: #91efc4;
   --plan-plus-border: rgba(110, 231, 183, 0.28);
-  --plan-team-bg: rgba(167, 139, 250, 0.15);
+  --plan-team-bg: rgba(144, 164, 181, 0.15);
   --plan-team-color: #d0c4ff;
   --plan-team-border: rgba(196, 181, 253, 0.3);
   --plan-enterprise-bg: rgba(251, 191, 36, 0.14);
@@ -465,7 +465,7 @@ html[data-visual-theme='night'] .codex-accounts-page {
 
 /* Table frame, header and rows. `!important` is required here because the
    old `[data-theme="dark"]` account rules intentionally use opaque colors. */
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table-container {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table-container {
   border-color: rgba(17, 25, 30, 0.42) !important;
   background: rgba(218, 226, 230, 0.96) !important;
   box-shadow:
@@ -481,13 +481,13 @@ html[data-visual-theme='night'] .codex-accounts-page .account-table-container {
     inset 0 1px rgba(255, 255, 255, 0.045) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table,
 html[data-visual-theme='night'] .codex-accounts-page .account-table {
   color: var(--account-data-ink) !important;
   background: transparent !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table thead th {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table thead th {
   border-color: rgba(17, 25, 30, 0.24) !important;
   color: #38464e !important;
   background: #c8d2d7 !important;
@@ -499,41 +499,41 @@ html[data-visual-theme='night'] .codex-accounts-page .account-table thead th {
   background: #252d32 !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr,
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr {
   color: var(--account-data-ink) !important;
   background: var(--account-row-odd) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:nth-child(even),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr:nth-child(even),
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:nth-child(even) {
   background: var(--account-row-even) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:hover,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr:hover,
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:hover {
   background: var(--account-row-hover) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr.current,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr.current,
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr.current,
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr.selected,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr.selected,
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr.selected {
   background: var(--account-row-current) !important;
   box-shadow: inset 4px 0 var(--account-data-ink) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr.pending-auth,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr.pending-auth,
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr.pending-auth {
   box-shadow: inset 4px 0 #6e7c84 !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:is(.new-api-exclusive, .api-key-usage-account),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr:is(.new-api-exclusive, .api-key-usage-account),
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:is(.new-api-exclusive, .api-key-usage-account) {
   box-shadow: inset 4px 0 #16877d !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody td,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody td,
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody td {
   border-bottom-color: var(--account-data-line) !important;
   color: var(--account-data-ink) !important;
@@ -541,7 +541,7 @@ html[data-visual-theme='night'] .codex-accounts-page .account-table tbody td {
 }
 
 /* Sticky actions are a continuation of the row, not an unrelated grey slab. */
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table :is(
   th.sticky-action-header,
   th.table-action-header
 ),
@@ -555,7 +555,7 @@ html[data-visual-theme='night'] .codex-accounts-page .account-table :is(
   box-shadow: -12px 0 18px -16px rgba(0, 0, 0, 0.48) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr > td:is(.sticky-action-cell, .table-action-cell),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr > td:is(.sticky-action-cell, .table-action-cell),
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr > td:is(.sticky-action-cell, .table-action-cell) {
   border-left: 1px solid var(--account-data-line) !important;
   color: var(--account-data-ink) !important;
@@ -563,15 +563,15 @@ html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr > t
   box-shadow: -12px 0 18px -16px rgba(0, 0, 0, 0.52) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:hover > td:is(.sticky-action-cell, .table-action-cell),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr:hover > td:is(.sticky-action-cell, .table-action-cell),
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:hover > td:is(.sticky-action-cell, .table-action-cell),
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr.current > td:is(.sticky-action-cell, .table-action-cell),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr.current > td:is(.sticky-action-cell, .table-action-cell),
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr.current > td:is(.sticky-action-cell, .table-action-cell) {
   background: var(--account-action-hover) !important;
 }
 
 /* Text hierarchy remains explicit inside every account layout. */
-html:not([data-visual-theme='night']) .codex-accounts-page :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(
   .account-email,
   .account-email-text,
   .codex-compact-email,
@@ -592,7 +592,7 @@ html[data-visual-theme='night'] .codex-accounts-page :is(
   opacity: 1 !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(
   .codex-login-subline,
   .codex-provider-inline-text,
   .codex-subscription-date,
@@ -621,18 +621,18 @@ html[data-visual-theme='night'] .codex-accounts-page :is(
 
 /* Contrast QA: keep small day-mode metadata safely above the 4.5:1 text
    threshold on both odd and selected grey rows. */
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-login-subline {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-login-subline {
   color: #45545d !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(.text-muted, .quota-empty),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(.text-muted, .quota-empty),
 html[data-visual-theme='night'] .codex-accounts-page :is(.text-muted, .quota-empty) {
   color: var(--account-data-muted) !important;
   opacity: 1 !important;
 }
 
 /* Quota tracks must remain distinguishable underneath every semantic fill. */
-html:not([data-visual-theme='night']) .codex-accounts-page :is(.quota-progress-track, .quota-bar-track) {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(.quota-progress-track, .quota-bar-track) {
   border: 1px solid rgba(17, 25, 30, 0.12) !important;
   background: rgba(17, 25, 30, 0.16) !important;
   box-shadow: inset 0 1px 2px rgba(17, 25, 30, 0.08) !important;
@@ -660,33 +660,33 @@ html[data-visual-theme='night'] .codex-accounts-page :is(
   background: #68c596 !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(.quota-progress-bar, .quota-bar),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(.quota-progress-bar, .quota-bar),
 html[data-visual-theme='night'] .codex-accounts-page :is(.quota-progress-bar, .quota-bar) {
   opacity: 1 !important;
 }
 
 /* Compact view follows the same material and contrast system as the table. */
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-compact-list,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-compact-list,
 html[data-visual-theme='night'] .codex-accounts-page .codex-compact-list {
   border-color: var(--account-data-line) !important;
   color: var(--account-data-ink) !important;
   background: var(--account-action-surface) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-compact-row,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-compact-row,
 html[data-visual-theme='night'] .codex-accounts-page .codex-compact-row {
   border-color: var(--account-data-line) !important;
   color: var(--account-data-ink) !important;
   background: var(--account-row-odd) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-compact-row:hover,
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-compact-row:hover,
 html[data-visual-theme='night'] .codex-accounts-page .codex-compact-row:hover {
   border-color: color-mix(in srgb, var(--account-data-ink) 42%, transparent) !important;
   background: var(--account-row-hover) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .codex-compact-row:is(.current, .selected),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .codex-compact-row:is(.current, .selected),
 html[data-visual-theme='night'] .codex-accounts-page .codex-compact-row:is(.current, .selected) {
   border-color: var(--account-data-ink) !important;
   color: var(--account-data-ink) !important;
@@ -694,7 +694,7 @@ html[data-visual-theme='night'] .codex-accounts-page .codex-compact-row:is(.curr
   box-shadow: inset 3px 0 var(--account-data-ink) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(.codex-compact-switch-btn, .codex-compact-note-btn),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(.codex-compact-switch-btn, .codex-compact-note-btn),
 html[data-visual-theme='night'] .codex-accounts-page :is(.codex-compact-switch-btn, .codex-compact-note-btn) {
   border-color: var(--account-data-line) !important;
   color: var(--account-data-secondary) !important;
@@ -720,7 +720,7 @@ html[data-visual-theme='night'] .codex-accounts-page .codex-account-card:is(.cur
 
 /* Semantic badges are intentionally saturated just enough to read on both
    grey paper and graphite without turning the data table into a dashboard. */
-html:not([data-visual-theme='night']) .codex-accounts-page :is(.mini-tag, .tier-badge, .codex-status-pill, .codex-subscription-badge, .group-account-badge, .codex-compact-expiry) {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(.mini-tag, .tier-badge, .codex-status-pill, .codex-subscription-badge, .group-account-badge, .codex-compact-expiry) {
   opacity: 1 !important;
   filter: none !important;
 }
@@ -764,7 +764,7 @@ html[data-visual-theme='night'] .codex-accounts-page :is(.codex-subscription-bad
 }
 
 /* Error and refresh notices keep a readable foreground and a bounded panel. */
-html:not([data-visual-theme='night']) .codex-accounts-page :is(.quota-error-inline, .message-bar.error) {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(.quota-error-inline, .message-bar.error) {
   border-color: rgba(153, 27, 27, 0.34) !important;
   color: #7f1d1d !important;
   background: rgba(254, 226, 226, 0.88) !important;
@@ -776,7 +776,7 @@ html[data-visual-theme='night'] .codex-accounts-page :is(.quota-error-inline, .m
   background: rgba(92, 28, 31, 0.78) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(.quota-error-inline.quota-refresh-notice, .quota-error-inline.quota-pending-auth) {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(.quota-error-inline.quota-refresh-notice, .quota-error-inline.quota-pending-auth) {
   border-color: rgba(50, 70, 81, 0.28) !important;
   color: #344852 !important;
   background: rgba(203, 215, 221, 0.88) !important;
@@ -789,7 +789,7 @@ html[data-visual-theme='night'] .codex-accounts-page :is(.quota-error-inline.quo
 }
 
 /* Functional controls remain visible at rest, on hover and while disabled. */
-html:not([data-visual-theme='night']) .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn) {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn) {
   border: 1px solid rgba(17, 25, 30, 0.34) !important;
   color: #27343b !important;
   background: rgba(231, 236, 238, 0.86) !important;
@@ -803,7 +803,7 @@ html[data-visual-theme='night'] .codex-accounts-page :is(.card-action-btn, .acti
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.075) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn):hover:not(:disabled) {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn):hover:not(:disabled) {
   border-color: #11191e !important;
   color: #f4f6f6 !important;
   background: #11191e !important;
@@ -815,7 +815,7 @@ html[data-visual-theme='night'] .codex-accounts-page :is(.card-action-btn, .acti
   background: #eef2f3 !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn):disabled {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page :is(.card-action-btn, .action-btn, .codex-compact-switch-btn, .codex-compact-note-btn):disabled {
   border-color: rgba(17, 25, 30, 0.18) !important;
   color: #65727a !important;
   background: #bbc6cb !important;
@@ -834,7 +834,7 @@ html[data-visual-theme='night'] .codex-accounts-page :is(.card-action-btn, .acti
 /* Account dialogs are rendered through portals, so scope them via the page
    still mounted below the overlay. This prevents old dark modal rules from
    leaking into the day canvas. */
-html:not([data-visual-theme='night']):has(.codex-accounts-page) :is(
+html:not([data-visual-theme]):not([data-theme='dark']):has(.codex-accounts-page) :is(
   .modal,
   .modal-content,
   .confirm-modal,
@@ -864,19 +864,19 @@ html[data-visual-theme='night']:has(.codex-accounts-page) :is(
   box-shadow: 8px 10px 0 rgba(0, 0, 0, 0.32), 0 30px 82px rgba(0, 0, 0, 0.54) !important;
 }
 
-html:not([data-visual-theme='night']):has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(.modal-header, .modal-footer),
+html:not([data-visual-theme]):not([data-theme='dark']):has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(.modal-header, .modal-footer),
 html[data-visual-theme='night']:has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(.modal-header, .modal-footer) {
   border-color: var(--account-data-line) !important;
   color: var(--account-data-ink) !important;
   background: var(--account-action-surface) !important;
 }
 
-html:not([data-visual-theme='night']):has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(h1, h2, h3, h4, label, strong),
+html:not([data-visual-theme]):not([data-theme='dark']):has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(h1, h2, h3, h4, label, strong),
 html[data-visual-theme='night']:has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(h1, h2, h3, h4, label, strong) {
   color: var(--account-data-ink) !important;
 }
 
-html:not([data-visual-theme='night']):has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(p, small, .hint, .description),
+html:not([data-visual-theme]):not([data-theme='dark']):has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(p, small, .hint, .description),
 html[data-visual-theme='night']:has(.codex-accounts-page) :is(.modal, .modal-content, [class*='codex-'][class$='-modal']) :is(p, small, .hint, .description) {
   color: var(--account-data-secondary) !important;
   opacity: 1 !important;
@@ -1322,7 +1322,7 @@ html[data-visual-theme='night']:has(.codex-accounts-page) :is(.modal, .modal-con
   border-radius: 3px !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page > .account-command-dock {
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page > .account-command-dock {
   border-color: rgba(17, 25, 30, 0.34) !important;
   background:
     linear-gradient(90deg, rgba(16, 23, 28, 0.035) 1px, transparent 1px),
@@ -1363,22 +1363,22 @@ html[data-visual-theme='night'] .codex-accounts-page > .account-command-dock {
   scrollbar-gutter: stable;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:nth-child(odd) > td:is(.sticky-action-cell, .table-action-cell),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr:nth-child(odd) > td:is(.sticky-action-cell, .table-action-cell),
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:nth-child(odd) > td:is(.sticky-action-cell, .table-action-cell) {
   background: var(--account-row-odd) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:nth-child(even) > td:is(.sticky-action-cell, .table-action-cell),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr:nth-child(even) > td:is(.sticky-action-cell, .table-action-cell),
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:nth-child(even) > td:is(.sticky-action-cell, .table-action-cell) {
   background: var(--account-row-even) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:hover > td:is(.sticky-action-cell, .table-action-cell),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr:hover > td:is(.sticky-action-cell, .table-action-cell),
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:hover > td:is(.sticky-action-cell, .table-action-cell) {
   background: var(--account-row-hover) !important;
 }
 
-html:not([data-visual-theme='night']) .codex-accounts-page .account-table tbody tr:is(.current, .selected) > td:is(.sticky-action-cell, .table-action-cell),
+html:not([data-visual-theme]):not([data-theme='dark']) .codex-accounts-page .account-table tbody tr:is(.current, .selected) > td:is(.sticky-action-cell, .table-action-cell),
 html[data-visual-theme='night'] .codex-accounts-page .account-table tbody tr:is(.current, .selected) > td:is(.sticky-action-cell, .table-action-cell) {
   background: var(--account-row-current) !important;
 }

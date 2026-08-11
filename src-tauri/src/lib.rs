@@ -135,6 +135,38 @@ fn raise_process_file_descriptor_limit() {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn raise_process_file_descriptor_limit() {}
 
+#[cfg(target_os = "windows")]
+fn enable_webview_gpu_acceleration() {
+    const WEBVIEW2_ARGS_KEY: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+    const GPU_ARGS: [&str; 3] = [
+        "--enable-gpu-rasterization",
+        "--enable-zero-copy",
+        "--enable-features=CanvasOopRasterization,UseSkiaRenderer",
+    ];
+
+    let current = std::env::var(WEBVIEW2_ARGS_KEY).unwrap_or_default();
+    let mut args: Vec<String> = current
+        .split_whitespace()
+        .filter(|arg| {
+            !matches!(
+                *arg,
+                "--disable-gpu" | "--disable-gpu-compositing" | "--disable-gpu-rasterization"
+            )
+        })
+        .map(ToOwned::to_owned)
+        .collect();
+    for required in GPU_ARGS {
+        if !args.iter().any(|arg| arg == required) {
+            args.push(required.to_string());
+        }
+    }
+    std::env::set_var(WEBVIEW2_ARGS_KEY, args.join(" "));
+    logger::log_info("[Windows] WebView2 GPU rasterization / zero-copy compositing enabled");
+}
+
+#[cfg(not(target_os = "windows"))]
+fn enable_webview_gpu_acceleration() {}
+
 fn should_hide_startup_minimized_window(
     config: &modules::config::UserConfig,
     is_macos: bool,
@@ -226,6 +258,8 @@ pub fn run() {
     modules::diagnostics::install_panic_hook();
     modules::diagnostics::start_frontend_ready_watchdog();
     raise_process_file_descriptor_limit();
+    // Must be configured before Tauri creates the first WebView2 environment.
+    enable_webview_gpu_acceleration();
     // 启动时先加载一次配置，确保进程级代理环境与用户设置同步。
     let _ = modules::config::get_user_config();
 
@@ -354,6 +388,7 @@ pub fn run() {
 
             tauri::async_runtime::spawn(async {
                 modules::multi_model_api::restore().await;
+                modules::jimeng_api::restore().await;
             });
 
             {
@@ -484,6 +519,22 @@ pub fn run() {
         })
         .on_window_event(|window, event| match event {
             WindowEvent::Resized(_) => {
+                if window.label() == modules::status_window::STATUS_WINDOW_LABEL {
+                    if let Some(status_window) = window
+                        .app_handle()
+                        .get_webview_window(modules::status_window::STATUS_WINDOW_LABEL)
+                    {
+                        if let Err(err) =
+                            modules::status_window::apply_native_status_window_shape(&status_window)
+                        {
+                            logger::log_warn(&format!(
+                                "[StatusWindow] 更新原生圆角区域失败: {}",
+                                err
+                            ));
+                        }
+                    }
+                    return;
+                }
                 if window.label() != "main" {
                     return;
                 }
@@ -682,6 +733,8 @@ pub fn run() {
             commands::system::delete_corrupted_file,
             commands::system::start_chat2api,
             commands::system::start_aurora,
+            commands::system::import_local_gpt_accounts,
+            commands::multi_model_api::multi_model_api_sync_local_gpt_bridges,
             // Logs Commands
             commands::logs::logs_get_snapshot,
             commands::logs::logs_open_log_directory,
@@ -824,8 +877,24 @@ pub fn run() {
             commands::multi_model_api::multi_model_api_set_enabled,
             commands::multi_model_api::multi_model_api_sync_managed_accounts,
             commands::multi_model_api::multi_model_api_test_chat,
+            commands::multi_model_api::multi_model_api_diagnose_and_repair,
             commands::multi_model_api::multi_model_api_generic_oauth_start,
             commands::multi_model_api::multi_model_api_generic_oauth_exchange,
+            // Jimeng / Dreamina image and video API service
+            commands::jimeng_api::jimeng_api_get_state,
+            commands::jimeng_api::jimeng_api_save_config,
+            commands::jimeng_api::jimeng_api_set_enabled,
+            commands::jimeng_api::jimeng_api_account_action,
+            commands::jimeng_api::jimeng_api_generate_image,
+            commands::jimeng_api::jimeng_api_compose_image,
+            commands::jimeng_api::jimeng_api_generate_video,
+            commands::jimeng_api::jimeng_api_diagnose_and_repair,
+            commands::jimeng_api::jimeng_api_start_device_flow,
+            commands::jimeng_api::jimeng_api_poll_device_flow,
+            commands::jimeng_api::jimeng_api_cancel_device_flow,
+            // Full Infinite Canvas workspace runtime
+            commands::infinite_canvas::infinite_canvas_get_state,
+            commands::infinite_canvas::infinite_canvas_start,
             // GitHub Copilot Commands
             commands::github_copilot::list_github_copilot_accounts,
             commands::github_copilot::delete_github_copilot_account,

@@ -23,10 +23,8 @@ const EXTENSION_SECRET_STORAGE_KEYS: [&str; 2] = [
     "antigravity.autoTrigger.credentials",
     "antigravity.autoTrigger.credential",
 ];
-const EXTENSION_SECRET_STORAGE_EXTENSION_IDS: [&str; 2] = [
-    "cle0726.cle-console",
-    "com.cle0726.cle-console",
-];
+const EXTENSION_SECRET_STORAGE_EXTENSION_IDS: [&str; 2] =
+    ["cle0726.cle-console", "com.cle0726.cle-console"];
 
 #[derive(Debug, Deserialize)]
 struct ExtensionCredential {

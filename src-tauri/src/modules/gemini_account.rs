@@ -26,7 +26,7 @@ const GOOGLE_USERINFO_ENDPOINT: &str = "https://www.googleapis.com/oauth2/v2/use
 const CODE_ASSIST_LOAD_ENDPOINT: &str =
     "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
 const CODE_ASSIST_RETRIEVE_QUOTA_ENDPOINT: &str =
-    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota";
 
 lazy_static::lazy_static! {
     static ref GEMINI_ACCOUNT_INDEX_LOCK: Mutex<()> = Mutex::new(());
@@ -443,6 +443,11 @@ fn persist_quota_query_error(account_id: &str, message: &str) {
     };
     account.quota_query_last_error = Some(message.to_string());
     account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
+    if is_validation_required_error(message) {
+        account.status = Some("verification_required".to_string());
+        account.status_reason = Some(validation_required_message(message));
+        account.quota_validation_url = extract_validation_url(message);
+    }
     let _ = upsert_account_record(account);
 }
 
@@ -521,6 +526,7 @@ pub fn upsert_account(payload: GeminiOAuthCompletePayload) -> Result<GeminiAccou
         status_reason: payload.status_reason,
         quota_query_last_error: None,
         quota_query_last_error_at: None,
+        quota_validation_url: None,
         usage_updated_at: existing.as_ref().and_then(|item| item.usage_updated_at),
         created_at,
         last_used: now,
@@ -1174,7 +1180,29 @@ fn is_unauthorized_error(error: &str) -> bool {
     error.contains("UNAUTHORIZED") || error.contains("401")
 }
 
+fn is_validation_required_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("gemini_validation_required") || lower.contains("validation_required")
+}
+
+fn extract_validation_url(error: &str) -> Option<String> {
+    let marker = "validation_url=";
+    let offset = error.find(marker)? + marker.len();
+    normalize_non_empty(error.get(offset..))
+}
+
+fn validation_required_message(error: &str) -> String {
+    error
+        .strip_prefix("GEMINI_VALIDATION_REQUIRED: ")
+        .and_then(|value| value.split(" | validation_url=").next())
+        .and_then(|value| normalize_non_empty(Some(value)))
+        .unwrap_or_else(|| "Google 要求先完成账号验证，验证后即可刷新 Gemini 额度。".to_string())
+}
+
 fn is_forbidden_error(error: &str) -> bool {
+    if is_validation_required_error(error) {
+        return false;
+    }
     let lower = error.to_ascii_lowercase();
     lower.contains("status=403")
         || lower.contains("403 forbidden")
@@ -1183,6 +1211,66 @@ fn is_forbidden_error(error: &str) -> bool {
         || lower.contains("permission_denied")
         || lower.contains("caller does not have permission")
         || lower.contains("forbidden")
+}
+
+fn code_assist_error_message(action_name: &str, status: reqwest::StatusCode, body: &str) -> String {
+    let parsed = serde_json::from_str::<Value>(body).ok();
+    let error = parsed.as_ref().and_then(|value| value.get("error"));
+    let message = error
+        .and_then(|value| value.get("message"))
+        .and_then(|value| value.as_str())
+        .and_then(|value| normalize_non_empty(Some(value)));
+    let rpc_status = error
+        .and_then(|value| value.get("status"))
+        .and_then(|value| value.as_str())
+        .and_then(|value| normalize_non_empty(Some(value)));
+    let code = error
+        .and_then(|value| value.get("code"))
+        .and_then(|value| value.as_i64());
+
+    let mut validation_url = None;
+    let mut validation_required = false;
+    if let Some(details) = error
+        .and_then(|value| value.get("details"))
+        .and_then(|value| value.as_array())
+    {
+        for detail in details {
+            if detail
+                .get("reason")
+                .and_then(|value| value.as_str())
+                .is_some_and(|reason| reason.eq_ignore_ascii_case("VALIDATION_REQUIRED"))
+            {
+                validation_required = true;
+                validation_url = detail
+                    .get("metadata")
+                    .and_then(|value| value.get("validation_url"))
+                    .and_then(|value| value.as_str())
+                    .and_then(|value| normalize_non_empty(Some(value)));
+                break;
+            }
+        }
+    }
+
+    if validation_required {
+        let message = message.unwrap_or_else(|| "Google account validation required".to_string());
+        return match validation_url {
+            Some(url) => format!(
+                "GEMINI_VALIDATION_REQUIRED: {} | validation_url={}",
+                message, url
+            ),
+            None => format!("GEMINI_VALIDATION_REQUIRED: {}", message),
+        };
+    }
+
+    format!(
+        "Gemini {} 请求失败: status={}, code={}, error_status={}, message={}",
+        action_name,
+        status,
+        code.map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+        rpc_status.unwrap_or_else(|| "unknown".to_string()),
+        message.unwrap_or_else(|| "上游未返回错误说明".to_string())
+    )
 }
 
 fn resolve_account_status(status: Option<&str>, reason: Option<&str>) -> Option<String> {
@@ -1229,12 +1317,7 @@ async fn post_code_assist_json(
         .text()
         .await
         .unwrap_or_else(|_| "<empty-body>".to_string());
-    Err(format!(
-        "请求 Gemini {} 失败: status={}, body_len={}",
-        action_name,
-        status,
-        body.len()
-    ))
+    Err(code_assist_error_message(action_name, status, &body))
 }
 
 async fn refresh_access_token(refresh_token: &str) -> Result<GoogleTokenRefreshResponse, String> {
@@ -1303,7 +1386,10 @@ async fn fetch_google_userinfo(access_token: &str) -> Option<GoogleUserInfoRespo
     response.json::<GoogleUserInfoResponse>().await.ok()
 }
 
-async fn load_code_assist_status(access_token: &str) -> Result<LoadCodeAssistStatus, String> {
+async fn load_code_assist_status(
+    access_token: &str,
+    existing_project_id: Option<&str>,
+) -> Result<LoadCodeAssistStatus, String> {
     let mut metadata = serde_json::Map::new();
     metadata.insert(
         "ideType".to_string(),
@@ -1317,9 +1403,18 @@ async fn load_code_assist_status(access_token: &str) -> Result<LoadCodeAssistSta
         "pluginType".to_string(),
         Value::String("GEMINI".to_string()),
     );
+    if let Some(project_id) = normalize_non_empty(existing_project_id) {
+        metadata.insert("duetProject".to_string(), Value::String(project_id));
+    }
 
     let mut payload = serde_json::Map::new();
     payload.insert("metadata".to_string(), Value::Object(metadata));
+    if let Some(project_id) = normalize_non_empty(existing_project_id) {
+        payload.insert(
+            "cloudaicompanionProject".to_string(),
+            Value::String(project_id),
+        );
+    }
 
     let value = post_code_assist_json(
         access_token,
@@ -1328,6 +1423,37 @@ async fn load_code_assist_status(access_token: &str) -> Result<LoadCodeAssistSta
         "loadCodeAssist",
     )
     .await?;
+
+    if value.get("currentTier").is_none() {
+        if let Some(validation_tier) = value
+            .get("ineligibleTiers")
+            .and_then(|item| item.as_array())
+            .and_then(|tiers| {
+                tiers.iter().find(|tier| {
+                    tier.get("reasonCode")
+                        .and_then(|item| item.as_str())
+                        .is_some_and(|reason| reason.eq_ignore_ascii_case("VALIDATION_REQUIRED"))
+                })
+            })
+        {
+            let message = validation_tier
+                .get("reasonMessage")
+                .and_then(|item| item.as_str())
+                .and_then(|item| normalize_non_empty(Some(item)))
+                .unwrap_or_else(|| "Google account validation required".to_string());
+            let validation_url = validation_tier
+                .get("validationUrl")
+                .and_then(|item| item.as_str())
+                .and_then(|item| normalize_non_empty(Some(item)));
+            return Err(match validation_url {
+                Some(url) => format!(
+                    "GEMINI_VALIDATION_REQUIRED: {} | validation_url={}",
+                    message, url
+                ),
+                None => format!("GEMINI_VALIDATION_REQUIRED: {}", message),
+            });
+        }
+    }
 
     let current_tier_id = normalize_non_empty(
         value
@@ -1376,6 +1502,17 @@ async fn load_code_assist_status(access_token: &str) -> Result<LoadCodeAssistSta
             })
         })
         .and_then(|tier| normalize_non_empty(tier.get("id").and_then(|v| v.as_str())));
+    let default_allowed_tier_name = value
+        .get("allowedTiers")
+        .and_then(|v| v.as_array())
+        .and_then(|tiers| {
+            tiers.iter().find(|tier| {
+                tier.get("isDefault")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            })
+        })
+        .and_then(|tier| normalize_non_empty(tier.get("name").and_then(|v| v.as_str())));
     let allowed_tier_ids = value
         .get("allowedTiers")
         .and_then(|v| v.as_array())
@@ -1388,18 +1525,21 @@ async fn load_code_assist_status(access_token: &str) -> Result<LoadCodeAssistSta
         })
         .unwrap_or_default();
     let first_allowed_tier_id = allowed_tier_ids.first().cloned();
-    let ineligible_tier_id = value
-        .get("ineligibleTiers")
+    let first_allowed_tier_name = value
+        .get("allowedTiers")
         .and_then(|v| v.as_array())
         .and_then(|tiers| tiers.first())
-        .and_then(|tier| normalize_non_empty(tier.get("tierId").and_then(|v| v.as_str())));
+        .and_then(|tier| normalize_non_empty(tier.get("name").and_then(|v| v.as_str())));
     let selected_tier_id = paid_tier_id
         .clone()
         .or_else(|| current_tier_id.clone())
-        .or_else(|| ineligible_tier_id.clone())
         .or_else(|| default_allowed_tier_id.clone())
         .or_else(|| first_allowed_tier_id.clone());
-    let selected_tier_name = paid_tier_name.clone().or_else(|| current_tier_name.clone());
+    let selected_tier_name = paid_tier_name
+        .clone()
+        .or_else(|| current_tier_name.clone())
+        .or(default_allowed_tier_name)
+        .or(first_allowed_tier_name);
 
     let project_id = normalize_non_empty(
         value
@@ -1430,7 +1570,7 @@ async fn load_code_assist_status(access_token: &str) -> Result<LoadCodeAssistSta
         .unwrap_or_else(|| "<non-object>".to_string());
 
     logger::log_info(&format!(
-        "[Gemini loadCodeAssist] keys=[{}], currentTier.id={:?}, currentTier.name={:?}, currentTier.quotaTier={:?}, paidTier.id={:?}, paidTier.name={:?}, paidTier.quotaTier={:?}, defaultAllowedTierId={:?}, firstAllowedTierId={:?}, ineligibleTierId={:?}, allowedTierIds=[{}], selectedTierId={:?}, projectId={:?}",
+        "[Gemini loadCodeAssist] keys=[{}], currentTier.id={:?}, currentTier.name={:?}, currentTier.quotaTier={:?}, paidTier.id={:?}, paidTier.name={:?}, paidTier.quotaTier={:?}, defaultAllowedTierId={:?}, firstAllowedTierId={:?}, allowedTierIds=[{}], selectedTierId={:?}, projectId={:?}",
         top_level_keys,
         current_tier_id,
         current_tier_name,
@@ -1440,7 +1580,6 @@ async fn load_code_assist_status(access_token: &str) -> Result<LoadCodeAssistSta
         paid_tier_quota_tier,
         default_allowed_tier_id,
         first_allowed_tier_id,
-        ineligible_tier_id,
         allowed_tier_ids.join(","),
         selected_tier_id,
         project_id
@@ -1461,7 +1600,7 @@ async fn retrieve_user_quota(access_token: &str, project_id: &str) -> Result<Val
         access_token,
         CODE_ASSIST_RETRIEVE_QUOTA_ENDPOINT,
         &payload,
-        "retrieveUserQuotaSummary",
+        "retrieveUserQuota",
     )
     .await
 }
@@ -1511,16 +1650,23 @@ async fn refresh_account_token_once(account_id: &str) -> Result<GeminiAccount, S
 
     ensure_access_token_valid(&mut account).await?;
 
-    let mut load_status = load_code_assist_status(&account.access_token).await;
+    let existing_project_id = account.project_id.clone();
+    let mut load_status =
+        load_code_assist_status(&account.access_token, existing_project_id.as_deref()).await;
     if let Err(err) = &load_status {
         if is_unauthorized_error(err) {
             force_refresh_access_token(&mut account).await?;
-            load_status = load_code_assist_status(&account.access_token).await;
+            load_status =
+                load_code_assist_status(&account.access_token, existing_project_id.as_deref())
+                    .await;
         }
     }
     let load_status = load_status?;
 
-    let project_id = load_status.project_id.clone();
+    let project_id = load_status
+        .project_id
+        .clone()
+        .or_else(|| existing_project_id.clone());
 
     if let Some(userinfo) = fetch_google_userinfo(&account.access_token).await {
         if let Some(email) = normalize_non_empty(userinfo.email.as_deref()) {
@@ -1573,6 +1719,7 @@ async fn refresh_account_token_once(account_id: &str) -> Result<GeminiAccount, S
                 account.gemini_usage_raw = Some(quota);
                 account.quota_query_last_error = None;
                 account.quota_query_last_error_at = None;
+                account.quota_validation_url = None;
                 account.usage_updated_at = Some(refreshed_at);
             }
             Err(err) => {
@@ -1582,9 +1729,14 @@ async fn refresh_account_token_once(account_id: &str) -> Result<GeminiAccount, S
                 ));
                 account.quota_query_last_error = Some(err.clone());
                 account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
-                if is_forbidden_error(&err) {
+                if is_validation_required_error(&err) {
+                    status = Some("verification_required".to_string());
+                    status_reason = Some(validation_required_message(&err));
+                    account.quota_validation_url = extract_validation_url(&err);
+                } else if is_forbidden_error(&err) {
                     account.gemini_usage_raw = None;
                     account.usage_updated_at = None;
+                    account.quota_validation_url = None;
                     status = Some("forbidden".to_string());
                     status_reason = Some(err);
                 }
@@ -1594,6 +1746,7 @@ async fn refresh_account_token_once(account_id: &str) -> Result<GeminiAccount, S
         account.gemini_usage_raw = None;
         account.quota_query_last_error = None;
         account.quota_query_last_error_at = None;
+        account.quota_validation_url = None;
         account.usage_updated_at = None;
     }
 
@@ -1619,7 +1772,15 @@ pub async fn refresh_all_tokens() -> Result<Vec<(String, Result<GeminiAccount, S
     use tokio::sync::Semaphore;
 
     const MAX_CONCURRENT: usize = 4;
-    let accounts = list_accounts();
+    let accounts = list_accounts()
+        .into_iter()
+        .filter(|account| {
+            !account.status.as_deref().is_some_and(|status| {
+                status.eq_ignore_ascii_case("verification_required")
+                    || status.eq_ignore_ascii_case("forbidden")
+            })
+        })
+        .collect::<Vec<_>>();
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
     let tasks: Vec<_> = accounts
         .into_iter()
@@ -1633,6 +1794,11 @@ pub async fn refresh_all_tokens() -> Result<Vec<(String, Result<GeminiAccount, S
                     .map_err(|e| format!("获取 Gemini 刷新并发许可失败: {}", e))?;
                 let result = refresh_account_token(&account_id).await;
                 if let Err(ref error) = result {
+                    if is_validation_required_error(error) {
+                        return Ok::<(String, Result<GeminiAccount, String>), String>((
+                            account_id, result,
+                        ));
+                    }
                     let _ = set_account_status(&account_id, Some("error"), Some(error));
                 }
                 Ok::<(String, Result<GeminiAccount, String>), String>((account_id, result))
@@ -1710,21 +1876,36 @@ pub fn inject_to_gemini(account_id: &str) -> Result<(), String> {
 }
 
 pub(crate) fn extract_account_model_remaining(account: &GeminiAccount) -> Vec<(String, i32)> {
+    account
+        .gemini_usage_raw
+        .as_ref()
+        .map(extract_model_remaining_from_usage)
+        .unwrap_or_default()
+}
+
+fn extract_model_remaining_from_usage(raw_usage: &Value) -> Vec<(String, i32)> {
     let mut model_remaining: HashMap<String, i32> = HashMap::new();
 
-    let Some(raw_usage) = account.gemini_usage_raw.as_ref() else {
-        return Vec::new();
-    };
-    let Some(groups) = raw_usage.get("groups").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
+    let mut bucket_sets: Vec<&Vec<Value>> = Vec::new();
+    if let Some(buckets) = raw_usage.get("buckets").and_then(|value| value.as_array()) {
+        bucket_sets.push(buckets);
+    }
+    if let Some(groups) = raw_usage.get("groups").and_then(|value| value.as_array()) {
+        for group in groups {
+            if let Some(buckets) = group.get("buckets").and_then(|value| value.as_array()) {
+                bucket_sets.push(buckets);
+            }
+        }
+    }
 
-    for group in groups {
-        let Some(buckets) = group.get("buckets").and_then(|v| v.as_array()) else {
-            continue;
-        };
+    for buckets in bucket_sets {
         for bucket in buckets {
-            let model_id = normalize_non_empty(bucket.get("bucketId").and_then(|v| v.as_str()));
+            let model_id = normalize_non_empty(
+                bucket
+                    .get("modelId")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| bucket.get("bucketId").and_then(|v| v.as_str())),
+            );
             let remaining_fraction = bucket
                 .get("remainingFraction")
                 .and_then(|v| v.as_f64())
@@ -1753,6 +1934,67 @@ pub(crate) fn extract_account_model_remaining(account: &GeminiAccount) -> Vec<(S
     let mut values: Vec<(String, i32)> = model_remaining.into_iter().collect();
     values.sort_by(|a, b| a.0.cmp(&b.0));
     values
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_current_top_level_quota_buckets() {
+        let usage = serde_json::json!({
+            "buckets": [
+                {"modelId": "gemini-2.5-pro", "remainingFraction": 0.75},
+                {"modelId": "gemini-2.5-flash", "remainingFraction": "0.4"}
+            ]
+        });
+        assert_eq!(
+            extract_model_remaining_from_usage(&usage),
+            vec![
+                ("gemini-2.5-flash".to_string(), 40),
+                ("gemini-2.5-pro".to_string(), 75)
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_legacy_group_bucket_compatibility_and_lowest_value() {
+        let usage = serde_json::json!({
+            "groups": [{"buckets": [
+                {"bucketId": "gemini-5h", "remainingFraction": 0.8},
+                {"bucketId": "gemini-5h", "remainingFraction": 0.6}
+            ]}]
+        });
+        assert_eq!(
+            extract_model_remaining_from_usage(&usage),
+            vec![("gemini-5h".to_string(), 60)]
+        );
+    }
+
+    #[test]
+    fn extracts_validation_required_error_without_leaking_body() {
+        let body = serde_json::json!({
+            "error": {
+                "code": 403,
+                "message": "Verify your account to continue.",
+                "status": "PERMISSION_DENIED",
+                "details": [{
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "VALIDATION_REQUIRED",
+                    "metadata": {"validation_url": "https://accounts.google.com/verify"}
+                }]
+            }
+        })
+        .to_string();
+        let message =
+            code_assist_error_message("retrieveUserQuota", reqwest::StatusCode::FORBIDDEN, &body);
+        assert!(is_validation_required_error(&message));
+        assert!(!is_forbidden_error(&message));
+        assert_eq!(
+            extract_validation_url(&message).as_deref(),
+            Some("https://accounts.google.com/verify")
+        );
+    }
 }
 
 pub(crate) fn resolve_current_account(accounts: &[GeminiAccount]) -> Option<GeminiAccount> {

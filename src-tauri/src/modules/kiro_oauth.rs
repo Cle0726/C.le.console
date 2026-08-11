@@ -20,6 +20,7 @@ const KIRO_RUNTIME_DEFAULT_ENDPOINT: &str = "https://q.us-east-1.amazonaws.com";
 const KIRO_ACCOUNT_STATUS_NORMAL: &str = "normal";
 const KIRO_ACCOUNT_STATUS_BANNED: &str = "banned";
 const KIRO_ACCOUNT_STATUS_ERROR: &str = "error";
+const KIRO_ACCOUNT_STATUS_LOGIN_REQUIRED: &str = "login_required";
 const OAUTH_TIMEOUT_SECONDS: u64 = 600;
 const OAUTH_POLL_INTERVAL_MS: u64 = 250;
 const OAUTH_STATE_FILE: &str = "kiro_oauth_pending.json";
@@ -2080,18 +2081,55 @@ fn pick_profile_and_usage_for_refresh(
 pub async fn refresh_payload_for_account(
     account: &KiroAccount,
 ) -> Result<KiroOAuthCompletePayload, String> {
-    // 刷新仅依赖账号 JSON 里的 refresh token + runtime usage 查询。
+    // Imported Kiro account files do not always contain a refresh token. Try the
+    // current access token first so an otherwise healthy account can still refresh usage.
+    let mut account_auth_token = account
+        .kiro_auth_token_raw
+        .clone()
+        .unwrap_or_else(|| json!({}));
+    merge_account_context_into_auth_token(&mut account_auth_token, account);
+    let (profile, usage) = pick_profile_and_usage_for_refresh(account, &account_auth_token);
+    let mut direct_payload =
+        build_payload_from_snapshot(account_auth_token.clone(), profile, usage)?;
+
+    if let Some(profile_arn) = extract_profile_arn_from_payload(&direct_payload) {
+        match fetch_usage_limits_via_runtime(
+            direct_payload.access_token.as_str(),
+            profile_arn.as_str(),
+            true,
+        )
+        .await
+        {
+            Ok(runtime_usage) => {
+                apply_runtime_usage_to_payload(&mut direct_payload, runtime_usage);
+                set_payload_status(&mut direct_payload, KIRO_ACCOUNT_STATUS_NORMAL, None);
+                return Ok(direct_payload);
+            }
+            Err(err) => {
+                if let Some(reason) = parse_banned_reason_from_error(&err) {
+                    set_payload_status(
+                        &mut direct_payload,
+                        KIRO_ACCOUNT_STATUS_BANNED,
+                        Some(reason),
+                    );
+                    return Ok(direct_payload);
+                }
+                set_payload_status(&mut direct_payload, KIRO_ACCOUNT_STATUS_ERROR, Some(err));
+            }
+        }
+    } else {
+        set_payload_status(
+            &mut direct_payload,
+            KIRO_ACCOUNT_STATUS_ERROR,
+            Some("Kiro 账号缺少 profile ARN，无法查询额度".to_string()),
+        );
+    }
+
     if let Some(refresh_token) = account
         .refresh_token
         .as_deref()
         .and_then(|value| normalize_non_empty(Some(value)))
     {
-        let mut account_auth_token = account
-            .kiro_auth_token_raw
-            .clone()
-            .unwrap_or_else(|| json!({}));
-        merge_account_context_into_auth_token(&mut account_auth_token, account);
-
         let prefer_idc = should_prefer_idc_refresh(&account_auth_token, account);
         let mut refresh_error_messages: Vec<String> = Vec::new();
         let mut refreshed_auth_token: Option<Value> = None;
@@ -2140,7 +2178,15 @@ pub async fn refresh_payload_for_account(
         ));
     }
 
-    Err("账号缺少 refresh_token，无法刷新 Kiro 登录态".to_string())
+    set_payload_status(
+        &mut direct_payload,
+        KIRO_ACCOUNT_STATUS_LOGIN_REQUIRED,
+        Some(
+            "当前 Kiro access token 无法读取额度，且账号文件缺少 refresh_token；请重新登录后再刷新。"
+                .to_string(),
+        ),
+    );
+    Ok(direct_payload)
 }
 
 pub async fn start_login() -> Result<KiroOAuthStartResponse, String> {

@@ -831,6 +831,8 @@ fn save_current_account_file(email: &str) -> Result<(), String> {
 /// 更新账号配额
 pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), String> {
     let mut account = load_account(account_id)?;
+    let has_fresh_model_snapshot = !quota.models.is_empty();
+    let refresh_had_error = account.quota_error.is_some();
 
     // 容错：如果新获取的 models 为空，但之前有数据，保留原来的 models
     if quota.models.is_empty() {
@@ -844,9 +846,9 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
                 let mut merged_quota = existing_quota.clone();
                 merged_quota.subscription_tier = quota.subscription_tier.clone();
                 merged_quota.is_forbidden = quota.is_forbidden;
-                merged_quota.last_updated = quota.last_updated;
+                // Empty/error responses are not fresh quota snapshots. Keep the
+                // authoritative timestamp of the last non-empty successful fetch.
                 account.update_quota(merged_quota);
-                account.usage_updated_at = Some(chrono::Utc::now().timestamp());
                 save_account(&account)?;
                 return Ok(());
             }
@@ -854,9 +856,14 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
     }
 
     account.update_quota(quota);
-    account.usage_updated_at = Some(chrono::Utc::now().timestamp());
+    if has_fresh_model_snapshot && !refresh_had_error {
+        account.usage_updated_at = Some(chrono::Utc::now().timestamp());
+    }
     save_account(&account)?;
-    if let Some(ref quota) = account.quota {
+    if has_fresh_model_snapshot && !refresh_had_error {
+        let Some(ref quota) = account.quota else {
+            return Ok(());
+        };
         let _ = modules::quota_cache::write_quota_cache("authorized", &account.email, quota);
     }
     Ok(())
@@ -1822,9 +1829,15 @@ pub async fn refresh_all_quotas_logic(
                 let _guard = permit.acquire().await.unwrap();
                 match fetch_quota_with_fresh_token(&mut account, false).await {
                     Ok(quota) => {
+                        let refresh_error = account.quota_error.clone();
                         if let Err(e) = update_account_quota(&account_id, quota) {
                             let msg = format!("Account {}: Save quota failed - {}", email, e);
                             Err(msg)
+                        } else if let Some(error) = refresh_error {
+                            Err(format!(
+                                "Account {}: Fetch quota failed (code={:?}) - {}",
+                                email, error.code, error.message
+                            ))
                         } else {
                             Ok(())
                         }

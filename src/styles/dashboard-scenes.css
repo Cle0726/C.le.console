@@ -495,3 +495,42 @@ html:not([data-visual-theme])[data-theme="dark"] .launchpad-primary > b { color:
   .ai-emblem-wrap{transition:none!important;transform:translate(-50%,-50%)!important;}
   .model-geometric-emblem *{animation:none!important;}
 }
+
+/* Dashboard account overview: keep the absolutely positioned layout control
+   intrinsic-sized. Some global button material rules can otherwise stretch it
+   across the header, leaving only its label clipped at the left edge. */
+.dashboard-data-scene-header {
+  position: relative !important;
+  min-width: 0;
+}
+
+.dashboard-data-scene-header .scene-layout-button {
+  left: auto !important;
+  right: 52px !important;
+  width: auto !important;
+  min-width: 132px;
+  max-width: min(180px, calc(100% - 180px));
+  box-sizing: border-box;
+}
+
+html[data-visual-theme='day'] .dashboard-data-scene-header :is(
+  .scene-header-title small,
+  .scene-header-title strong,
+  .scene-header-title strong em,
+  .scene-header-index,
+  .scene-header-title > button,
+  .scene-layout-button,
+  .scene-layout-button small
+) {
+  color: rgba(245, 248, 252, 0.94) !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+
+@media (max-width: 760px) {
+  .dashboard-data-scene-header .scene-layout-button {
+    position: static !important;
+    width: 100% !important;
+    max-width: none;
+    margin-top: 10px;
+  }
+}

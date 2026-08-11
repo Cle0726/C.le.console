@@ -1972,10 +1972,12 @@ fn build_models_from_available_models_response(
     response: &AvailableModelsResponse,
 ) -> Vec<AvailableModel> {
     let mut models = Vec::new();
+    let mut seen = HashSet::new();
     if let Some(entries) = extract_available_models_map(response) {
         let ordered_ids = extract_ordered_model_ids(response);
         for id in ordered_ids {
             if let Some(meta) = entries.get(&id) {
+                seen.insert(id.to_ascii_lowercase());
                 models.push(AvailableModel {
                     id: id.clone(),
                     display_name: meta.display_name.clone().unwrap_or_else(|| id.clone()),
@@ -1983,6 +1985,22 @@ fn build_models_from_available_models_response(
                     recommended: meta.recommended,
                 });
             }
+        }
+
+        // agentModelSorts is a presentation hint, not a complete model allowlist.
+        // Image, video and newly released models may exist only in `models`.
+        let mut remaining: Vec<_> = entries
+            .iter()
+            .filter(|(id, _)| !seen.contains(&id.to_ascii_lowercase()))
+            .collect();
+        remaining.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (id, meta) in remaining {
+            models.push(AvailableModel {
+                id: id.clone(),
+                display_name: meta.display_name.clone().unwrap_or_else(|| id.clone()),
+                model_constant: meta.model_constant.clone(),
+                recommended: meta.recommended,
+            });
         }
     }
     models
@@ -2185,4 +2203,30 @@ pub async fn fetch_available_models() -> Result<Vec<AvailableModel>, String> {
     Err(last_error.unwrap_or_else(|| {
         "获取模型列表失败：无异常标识账号均不可用，且本地模型列表为空".to_string()
     }))
+}
+
+#[cfg(test)]
+mod available_model_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_models_missing_from_agent_model_sorts() {
+        let response: AvailableModelsResponse = serde_json::from_value(serde_json::json!({
+            "agentModelSorts": [{
+                "groups": [{ "modelIds": ["gemini-3.1-pro-high"] }]
+            }],
+            "models": {
+                "gemini-3.1-pro-high": { "displayName": "Gemini Pro" },
+                "imagen-4-ultra": { "displayName": "Imagen 4 Ultra" },
+                "veo-3.1-generate": { "displayName": "Veo 3.1" }
+            }
+        }))
+        .expect("valid available models response");
+
+        let models = build_models_from_available_models_response(&response);
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0].id, "gemini-3.1-pro-high");
+        assert!(models.iter().any(|model| model.id == "imagen-4-ultra"));
+        assert!(models.iter().any(|model| model.id == "veo-3.1-generate"));
+    }
 }

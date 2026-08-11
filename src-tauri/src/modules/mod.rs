@@ -49,6 +49,7 @@ pub mod i18n;
 pub mod import;
 pub mod instance;
 pub mod instance_store;
+pub mod jimeng_api;
 pub mod kiro_account;
 pub mod kiro_instance;
 pub mod kiro_oauth;

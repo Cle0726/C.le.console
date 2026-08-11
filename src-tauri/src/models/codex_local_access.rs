@@ -63,7 +63,7 @@ pub enum CodexLocalAccessGatewayMode {
 
 impl Default for CodexLocalAccessGatewayMode {
     fn default() -> Self {
-        Self::Sidecar
+        Self::Legacy
     }
 }
 

@@ -1,0 +1,64 @@
+use crate::modules::jimeng_api::{self, JimengApiConfig, JimengApiState, JimengMediaRequest};
+use serde_json::Value;
+
+#[tauri::command]
+pub async fn jimeng_api_get_state() -> Result<JimengApiState, String> {
+    jimeng_api::get_state().await
+}
+
+#[tauri::command]
+pub async fn jimeng_api_save_config(config: JimengApiConfig) -> Result<JimengApiState, String> {
+    jimeng_api::save_config(config).await
+}
+
+#[tauri::command]
+pub async fn jimeng_api_set_enabled(enabled: bool) -> Result<JimengApiState, String> {
+    jimeng_api::set_enabled(enabled).await
+}
+
+#[tauri::command]
+pub async fn jimeng_api_account_action(
+    action: String,
+    account_id: Option<String>,
+) -> Result<Value, String> {
+    jimeng_api::account_action(&action, account_id).await
+}
+
+#[tauri::command]
+pub async fn jimeng_api_generate_image(request: JimengMediaRequest) -> Result<Value, String> {
+    jimeng_api::media_request("/v1/images/generations", request).await
+}
+
+#[tauri::command]
+pub async fn jimeng_api_compose_image(request: JimengMediaRequest) -> Result<Value, String> {
+    jimeng_api::media_request("/v1/images/compositions", request).await
+}
+
+#[tauri::command]
+pub async fn jimeng_api_generate_video(request: JimengMediaRequest) -> Result<Value, String> {
+    jimeng_api::media_request("/v1/videos/generations", request).await
+}
+
+#[tauri::command]
+pub async fn jimeng_api_diagnose_and_repair() -> Result<Value, String> {
+    jimeng_api::diagnose_and_repair().await
+}
+
+#[tauri::command]
+pub async fn jimeng_api_start_device_flow(
+    account_id: String,
+    account_name: String,
+    region: String,
+) -> Result<Value, String> {
+    jimeng_api::start_device_flow(account_id, account_name, region).await
+}
+
+#[tauri::command]
+pub async fn jimeng_api_poll_device_flow(flow_id: String) -> Result<Value, String> {
+    jimeng_api::poll_device_flow(&flow_id).await
+}
+
+#[tauri::command]
+pub async fn jimeng_api_cancel_device_flow(flow_id: String) -> Result<(), String> {
+    jimeng_api::cancel_device_flow(&flow_id)
+}

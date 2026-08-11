@@ -69,7 +69,9 @@ import {
   isCodexApiKeyAccount,
   isCodexChatCompletionsApiKeyAccount,
   isCodexNewApiAccount,
+  isCodexPendingOAuthAccount,
 } from '../types/codex';
+import { isAccountRouteBlocked } from '../utils/accountAuthStatus';
 import './DashboardPage.css';
 import { RobotIcon } from '../components/icons/RobotIcon';
 import { CodexIcon } from '../components/icons/CodexIcon';
@@ -162,7 +164,14 @@ function buildEmptyTraeCurrentIdsByPlatform(): Record<TraePlatformId, string | n
 
 function pickRecommendedTraeAccount(accounts: TraeAccount[], currentId?: string | null): TraeAccount | null {
   if (accounts.length <= 1) return null;
-  const others = accounts.filter((account) => account.id !== currentId);
+  const others = accounts.filter((account) => (
+    account.id !== currentId &&
+    !isAccountRouteBlocked(
+      account.status,
+      account.status_reason,
+      account.quota_query_last_error,
+    )
+  ));
   if (others.length === 0) return null;
 
   const getScore = (account: TraeAccount) => {
@@ -1450,6 +1459,7 @@ export function DashboardPage({
       if (a.id === currentId) return false;
       if (a.disabled) return false;
       if (a.quota?.is_forbidden) return false;
+      if (isAccountRouteBlocked(undefined, a.disabled_reason, a.quota_error?.message)) return false;
       if (!a.quota?.models || a.quota.models.length === 0) return false;
       return true;
     });
@@ -1476,6 +1486,13 @@ export function DashboardPage({
     const others = codexAccounts.filter((a) => {
       if (a.id === currentId) return false;
       if (isCodexChatCompletionsApiKeyAccount(a)) return false;
+      if (a.requires_reauth || isCodexPendingOAuthAccount(a)) return false;
+      if (isAccountRouteBlocked(
+        a.authorization_status,
+        a.reauth_reason,
+        a.quota_error?.code,
+        a.quota_error?.message,
+      )) return false;
       if (!a.quota) return false;
       return true;
     });
@@ -1522,7 +1539,15 @@ export function DashboardPage({
   const claudeRecommended = useMemo(() => {
     if (claudeAccounts.length <= 1) return null;
     const currentId = claudeCurrent?.id;
-    const others = claudeAccounts.filter((account) => account.id !== currentId);
+    const others = claudeAccounts.filter((account) => (
+      account.id !== currentId &&
+      !isAccountRouteBlocked(
+        account.status,
+        account.status_reason,
+        account.quota_error?.code,
+        account.quota_error?.message,
+      )
+    ));
     if (others.length === 0) return null;
 
     const getScore = (account: ClaudeAccount) => {
@@ -1674,7 +1699,10 @@ export function DashboardPage({
   const githubCopilotRecommended = useMemo(() => {
     if (githubCopilotAccounts.length <= 1) return null;
     const currentId = githubCopilotCurrent?.id;
-    const others = githubCopilotAccounts.filter((a) => a.id !== currentId);
+    const others = githubCopilotAccounts.filter((a) => (
+      a.id !== currentId &&
+      !isAccountRouteBlocked(undefined, a.quota_query_last_error)
+    ));
     if (others.length === 0) return null;
 
     const getScore = (acc: GitHubCopilotAccount) => {
@@ -1691,7 +1719,10 @@ export function DashboardPage({
   const windsurfRecommended = useMemo(() => {
     if (windsurfAccounts.length <= 1) return null;
     const currentId = windsurfCurrent?.id;
-    const others = windsurfAccounts.filter((account) => account.id !== currentId);
+    const others = windsurfAccounts.filter((account) => (
+      account.id !== currentId &&
+      !isAccountRouteBlocked(undefined, account.quota_query_last_error)
+    ));
     if (others.length === 0) return null;
 
     const getScore = (account: WindsurfAccount) => {
@@ -1720,9 +1751,15 @@ export function DashboardPage({
   const kiroRecommended = useMemo(() => {
     if (kiroAccounts.length <= 1) return null;
     const currentId = kiroCurrent?.id;
-    const others = kiroAccounts.filter(
-      (account) => account.id !== currentId && !isKiroAccountBanned(account),
-    );
+    const others = kiroAccounts.filter((account) => (
+      account.id !== currentId &&
+      !isKiroAccountBanned(account) &&
+      !isAccountRouteBlocked(
+        account.status,
+        account.status_reason,
+        account.quota_query_last_error,
+      )
+    ));
     if (others.length === 0) return null;
 
     const getScore = (account: KiroAccount) => {
@@ -1751,7 +1788,10 @@ export function DashboardPage({
   const cursorRecommended = useMemo(() => {
     if (cursorAccounts.length <= 1) return null;
     const currentId = cursorCurrent?.id;
-    const others = cursorAccounts.filter((a) => a.id !== currentId);
+    const others = cursorAccounts.filter((a) => (
+      a.id !== currentId &&
+      !isAccountRouteBlocked(a.status, a.status_reason, a.quota_query_last_error)
+    ));
     if (others.length === 0) return null;
 
     const getScore = (account: CursorAccount) => {
@@ -1817,7 +1857,10 @@ export function DashboardPage({
   const geminiRecommended = useMemo(() => {
     if (geminiAccounts.length <= 1) return null;
     const currentId = geminiCurrent?.id;
-    const others = geminiAccounts.filter((a) => a.id !== currentId);
+    const others = geminiAccounts.filter((a) => (
+      a.id !== currentId &&
+      !isAccountRouteBlocked(a.status, a.status_reason, a.quota_query_last_error)
+    ));
     if (others.length === 0) return null;
 
     const getScore = (account: GeminiAccount) => {
@@ -1854,7 +1897,10 @@ export function DashboardPage({
   const codebuddyRecommended = useMemo(() => {
     if (codebuddyAccounts.length <= 1) return null;
     const currentId = codebuddyCurrent?.id;
-    const others = codebuddyAccounts.filter((a) => a.id !== currentId);
+    const others = codebuddyAccounts.filter((a) => (
+      a.id !== currentId &&
+      !isAccountRouteBlocked(a.status, a.status_reason, a.quota_query_last_error)
+    ));
     if (others.length === 0) return null;
 
     const getScore = (account: CodebuddyAccount) => {
@@ -1881,7 +1927,10 @@ export function DashboardPage({
   const codebuddyCnRecommended = useMemo(() => {
     if (codebuddyCnAccounts.length <= 1) return null;
     const currentId = codebuddyCnCurrent?.id;
-    const others = codebuddyCnAccounts.filter((a) => a.id !== currentId);
+    const others = codebuddyCnAccounts.filter((a) => (
+      a.id !== currentId &&
+      !isAccountRouteBlocked(a.status, a.status_reason, a.quota_query_last_error)
+    ));
     if (others.length === 0) return null;
 
     const getScore = (account: CodebuddyAccount) => {
@@ -1918,7 +1967,10 @@ export function DashboardPage({
   const qoderRecommended = useMemo(() => {
     if (qoderAccounts.length <= 1) return null;
     const currentId = qoderCurrent?.id;
-    const others = qoderAccounts.filter((a) => a.id !== currentId);
+    const others = qoderAccounts.filter((a) => (
+      a.id !== currentId &&
+      !isAccountRouteBlocked(undefined, a.quota_query_last_error)
+    ));
     if (others.length === 0) return null;
 
     const getScore = (account: QoderAccount) => {
@@ -1952,7 +2004,10 @@ export function DashboardPage({
   const workbuddyRecommended = useMemo(() => {
     if (workbuddyAccounts.length <= 1) return null;
     const currentId = workbuddyCurrent?.id;
-    const others = workbuddyAccounts.filter((a) => a.id !== currentId);
+    const others = workbuddyAccounts.filter((a) => (
+      a.id !== currentId &&
+      !isAccountRouteBlocked(a.status, a.status_reason, a.quota_query_last_error)
+    ));
     if (others.length === 0) return null;
 
     const getScore = (account: WorkbuddyAccount) => {
@@ -1989,7 +2044,10 @@ export function DashboardPage({
   const zedRecommended = useMemo(() => {
     if (zedAccounts.length <= 1) return null;
     const currentId = zedCurrent?.id;
-    const others = zedAccounts.filter((account) => account.id !== currentId);
+    const others = zedAccounts.filter((account) => (
+      account.id !== currentId &&
+      !isAccountRouteBlocked(undefined, account.quota_query_last_error)
+    ));
     if (others.length === 0) return null;
 
     return others.reduce((best, candidate) => {

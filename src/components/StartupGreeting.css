@@ -1,0 +1,284 @@
+/* =============================================================================
+ * Opening sequence
+ * -----------------------------------------------------------------------------
+ * The previous version was a sci-fi HUD: grid, aurora pair, scanline, two orbit
+ * rings, a code strip, four boot stages and a percentage — twenty-odd elements
+ * held on screen for 5.2 seconds, most of them looping. It read as busy rather
+ * than considered, and the type was set flat, so nothing carried the moment.
+ *
+ * This is the opposite approach. Almost nothing on screen, one typographic
+ * event, then out of the way. All motion is opacity and transform only, so the
+ * whole sequence runs on the compositor while React mounts and Rust starts —
+ * which is exactly when the main thread has nothing to spare.
+ *
+ * The refinement is in the type, not in effects: a large, lightly-tracked CJK
+ * sentence resolves as one breath, set against a small English line at very
+ * wide tracking. The user's name is part of the sentence rather than a slogan
+ * appended after it.
+ *
+ * Class names are prefixed sg- so none of the 62 legacy .startup-greeting-*
+ * rules in spatial-ui.css can reach this markup.
+ * ========================================================================== */
+
+.startup-greeting.sg {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  place-items: center;
+  padding: 6vh 8vw 4vh;
+  background: var(--sg-canvas, #0b0c0e) !important;
+  color: var(--sg-ink, #f0f1f3);
+  filter: none !important;
+  cursor: pointer !important;
+  user-select: none;
+  animation: sg-in 260ms cubic-bezier(0.32, 0.72, 0.35, 1) both;
+  animation-duration: 260ms !important;
+}
+
+/* One soft field of light, static. Nothing here loops. */
+.sg-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--sg-veil);
+  animation: sg-settle 900ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+.sg-stack {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  text-align: center;
+  animation: sg-settle 640ms 30ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+.sg-mark {
+  width: 62px;
+  height: 62px;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 18px 40px rgba(6, 12, 24, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  animation: sg-mark-in 620ms cubic-bezier(0.2, 1.1, 0.3, 1) both;
+}
+
+.sg-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+
+/* ---- Palette follows the app theme -------------------------------------- */
+
+html[data-visual-theme='day'] .startup-greeting.sg {
+  --sg-canvas: #141f33;
+  --sg-ink: #f3f7fc;
+  --sg-ink-2: #9db0cd;
+  --sg-ink-3: #6f83a3;
+  --sg-veil:
+    radial-gradient(48% 40% at 62% 34%, rgba(202, 218, 242, 0.22), transparent 66%),
+    radial-gradient(56% 46% at 24% 76%, rgba(58, 90, 138, 0.4), transparent 68%),
+    linear-gradient(158deg, #33507c 0%, #2a4370 34%, #1d2e4c 68%, #141f33 100%);
+}
+
+html[data-visual-theme='night'] .startup-greeting.sg,
+html:not([data-visual-theme]) .startup-greeting.sg {
+  --sg-canvas: #0b0c0e;
+  --sg-ink: #f0f1f3;
+  --sg-ink-2: #a9aeb6;
+  --sg-ink-3: #757b84;
+  --sg-veil:
+    radial-gradient(48% 40% at 62% 34%, rgba(226, 229, 233, 0.16), transparent 66%),
+    radial-gradient(56% 46% at 24% 76%, rgba(70, 75, 82, 0.46), transparent 68%),
+    linear-gradient(158deg, #3a3e44 0%, #2c3035 34%, #1a1d21 68%, #0b0c0e 100%);
+}
+
+/* ---- The typographic event -------------------------------------------------
+ * Large and only lightly tracked, because CJK at generous size does not need
+ * extra spacing to breathe — it needs room around it, which the empty screen
+ * provides. Weight stays at a real face; nothing is synthesised.
+ * -------------------------------------------------------------------------- */
+
+.startup-greeting.sg .sg-title {
+  margin: 0;
+  font-size: clamp(34px, 4.6vw, 60px);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  line-height: 1.24;
+  color: var(--sg-ink, #f0f1f3);
+}
+
+.sg-title-line {
+  display: inline-block;
+  animation: sg-title-in 680ms 120ms cubic-bezier(0.2, 0.86, 0.25, 1) both;
+}
+
+.sg-en {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--sg-ink-2, #a9aeb6);
+  animation: sg-rise 560ms 300ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+/* A hairline that draws itself, and doubles as the loading indicator. */
+.sg-rule {
+  width: min(280px, 42vw);
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+  animation: sg-rise 560ms 390ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+.sg-rule i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(226, 238, 255, 0), rgba(226, 238, 255, 0.9));
+  /* scaleX rather than width: a transform, so the bar never triggers layout. */
+  transform: scaleX(var(--sg-progress, 0));
+  transform-origin: left center;
+  transition: transform 420ms cubic-bezier(0.33, 0.7, 0.37, 1);
+}
+
+.sg-note {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.9;
+  letter-spacing: 0.04em;
+  color: var(--sg-ink-2, #a9aeb6);
+  animation: sg-rise 580ms 470ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+.sg-foot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 10px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--sg-ink-3, #757b84);
+  animation: sg-rise 560ms 580ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+.sg-foot-date::after {
+  content: '';
+  display: inline-block;
+  width: 18px;
+  height: 1px;
+  margin-left: 14px;
+  vertical-align: middle;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+/* ---- Exit ---------------------------------------------------------------
+ * The sequence lifts away rather than dissolving in place, so the workspace
+ * underneath reads as having been there all along.
+ * ------------------------------------------------------------------------ */
+
+.startup-greeting.sg.is-leaving {
+  animation: sg-out 460ms cubic-bezier(0.6, 0.02, 0.32, 1) both;
+  pointer-events: none;
+}
+
+.startup-greeting.sg.is-leaving .sg-stack {
+  animation: sg-stack-out 400ms cubic-bezier(0.6, 0.02, 0.32, 1) both;
+}
+
+@keyframes sg-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sg-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes sg-stack-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+}
+
+@keyframes sg-settle {
+  from {
+    opacity: 0;
+    transform: scale(1.02);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes sg-mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes sg-title-in {
+  from {
+    opacity: 0;
+    filter: blur(5px);
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+@keyframes sg-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .startup-greeting.sg,
+  .startup-greeting.sg *,
+  .startup-greeting.sg::before,
+  .startup-greeting.sg::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+}

@@ -3,6 +3,7 @@ import type {
   MultiModelApiConfig,
   MultiModelApiState,
   MultiModelApiTestResult,
+  MultiModelRepairReport,
 } from '../types/multiModelApi';
 
 export interface MultiModelGenericOAuthStartRequest {
@@ -41,6 +42,10 @@ export const multiModelApiService = {
     invoke<MultiModelApiState>('multi_model_api_sync_managed_accounts'),
   testChat: (model?: string, prompt?: string) =>
     invoke<MultiModelApiTestResult>('multi_model_api_test_chat', { model, prompt }),
+  diagnoseAndRepair: (deep = true) =>
+    invoke<MultiModelRepairReport>('multi_model_api_diagnose_and_repair', { deep }),
+  syncLocalGptBridges: () =>
+    invoke<MultiModelApiState>('multi_model_api_sync_local_gpt_bridges'),
   genericOAuthStart: (request: MultiModelGenericOAuthStartRequest) =>
     invoke<MultiModelGenericOAuthStartResponse>('multi_model_api_generic_oauth_start', { request }),
   genericOAuthExchange: (request: MultiModelGenericOAuthExchangeRequest) =>

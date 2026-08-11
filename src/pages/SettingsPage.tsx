@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { normalizeUiScale, reflectUiScale } from '../utils/uiScale';
 import { changeLanguage, getCurrentLanguage, normalizeLanguage } from '../i18n';
 import * as accountService from '../services/accountService';
 import * as codexService from '../services/codexService';
@@ -1175,8 +1176,8 @@ export function SettingsPage() {
   };
 
   const applyUiScale = async (rawScale: string) => {
-    const parsed = Number.parseFloat(rawScale);
-    const normalized = Number.isFinite(parsed) ? Math.min(2, Math.max(0.8, parsed)) : 1;
+    const normalized = normalizeUiScale(rawScale);
+    reflectUiScale(normalized);
     try {
       await getCurrentWebview().setZoom(normalized);
     } catch (error) {

@@ -130,15 +130,23 @@ type providerGatewayModelCapability struct {
 }
 
 type accountSpec struct {
-	ID                   string   `json:"id"`
-	Email                string   `json:"email"`
-	AuthID               string   `json:"authId,omitempty"`
-	UpstreamAPIKey       string   `json:"upstreamApiKey,omitempty"`
-	Provider             string   `json:"provider,omitempty"`
-	Models               []string `json:"models,omitempty"`
-	PlanRank             *int     `json:"planRank,omitempty"`
-	RemainingQuota       *int     `json:"remainingQuota,omitempty"`
-	SubscriptionExpiryMS *int64   `json:"subscriptionExpiryMs,omitempty"`
+	ID                   string            `json:"id"`
+	Email                string            `json:"email"`
+	AuthID               string            `json:"authId,omitempty"`
+	AuthKind             string            `json:"authKind,omitempty"`
+	PlanType             string            `json:"planType,omitempty"`
+	AccessTokenOnly      bool              `json:"accessTokenOnly,omitempty"`
+	ChatGPTAccountID     string            `json:"chatgptAccountId,omitempty"`
+	UpstreamAPIKey       string            `json:"upstreamApiKey,omitempty"`
+	Provider             string            `json:"provider,omitempty"`
+	Models               []string          `json:"models,omitempty"`
+	BaseURL              string            `json:"baseUrl,omitempty"`
+	ProxyURL             string            `json:"proxyUrl,omitempty"`
+	Headers              map[string]string `json:"headers,omitempty"`
+	Priority             int               `json:"priority,omitempty"`
+	PlanRank             *int              `json:"planRank,omitempty"`
+	RemainingQuota       *int              `json:"remainingQuota,omitempty"`
+	SubscriptionExpiryMS *int64            `json:"subscriptionExpiryMs,omitempty"`
 }
 
 type modelAliasSpec struct {
@@ -423,6 +431,21 @@ func loadManifest(path string) (*manifest, error) {
 		account.ID = strings.TrimSpace(account.ID)
 		if account.ID == "" {
 			continue
+		}
+		account.Provider = strings.ToLower(strings.TrimSpace(account.Provider))
+		account.Models = normalizeStringList(account.Models)
+		account.BaseURL = strings.TrimSpace(account.BaseURL)
+		account.ProxyURL = strings.TrimSpace(account.ProxyURL)
+		if len(account.Headers) > 0 {
+			headers := make(map[string]string, len(account.Headers))
+			for name, value := range account.Headers {
+				name = strings.TrimSpace(name)
+				if name == "" {
+					continue
+				}
+				headers[name] = strings.TrimSpace(value)
+			}
+			account.Headers = headers
 		}
 		m.accountByID[account.ID] = account
 		m.originalIndexByID[account.ID] = i
@@ -2378,12 +2401,14 @@ type executorRuntime interface {
 }
 
 type relayServer struct {
-	runtime  executorRuntime
-	cfg      *config.Config
-	manifest *manifest
-	emitter  *eventEmitter
-	policy   *requestPolicy
-	openAI   *sdkopenai.OpenAIAPIHandler
+	runtime      executorRuntime
+	cfg          *config.Config
+	manifest     *manifest
+	emitter      *eventEmitter
+	policy       *requestPolicy
+	openAI       *sdkopenai.OpenAIAPIHandler
+	seedanceOnce sync.Once
+	seedance     *doubaoSeedanceGateway
 }
 
 func (s *relayServer) providersForModel(ctx context.Context, model string) []string {
@@ -2495,6 +2520,11 @@ func (s *relayServer) router() *gin.Engine {
 	router.Use(gin.Recovery())
 	router.Use(corsMiddleware())
 	router.Use(s.policy.middleware())
+	healthz := func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "cle-cliproxy"})
+	}
+	router.GET("/healthz", healthz)
+	router.HEAD("/healthz", healthz)
 	router.GET("/v1/models", s.handleModels)
 	router.POST("/v1/responses", s.handleResponses)
 	router.POST("/v1/responses/compact", s.handleResponsesCompact)
@@ -2508,6 +2538,7 @@ func (s *relayServer) router() *gin.Engine {
 	router.POST(imagesEditsPath, s.handleImagesEdits)
 	router.POST(videosCreatePath, s.handleVideosCreate)
 	router.POST(videosGenerationsPath, s.handleVideosGenerations)
+	router.GET(videosGenerationsPath+"/:video_id", s.handleDoubaoSeedanceStatus)
 	router.POST(videosEditsPath, s.handleVideosEdits)
 	router.POST(videosExtensionsPath, s.handleVideosExtensions)
 	router.GET(videosCreatePath+"/:video_id", s.handleVideosRetrieve)
@@ -3278,6 +3309,10 @@ func (s *relayServer) handleVideosCreate(c *gin.Context) {
 		s.handleNativeGeminiVideoGeneration(c, spec, rawJSON)
 		return
 	}
+	if isDoubaoSeedanceModel(requestBodyModel(rawJSON)) {
+		s.handleDoubaoSeedanceGeneration(c, spec, rawJSON)
+		return
+	}
 	if s.manifest == nil || !s.manifest.NativeModelRegistry || s.openAI == nil {
 		writeAPIError(c, http.StatusNotFound, "video gateway is only available in multi-model mode", "not_found")
 		return
@@ -3297,6 +3332,10 @@ func (s *relayServer) handleVideosGenerations(c *gin.Context) {
 	}
 	if isNativeGeminiVideoModel(requestBodyModel(rawJSON)) {
 		s.handleNativeGeminiVideoGeneration(c, spec, rawJSON)
+		return
+	}
+	if isDoubaoSeedanceModel(requestBodyModel(rawJSON)) {
+		s.handleDoubaoSeedanceGeneration(c, spec, rawJSON)
 		return
 	}
 	if s.manifest == nil || !s.manifest.NativeModelRegistry || s.openAI == nil {
@@ -3319,6 +3358,11 @@ func (s *relayServer) handleVideosExtensions(c *gin.Context) {
 }
 
 func (s *relayServer) handleVideosRetrieve(c *gin.Context) {
+	videoID := strings.TrimSpace(c.Param("video_id"))
+	if strings.EqualFold(strings.TrimSpace(c.Query("provider")), doubaoSeedanceProvider) || s.doubaoSeedanceTaskKnown(videoID) {
+		s.handleDoubaoSeedanceStatus(c)
+		return
+	}
 	if s.requireNativeMedia(c) {
 		s.openAI.VideosRetrieve(c)
 	}
@@ -4747,6 +4791,14 @@ func (s *relayServer) executeStreamWithOpenTimeout(
 			timer.Stop()
 			if out.err != nil || out.result == nil {
 				cancelAttempt()
+			} else {
+				// A successful streaming result still depends on attemptCtx while
+				// the caller consumes chunks. Release it as soon as the downstream
+				// request ends instead of leaking the per-attempt cancel function.
+				go func() {
+					<-ctx.Done()
+					cancelAttempt()
+				}()
 			}
 			return out.result, out.err
 		case <-ctx.Done():

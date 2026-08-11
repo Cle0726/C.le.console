@@ -59,6 +59,28 @@ pub(crate) fn is_banned_account(account: &KiroAccount) -> bool {
         || is_banned_reason(account.status_reason.as_deref())
 }
 
+const KIRO_LOGIN_REQUIRED_STATUS: &str = "login_required";
+
+fn is_login_required_account(account: &KiroAccount) -> bool {
+    account
+        .status
+        .as_deref()
+        .is_some_and(|status| status.eq_ignore_ascii_case(KIRO_LOGIN_REQUIRED_STATUS))
+}
+
+fn is_login_required_error(message: &str) -> bool {
+    let normalized = message.to_lowercase();
+    normalized.contains("login_required")
+        || normalized.contains("missing refresh token")
+        || normalized.contains("invalid refresh token")
+        || normalized.contains("缺少 refresh_token")
+        || normalized.contains("会话已过期")
+        || normalized.contains("未认证")
+        || normalized.contains("unauthorized")
+        || normalized.contains("authentication required")
+        || (normalized.contains("refresh_token") && normalized.contains("重新登录"))
+}
+
 fn get_data_dir() -> Result<PathBuf, String> {
     account::get_data_dir()
 }
@@ -304,6 +326,10 @@ fn persist_quota_query_error(account_id: &str, message: &str) {
     };
     account.quota_query_last_error = Some(message.to_string());
     account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
+    if is_login_required_error(message) && !is_banned_account(&account) {
+        account.status = Some(KIRO_LOGIN_REQUIRED_STATUS.to_string());
+        account.status_reason = Some(message.to_string());
+    }
     let _ = upsert_account_record(account);
 }
 
@@ -824,7 +850,10 @@ async fn refresh_account_token_once(account_id: &str) -> Result<KiroAccount, Str
     ));
 
     let payload = kiro_oauth::refresh_payload_for_account(&account).await?;
-    let usage_refreshed = payload.kiro_usage_raw.is_some();
+    let payload_status = payload.status.clone().unwrap_or_default();
+    let payload_status_reason = payload.status_reason.clone();
+    let usage_refreshed =
+        payload_status.eq_ignore_ascii_case("normal") && payload.kiro_usage_raw.is_some();
     let tags = account.tags.clone();
     let created_at = account.created_at;
     apply_payload(&mut account, payload);
@@ -836,7 +865,10 @@ async fn refresh_account_token_once(account_id: &str) -> Result<KiroAccount, Str
         account.quota_query_last_error_at = None;
         account.usage_updated_at = Some(refreshed_at);
     } else {
-        account.quota_query_last_error = Some("未获取到有效配额数据".to_string());
+        account.quota_query_last_error = Some(
+            payload_status_reason
+                .unwrap_or_else(|| "未获取到新的 Kiro 额度数据，已保留旧缓存".to_string()),
+        );
         account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
     }
     account.last_used = refreshed_at;
@@ -853,6 +885,15 @@ async fn refresh_account_token_once(account_id: &str) -> Result<KiroAccount, Str
 }
 
 pub async fn refresh_account_token(account_id: &str) -> Result<KiroAccount, String> {
+    if let Some(account) = load_account(account_id) {
+        if is_login_required_account(&account) {
+            logger::log_info(&format!(
+                "[Kiro Refresh] 账号需要重新登录，跳过自动请求: id={}",
+                account_id
+            ));
+            return Ok(account);
+        }
+    }
     let result = refresh_account_token_once(account_id).await;
     if let Err(err) = &result {
         persist_quota_query_error(account_id, err);
@@ -870,13 +911,13 @@ pub async fn refresh_all_tokens() -> Result<Vec<(String, Result<KiroAccount, Str
     let total = accounts.len();
     let active_accounts: Vec<KiroAccount> = accounts
         .into_iter()
-        .filter(|account| !is_banned_account(account))
+        .filter(|account| !is_banned_account(account) && !is_login_required_account(account))
         .collect();
-    let skipped_banned = total.saturating_sub(active_accounts.len());
-    if skipped_banned > 0 {
+    let skipped_inactive = total.saturating_sub(active_accounts.len());
+    if skipped_inactive > 0 {
         logger::log_info(&format!(
-            "[Kiro Refresh] 跳过封禁账号: skipped={}, total={}",
-            skipped_banned, total
+            "[Kiro Refresh] 跳过封禁或需要重新登录的账号: skipped={}, total={}",
+            skipped_inactive, total
         ));
     }
 
@@ -1301,7 +1342,7 @@ fn pick_quota_alert_recommendation(
     let mut candidates: Vec<KiroAccount> = accounts
         .iter()
         .filter(|account| account.id != current_id)
-        .filter(|account| !is_banned_account(account))
+        .filter(|account| !is_banned_account(account) && !is_login_required_account(account))
         .filter(|account| !extract_quota_metrics(account).is_empty())
         .cloned()
         .collect();
@@ -1340,7 +1381,7 @@ pub fn run_quota_alert_if_needed(
         Some(account) => account,
         None => return Ok(None),
     };
-    if is_banned_account(current) {
+    if is_banned_account(current) || is_login_required_account(current) {
         return Ok(None);
     }
 
@@ -1479,5 +1520,19 @@ pub fn read_local_usage_snapshot() -> Result<Option<Value>, String> {
             Ok(Some(parsed))
         }
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod login_status_tests {
+    use super::is_login_required_error;
+
+    #[test]
+    fn classifies_login_required_failures_without_matching_transient_errors() {
+        assert!(is_login_required_error(
+            "当前账号缺少 refresh_token，请重新登录"
+        ));
+        assert!(is_login_required_error("authentication required"));
+        assert!(!is_login_required_error("usage endpoint returned HTTP 503"));
     }
 }

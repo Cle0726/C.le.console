@@ -650,7 +650,7 @@ const filterAvailableModels = (
 ) =>
   filterAntigravityModelOptions(models, {
     allowedModelKeys,
-    includeNonRecommended: false,
+    includeNonRecommended: true,
   });
 
 const getTriggerMode = (task: WakeupTask): TriggerMode => {

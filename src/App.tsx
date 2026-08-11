@@ -5,9 +5,19 @@ import {
   useEffect,
   useRef,
   useState,
+  type Dispatch,
   type MouseEvent as ReactMouseEvent,
+  type SetStateAction,
 } from 'react';
 import './App.css';
+/* Deliberately imported after App.css so the unified material layer wins over
+   legacy page styles without relying on invalid late CSS @import rules. */
+import './styles/ui-unified-2026.css';
+import './styles/liquid-glass-26.css';
+/* Authoritative material system — tiered glass, canvas, motion and cost
+   control. Must stay last: it corrects the page stylesheets that lazily-loaded
+   pages inject at runtime. */
+import './styles/liquid-glass-system.css';
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -19,7 +29,8 @@ import { FileText, FolderOpen, RefreshCw, X } from 'lucide-react';
 import { SideNav } from './components/layout/SideNav';
 import { IndustrialChrome } from './components/layout/IndustrialChrome';
 import { AmbientInteractionLayer } from './components/AmbientInteractionLayer';
-import { StartupGreeting } from './components/StartupGreeting';
+import { PetFishCursorLayer } from './components/PetFishCursorLayer';
+import { SignatureCursorLayer } from './components/SignatureCursorLayer';
 import { StartupPerformanceProvider } from './contexts/StartupPerformanceContext';
 import { GlobalModal } from './components/GlobalModal';
 import type { QuickSettingsType } from './components/QuickSettingsPopover';
@@ -55,6 +66,7 @@ import {
 } from './utils/externalProviderImport';
 import { runAutoBackupCycle } from './services/scheduledBackupService';
 import { readPerformanceMode } from './utils/performanceMode';
+import { normalizeUiScale, reflectUiScale } from './utils/uiScale';
 
 const DashboardPage = lazy(() =>
   import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })),
@@ -70,6 +82,12 @@ const CodexApiServicePage = lazy(() =>
 );
 const MultiModelApiServicePage = lazy(() =>
   import('./pages/MultiModelApiServicePage').then((module) => ({ default: module.MultiModelApiServicePage })),
+);
+const JimengApiServicePage = lazy(() =>
+  import('./pages/JimengApiServicePage').then((module) => ({ default: module.JimengApiServicePage })),
+);
+const JimengInfiniteCanvasPage = lazy(() =>
+  import('./pages/JimengInfiniteCanvasPage').then((module) => ({ default: module.JimengInfiniteCanvasPage })),
 );
 const ClaudeWebApiPage = lazy(() =>
   import('./pages/ClaudeWebApiPage').then((module) => ({ default: module.ClaudeWebApiPage })),
@@ -521,10 +539,8 @@ function isWindowsPlatform(): boolean {
   return platform.toLowerCase().includes('win');
 }
 
-function MainApp() {
+function MainApp({ startupReady }: { startupReady: boolean }) {
   const { t } = useTranslation();
-  const [startupReady, setStartupReady] = useState(() => readPerformanceMode() === 'lite');
-  const handleStartupComplete = useCallback(() => setStartupReady(true), []);
   const sideNavLayoutMode = useSideNavLayoutStore((state) => state.mode);
   const sideNavClassicCollapsed = useSideNavLayoutStore((state) => state.classicCollapsed);
   const sideNavClassicFirstSyncDone = useSideNavLayoutStore((state) => state.classicFirstSyncDone);
@@ -533,7 +549,35 @@ function MainApp() {
   // Every fresh main-window session starts from the dashboard. Runtime navigation
   // still uses setPage normally, but the last visited account page is no longer
   // restored on the next app launch.
-  const [page, setPage] = useState<Page>('dashboard');
+  const [page, setPageState] = useState<Page>('dashboard');
+  const pageRef = useRef<Page>('dashboard');
+  const pageTransitionTimerRef = useRef<number | null>(null);
+  const pageTransitionSequenceRef = useRef(0);
+  const [pageTransitionPhase, setPageTransitionPhase] = useState<'idle' | 'entering-a' | 'entering-b'>('idle');
+  const setPage = useCallback<Dispatch<SetStateAction<Page>>>((nextPage) => {
+    const currentPage = pageRef.current;
+    const targetPage = typeof nextPage === 'function' ? nextPage(currentPage) : nextPage;
+    if (targetPage === currentPage) return;
+
+    pageRef.current = targetPage;
+    pageTransitionSequenceRef.current += 1;
+    setPageTransitionPhase(pageTransitionSequenceRef.current % 2 === 0 ? 'entering-a' : 'entering-b');
+    setPageState(targetPage);
+
+    if (pageTransitionTimerRef.current !== null) {
+      window.clearTimeout(pageTransitionTimerRef.current);
+    }
+    const duration = readPerformanceMode() === 'lite' ? 340 : 520;
+    pageTransitionTimerRef.current = window.setTimeout(() => {
+      setPageTransitionPhase('idle');
+      pageTransitionTimerRef.current = null;
+    }, duration);
+  }, []);
+  useEffect(() => () => {
+    if (pageTransitionTimerRef.current !== null) {
+      window.clearTimeout(pageTransitionTimerRef.current);
+    }
+  }, []);
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [showLogViewer, setShowLogViewer] = useState(false);
   const [showPlatformLayoutModal, setShowPlatformLayoutModal] = useState(false);
@@ -753,6 +797,17 @@ function MainApp() {
     let cleanup: (() => void) | null = null;
 
     const applyTheme = (newTheme: string) => {
+      const visualTheme = document.documentElement.getAttribute('data-visual-theme');
+      if (visualTheme === 'day' || visualTheme === 'night') {
+        document.documentElement.setAttribute(
+          'data-theme',
+          visualTheme === 'night' ? 'dark' : 'light',
+        );
+        document.documentElement.style.colorScheme =
+          visualTheme === 'night' ? 'dark' : 'light';
+        return;
+      }
+
       if (newTheme === 'system') {
         const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
@@ -762,8 +817,8 @@ function MainApp() {
     };
 
     const applyUiScale = async (rawScale?: number) => {
-      const scale = typeof rawScale === 'number' && Number.isFinite(rawScale) ? rawScale : 1;
-      const normalizedScale = Math.min(2, Math.max(0.8, scale));
+      const normalizedScale = normalizeUiScale(rawScale);
+      reflectUiScale(normalizedScale);
       try {
         await getCurrentWebview().setZoom(normalizedScale);
       } catch (error) {
@@ -1750,7 +1805,7 @@ function MainApp() {
         className={`app-container${isWindowsPlatform() ? ' app-container-windows' : ''}${sideNavLayoutMode === 'classic' ? ' app-container-side-nav-classic' : ''}${sideNavLayoutMode === 'classic' && sideNavClassicCollapsed ? ' app-container-side-nav-classic-collapsed' : ''}`}
       >
       <AmbientInteractionLayer enabled={startupReady} />
-      <StartupGreeting onComplete={handleStartupComplete} />
+      <PetFishCursorLayer enabled={startupReady} />
       <GlobalModal />
 
       {/* 关闭确认对话框 */}
@@ -2043,7 +2098,11 @@ function MainApp() {
         />
       </Suspense>
 
-      <div className="main-wrapper">
+      <div
+        className={`main-wrapper${pageTransitionPhase === 'idle' ? '' : ` page-transition-${pageTransitionPhase}`}`}
+        data-page={page}
+        aria-busy={pageTransitionPhase !== 'idle'}
+      >
         {/* removed promo banner */}
         {/* overview 现在是合并后的账号总览页面 */}
         <Suspense fallback={suspenseFallback}>
@@ -2060,6 +2119,10 @@ function MainApp() {
           {page === 'claude-cli' && <ClaudeAccountsPage subPlatform="cli" />}
           {page === 'codex-api-service' && <CodexApiServicePage />}
           {page === 'multi-model-api-service' && <MultiModelApiServicePage />}
+          {page === 'jimeng-api-service' && (
+            <JimengApiServicePage onOpenCanvas={() => setPage('jimeng-infinite-canvas')} />
+          )}
+          {page === 'jimeng-infinite-canvas' && <JimengInfiniteCanvasPage onNavigate={setPage} />}
           {page === 'claude-web-api' && <ClaudeWebApiPage />}
           {page === 'github-copilot' && <GitHubCopilotAccountsPage />}
           {page === 'windsurf' && <WindsurfAccountsPage />}
@@ -2093,19 +2156,19 @@ function MainApp() {
   );
 }
 
-function App() {
+function App({ startupReady = true }: { startupReady?: boolean }) {
   const windowLabel =
     typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
       ? getCurrentWindow().label
       : 'main';
   if (windowLabel === 'floating-card' || windowLabel.startsWith('instance-floating-card-')) {
-    return <FloatingCardWindow />;
+    return <><FloatingCardWindow /><SignatureCursorLayer /></>;
   }
   if (windowLabel === 'status-window') {
-    return <StatusWindow />;
+    return <><StatusWindow /><PetFishCursorLayer /></>;
   }
 
-  return <MainApp />;
+  return <MainApp startupReady={startupReady} />;
 }
 
 export default App;

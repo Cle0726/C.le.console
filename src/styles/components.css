@@ -671,6 +671,18 @@
   color: var(--primary);
 }
 
+/* The global dark shadow is a hard offset and reads as a duplicate pill. */
+[data-theme="dark"] .platform-group-switcher-trigger {
+  box-shadow: none;
+  border-color: rgba(225, 234, 238, .22);
+  background: rgba(255, 255, 255, .045);
+}
+
+[data-theme="dark"] .platform-group-switcher-trigger:hover {
+  border-color: rgba(225, 234, 238, .34);
+  background: rgba(255, 255, 255, .08);
+}
+
 .platform-group-switcher-trigger-icon {
   flex: 0 0 auto;
   display: inline-flex;

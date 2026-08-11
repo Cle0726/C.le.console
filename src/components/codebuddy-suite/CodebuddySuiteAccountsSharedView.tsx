@@ -31,6 +31,7 @@ import {
   removeAccountsOverviewFilterField,
   writeAccountsOverviewFilterField,
 } from '../../utils/accountsOverviewFilterPersistence';
+import { isAccountLoginRequired, isAccountRefreshError } from '../../utils/accountAuthStatus';
 
 const FILTER_TYPES_FIELD = 'filter_types';
 
@@ -292,7 +293,8 @@ export function CodebuddySuiteAccountsSharedView<TAccount extends CodebuddySuite
     const groups = platformConfig.getQuotaGroups(account, t as (key: string, defaultValue?: string) => string);
     const hasQuotaData = platformConfig.hasQuotaData(account, groups);
     const refreshFailed = !!account.quota_query_last_error?.trim();
-    const shouldShowQuota = hasQuotaData && !refreshFailed;
+    // Preserve stale-but-valid quota data while the warning explains refresh failure.
+    const shouldShowQuota = hasQuotaData;
     const statusText = refreshFailed
       ? t(`${platformConfig.quotaPrefix}.quotaQuery.failedRefreshCompact`, '配额查询失败')
       : t(`${platformConfig.quotaPrefix}.quotaQuery.empty`, '暂无可用配额数据');
@@ -328,6 +330,13 @@ export function CodebuddySuiteAccountsSharedView<TAccount extends CodebuddySuite
       const moreTagCount = Math.max(0, accountTags.length - visibleTags.length);
       const isSelected = selected.has(account.id);
       const isCurrent = currentAccountId === account.id;
+      const requiresLogin = isAccountLoginRequired(
+        account.status,
+        account.status_reason,
+        account.quota_query_last_error,
+      );
+      const hasStatusError = isAccountRefreshError(account.status) || requiresLogin;
+      const statusTitle = account.status_reason || account.quota_query_last_error || undefined;
       return (
         <div key={groupKey ? `${groupKey}-${account.id}` : account.id}
           className={`ghcp-account-card ${isCurrent ? 'current' : ''} ${isSelected ? 'selected' : ''}`}>
@@ -337,6 +346,14 @@ export function CodebuddySuiteAccountsSharedView<TAccount extends CodebuddySuite
             </div>
             <span className="account-email" title={maskAccountText(displayEmail)}>{maskAccountText(displayEmail)}</span>
             {isCurrent && <span className="current-tag">{t('accounts.status.current', '当前')}</span>}
+            {hasStatusError && (
+              <span className="status-pill warning" title={statusTitle}>
+                <CircleAlert size={12} />
+                {requiresLogin
+                  ? t('accounts.status.loginRequired', '需重新登录')
+                  : t('accounts.status.refreshFailed', '刷新失败')}
+              </span>
+            )}
             <span className={`tier-badge ${tierBadgeClass}`}>{planBadge}</span>
           </div>
           {accountTags.length > 0 && (
@@ -374,12 +391,27 @@ export function CodebuddySuiteAccountsSharedView<TAccount extends CodebuddySuite
       const tierBadgeClass = resolveTierBadgeClass(planBadge);
       const isSelected = selected.has(account.id);
       const isCurrent = currentAccountId === account.id;
+      const requiresLogin = isAccountLoginRequired(
+        account.status,
+        account.status_reason,
+        account.quota_query_last_error,
+      );
+      const hasStatusError = isAccountRefreshError(account.status) || requiresLogin;
+      const statusTitle = account.status_reason || account.quota_query_last_error || undefined;
       return (
         <tr key={account.id} className={`${isCurrent ? 'current-row' : ''} ${isSelected ? 'selected-row' : ''}`}>
           <td><input type="checkbox" checked={isSelected} onChange={() => toggleSelect(account.id)} /></td>
           <td>
             <span className="table-email" title={maskAccountText(displayEmail)}>{maskAccountText(displayEmail)}</span>
             {isCurrent && <span className="current-tag">{t('accounts.status.current', '当前')}</span>}
+            {hasStatusError && (
+              <span className="status-pill warning" title={statusTitle}>
+                <CircleAlert size={12} />
+                {requiresLogin
+                  ? t('accounts.status.loginRequired', '需重新登录')
+                  : t('accounts.status.refreshFailed', '刷新失败')}
+              </span>
+            )}
           </td>
           <td><span className={`tier-badge ${tierBadgeClass}`}>{planBadge}</span></td>
           <td>

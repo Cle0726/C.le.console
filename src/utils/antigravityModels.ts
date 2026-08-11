@@ -103,7 +103,7 @@ export const getAntigravityModelDisplayName = (value: string): string => {
 
 export const filterAntigravityModelOptions = (
   models: AntigravityModelOption[],
-  _options?: {
+  options?: {
     allowedModelKeys?: Iterable<string>;
     includeNonRecommended?: boolean;
   },
@@ -114,6 +114,11 @@ export const filterAntigravityModelOptions = (
 
   const result: AntigravityModelOption[] = [];
   const seen = new Set<string>();
+  const allowed = new Set(
+    Array.from(options?.allowedModelKeys || [])
+      .map((value) => normalize(value))
+      .filter(Boolean),
+  );
 
   models.forEach((model) => {
     const canonical = resolveCanonicalModel({
@@ -121,14 +126,33 @@ export const filterAntigravityModelOptions = (
       modelConstant: model.modelConstant,
       displayName: model.displayName,
     });
-    if (!canonical) return;
-    if (seen.has(canonical.id)) return;
-    seen.add(canonical.id);
+    if (canonical) {
+      if (seen.has(canonical.id)) return;
+      seen.add(canonical.id);
+      result.push({
+        id: canonical.id,
+        displayName: (model.displayName || '').trim() || canonical.displayName,
+        modelConstant: model.modelConstant || canonical.modelConstant,
+        recommended: true,
+      });
+      return;
+    }
+
+    const identityKeys = [model.id, model.modelConstant, model.displayName]
+      .map((value) => normalize(value))
+      .filter(Boolean);
+    const isAllowedByQuota = identityKeys.some((key) => allowed.has(key));
+    if (!options?.includeNonRecommended && !isAllowedByQuota) return;
+
+    const id = (model.id || model.modelConstant || model.displayName || '').trim();
+    const dedupeKey = normalize(id);
+    if (!id || !dedupeKey || seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
     result.push({
-      id: canonical.id,
-      displayName: (model.displayName || '').trim() || canonical.displayName,
-      modelConstant: model.modelConstant || canonical.modelConstant,
-      recommended: true,
+      ...model,
+      id,
+      displayName: (model.displayName || '').trim() || id,
+      recommended: Boolean(model.recommended),
     });
   });
 
@@ -149,8 +173,13 @@ export const collectAntigravityQuotaModelKeys = (accounts: Account[]): string[] 
   return keys;
 };
 
-export const buildAntigravityFallbackModelOptions = (_accounts: Account[]): AntigravityModelOption[] =>
-  [];
+export const buildAntigravityFallbackModelOptions = (accounts: Account[]): AntigravityModelOption[] =>
+  collectAntigravityQuotaModelKeys(accounts).map((id) => ({
+    id,
+    displayName: getAntigravityModelDisplayName(id),
+    modelConstant: id,
+    recommended: Boolean(resolveCanonicalModel({ id })),
+  }));
 
 export const sortAntigravityQuotaModels = (models: ModelQuota[]): ModelQuota[] => {
   if (!Array.isArray(models) || models.length === 0) {
@@ -166,17 +195,24 @@ export const sortAntigravityQuotaModels = (models: ModelQuota[]): ModelQuota[] =
       modelConstant: model.name,
       displayName: model.display_name || model.name,
     });
-    if (!canonical) return;
-    if (seen.has(canonical.id)) return;
-    seen.add(canonical.id);
+    const identity = canonical?.id || normalize(model.name);
+    if (!identity || seen.has(identity)) return;
+    seen.add(identity);
     picked.push({
-      rank: CANONICAL_RANK.get(canonical.id) ?? Number.MAX_SAFE_INTEGER,
+      rank: canonical
+        ? (CANONICAL_RANK.get(canonical.id) ?? Number.MAX_SAFE_INTEGER)
+        : Number.MAX_SAFE_INTEGER,
       model,
     });
   });
 
   return picked
-    .sort((a, b) => a.rank - b.rank)
+    .sort((a, b) =>
+      a.rank - b.rank ||
+      (a.model.display_name || a.model.name).localeCompare(
+        b.model.display_name || b.model.name,
+      ),
+    )
     .map((item) => item.model);
 };
 

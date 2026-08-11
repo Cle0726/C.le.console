@@ -611,7 +611,7 @@ export function getKiroAccountLoginProvider(account: KiroAccount): string | null
   return provider;
 }
 
-export type KiroAccountStatus = 'normal' | 'banned' | 'error' | 'unknown';
+export type KiroAccountStatus = 'normal' | 'banned' | 'error' | 'login_required' | 'unknown';
 
 function normalizeStatusText(raw: string | null | undefined): string {
   return raw?.trim().toLowerCase() ?? '';
@@ -634,6 +634,7 @@ export function getKiroAccountStatus(account: KiroAccount): KiroAccountStatus {
   const status = normalizeStatusText(account.status);
   if (status === 'normal' || status === 'ok' || status === 'active') return 'normal';
   if (status === 'banned' || status === 'ban' || status === 'forbidden') return 'banned';
+  if (status === 'login_required' || status === 'reauth_required') return 'login_required';
   if (status === 'error' || status === 'failed' || status === 'invalid') return 'error';
 
   if (inferBannedFromReason(account.status_reason)) return 'banned';
