@@ -33,8 +33,10 @@
   filter: none !important;
   cursor: pointer !important;
   user-select: none;
-  animation: sg-in 260ms cubic-bezier(0.32, 0.72, 0.35, 1) both;
-  animation-duration: 260ms !important;
+  /* Keep the covering canvas fully opaque from React's first committed frame.
+     Fading the whole layer revealed the still-mounting workspace underneath
+     and read as a black/blank first half on cold launches. */
+  animation: none !important;
 }
 
 /* One soft field of light, static. Nothing here loops. */
@@ -43,7 +45,7 @@
   inset: 0;
   pointer-events: none;
   background: var(--sg-veil);
-  animation: sg-settle 900ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  animation: sg-veil-in 520ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
 }
 
 .sg-stack {
@@ -53,7 +55,7 @@
   align-items: center;
   gap: 22px;
   text-align: center;
-  animation: sg-settle 640ms 30ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  animation: sg-stack-in 420ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
 }
 
 .sg-mark {
@@ -62,7 +64,7 @@
   border-radius: 20px;
   overflow: hidden;
   box-shadow: 0 18px 40px rgba(6, 12, 24, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.3);
-  animation: sg-mark-in 620ms cubic-bezier(0.2, 1.1, 0.3, 1) both;
+  animation: sg-mark-in 420ms cubic-bezier(0.2, 1.1, 0.3, 1) both;
 }
 
 .sg-mark img {
@@ -115,7 +117,7 @@ html:not([data-visual-theme]) .startup-greeting.sg {
 
 .sg-title-line {
   display: inline-block;
-  animation: sg-title-in 680ms 120ms cubic-bezier(0.2, 0.86, 0.25, 1) both;
+  animation: sg-title-in 460ms 35ms cubic-bezier(0.2, 0.86, 0.25, 1) both;
 }
 
 .sg-en {
@@ -125,7 +127,7 @@ html:not([data-visual-theme]) .startup-greeting.sg {
   letter-spacing: 0.34em;
   text-transform: uppercase;
   color: var(--sg-ink-2, #a9aeb6);
-  animation: sg-rise 560ms 300ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  animation: sg-rise 420ms 90ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
 }
 
 /* A hairline that draws itself, and doubles as the loading indicator. */
@@ -134,7 +136,7 @@ html:not([data-visual-theme]) .startup-greeting.sg {
   height: 1px;
   background: rgba(255, 255, 255, 0.14);
   overflow: hidden;
-  animation: sg-rise 560ms 390ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  animation: sg-rise 420ms 130ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
 }
 
 .sg-rule i {
@@ -155,7 +157,7 @@ html:not([data-visual-theme]) .startup-greeting.sg {
   line-height: 1.9;
   letter-spacing: 0.04em;
   color: var(--sg-ink-2, #a9aeb6);
-  animation: sg-rise 580ms 470ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  animation: sg-rise 430ms 170ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
 }
 
 .sg-foot {
@@ -167,7 +169,7 @@ html:not([data-visual-theme]) .startup-greeting.sg {
   letter-spacing: 0.26em;
   text-transform: uppercase;
   color: var(--sg-ink-3, #757b84);
-  animation: sg-rise 560ms 580ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  animation: sg-rise 420ms 210ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
 }
 
 .sg-foot-date::after {
@@ -187,21 +189,12 @@ html:not([data-visual-theme]) .startup-greeting.sg {
  * ------------------------------------------------------------------------ */
 
 .startup-greeting.sg.is-leaving {
-  animation: sg-out 460ms cubic-bezier(0.6, 0.02, 0.32, 1) both;
+  animation: sg-out 460ms cubic-bezier(0.6, 0.02, 0.32, 1) both !important;
   pointer-events: none;
 }
 
 .startup-greeting.sg.is-leaving .sg-stack {
   animation: sg-stack-out 400ms cubic-bezier(0.6, 0.02, 0.32, 1) both;
-}
-
-@keyframes sg-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 @keyframes sg-out {
@@ -226,10 +219,10 @@ html:not([data-visual-theme]) .startup-greeting.sg {
   }
 }
 
-@keyframes sg-settle {
+@keyframes sg-veil-in {
   from {
-    opacity: 0;
-    transform: scale(1.02);
+    opacity: 0.82;
+    transform: scale(1.008);
   }
   to {
     opacity: 1;
@@ -237,10 +230,21 @@ html:not([data-visual-theme]) .startup-greeting.sg {
   }
 }
 
+@keyframes sg-stack-in {
+  from {
+    opacity: 0.78;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes sg-mark-in {
   from {
-    opacity: 0;
-    transform: scale(0.86);
+    opacity: 0.72;
+    transform: scale(0.94);
   }
   to {
     opacity: 1;
@@ -250,9 +254,9 @@ html:not([data-visual-theme]) .startup-greeting.sg {
 
 @keyframes sg-title-in {
   from {
-    opacity: 0;
-    filter: blur(5px);
-    transform: translateY(8px);
+    opacity: 0.38;
+    filter: blur(2px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -263,8 +267,8 @@ html:not([data-visual-theme]) .startup-greeting.sg {
 
 @keyframes sg-rise {
   from {
-    opacity: 0;
-    transform: translateY(8px);
+    opacity: 0.45;
+    transform: translateY(4px);
   }
   to {
     opacity: 1;

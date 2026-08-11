@@ -5,6 +5,18 @@
     <link rel="icon" type="image/png" href="/src/assets/app-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>C.le.控制台</title>
+    <script>
+      /* Apply the saved palette before the WebView's first paint. */
+      try {
+        var cleFirstTheme = localStorage.getItem('cle.visual-theme') === 'day' ? 'day' : 'night';
+        document.documentElement.setAttribute('data-visual-theme', cleFirstTheme);
+        document.documentElement.setAttribute('data-theme', cleFirstTheme === 'day' ? 'light' : 'dark');
+        document.documentElement.style.colorScheme = cleFirstTheme === 'day' ? 'light' : 'dark';
+      } catch (_) {
+        document.documentElement.setAttribute('data-visual-theme', 'night');
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    </script>
     <!--
       Critical first paint. startup-shell.css is imported from main.tsx, so it
       only lands after the module graph loads — the WebView paints its default
@@ -25,11 +37,83 @@
           linear-gradient(154deg, #3e4248 0%, #26292e 44%, #131518 84%, #0b0c0e 100%);
         background-attachment: fixed;
       }
+
+      html[data-visual-theme='day'] {
+        background: #141f33;
+      }
+
+      html[data-visual-theme='day'] body {
+        background:
+          radial-gradient(46% 38% at 66% 30%, rgba(214, 224, 238, 0.6), transparent 62%),
+          radial-gradient(62% 50% at 46% 70%, rgba(92, 127, 174, 0.66), transparent 66%),
+          linear-gradient(154deg, #33507c 0%, #40639a 22%, #3a5b8c 64%, #141f33 100%);
+      }
+
+      /*
+        This tiny shell is parsed with the HTML, before the React bundle. It
+        prevents the native background from occupying the first half of the
+        opening sequence on a cold WebView start. React replaces it with the
+        full greeting as soon as the application script mounts.
+      */
+      .boot-first-frame {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #f0f1f3;
+        font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      }
+
+      html[data-visual-theme='day'] .boot-first-frame {
+        color: #f3f7fc;
+      }
+
+      .boot-first-frame__stack {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 18px;
+        text-align: center;
+        opacity: 0.92;
+        transform: translateY(2px);
+      }
+
+      .boot-first-frame__mark {
+        width: 62px;
+        height: 62px;
+        border-radius: 20px;
+        object-fit: cover;
+        box-shadow: 0 18px 40px rgba(6, 12, 24, 0.44);
+      }
+
+      .boot-first-frame__title {
+        margin: 0;
+        font-size: clamp(34px, 4.6vw, 60px);
+        font-weight: 400;
+        letter-spacing: 0.06em;
+        line-height: 1.24;
+      }
+
+      .boot-first-frame__en {
+        margin: 0;
+        color: rgba(218, 226, 238, 0.72);
+        font-size: 11px;
+        font-weight: 400;
+        letter-spacing: 0.34em;
+      }
     </style>
   </head>
 
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-first-frame" aria-hidden="true">
+        <div class="boot-first-frame__stack">
+          <img class="boot-first-frame__mark" src="/src/assets/app-icon-rounded.png" alt="" />
+          <p class="boot-first-frame__title">才酷。</p>
+          <p class="boot-first-frame__en">C.LE. CONSOLE</p>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
