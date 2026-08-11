@@ -32,17 +32,9 @@ function run(command, args, options = {}) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-function removeEmbeddedMacSignature(filePath) {
-  const result = spawnSync('codesign', ['--remove-signature', filePath], {
-    cwd: repoRoot,
-    stdio: ['ignore', 'ignore', 'pipe'],
-    shell: false,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    const message = result.stderr?.toString().trim();
-    console.log(`No removable signature on ${path.basename(filePath)}${message ? `: ${message}` : ''}`);
-  }
+function signAndVerifyMacExecutable(filePath) {
+  run('codesign', ['--force', '--sign', '-', '--timestamp=none', filePath]);
+  run('codesign', ['--verify', '--strict', '--verbose=2', filePath]);
 }
 
 const architectures = requestedTarget.startsWith('aarch64')
@@ -107,11 +99,12 @@ for (const architecture of architectures) {
     output,
     '--compress',
     'Brotli',
+    '--sea',
     '--no-signature',
   ]);
-  // pkg base binaries can retain a stale LC_CODE_SIGNATURE even with
-  // --no-signature. Strip it before lipo so Tauri can ad-hoc sign the final app.
-  removeEmbeddedMacSignature(output);
+  // SEA keeps the payload inside a regular Mach-O section. Sign it now so a
+  // malformed sidecar fails before the expensive Rust release compilation.
+  signAndVerifyMacExecutable(output);
   fs.chmodSync(output, 0o755);
 }
 
