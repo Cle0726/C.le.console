@@ -4,12 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const requestedTarget = process.argv.slice(2).find((argument) => !argument.startsWith('--')) ?? 'universal-apple-darwin';
+const requestedTarget = process.argv.slice(2).find((argument) => !argument.startsWith('--')) ?? 'aarch64-apple-darwin';
 const skipInstall = process.argv.includes('--skip-install');
 const supportedTargets = new Set([
   'aarch64-apple-darwin',
   'x86_64-apple-darwin',
-  'universal-apple-darwin',
 ]);
 
 if (process.platform !== 'darwin') {
@@ -46,14 +45,9 @@ function removeEmbeddedMacSignature(filePath) {
   }
 }
 
-const architectures = requestedTarget === 'universal-apple-darwin'
-  ? [
-      { rust: 'aarch64-apple-darwin', go: 'arm64', pkg: 'arm64' },
-      { rust: 'x86_64-apple-darwin', go: 'amd64', pkg: 'x64' },
-    ]
-  : requestedTarget.startsWith('aarch64')
-    ? [{ rust: 'aarch64-apple-darwin', go: 'arm64', pkg: 'arm64' }]
-    : [{ rust: 'x86_64-apple-darwin', go: 'amd64', pkg: 'x64' }];
+const architectures = requestedTarget.startsWith('aarch64')
+  ? [{ rust: 'aarch64-apple-darwin', go: 'arm64', pkg: 'arm64' }]
+  : [{ rust: 'x86_64-apple-darwin', go: 'amd64', pkg: 'x64' }];
 
 const cleSource = path.join(repoRoot, 'sidecars', 'cle-cliproxy');
 const cleOutput = path.join(cleSource, 'bin');
@@ -119,20 +113,6 @@ for (const architecture of architectures) {
   // --no-signature. Strip it before lipo so Tauri can ad-hoc sign the final app.
   removeEmbeddedMacSignature(output);
   fs.chmodSync(output, 0o755);
-}
-
-if (requestedTarget === 'universal-apple-darwin') {
-  for (const [name, outputDir] of [
-    ['cle-cliproxy', cleOutput],
-    ['jimeng-api', jimengOutput],
-  ]) {
-    const arm64 = path.join(outputDir, `${name}-aarch64-apple-darwin`);
-    const x64 = path.join(outputDir, `${name}-x86_64-apple-darwin`);
-    const universal = path.join(outputDir, `${name}-universal-apple-darwin`);
-    run('lipo', ['-create', arm64, x64, '-output', universal]);
-    removeEmbeddedMacSignature(universal);
-    fs.chmodSync(universal, 0o755);
-  }
 }
 
 console.log(`macOS sidecars ready for ${requestedTarget}`);

@@ -172,7 +172,7 @@ npm run tauri -- build --bundles nsis --no-sign
 
 ### macOS 预览版准备状态
 
-仓库已经加入独立的 `tauri.macos.conf.json`、原生 sidecar 构建脚本和手动 GitHub Actions 工作流。预览构建目标为 **macOS 12.0+**，默认生成同时兼容 Apple Silicon 与 Intel 的 Universal `.app` 和 `.dmg`。
+仓库已经加入独立的 `tauri.macos.conf.json`、原生 sidecar 构建脚本和手动 GitHub Actions 工作流。预览构建目标为 **macOS 12.0+**。根据现有照片中的 M1 信息，默认生成 Apple Silicon（arm64）`.app` 和 `.dmg`；Intel 版本使用相同构建链单独生成，避免将 Node sidecar 合并成不稳定的 Universal 可执行文件。
 
 macOS 预览版当前包含：
 
@@ -194,7 +194,7 @@ npm run macos:check
 npm run macos:build
 ```
 
-默认产物位于 `target/universal-apple-darwin/release/bundle/`。也可以在 GitHub 仓库的 **Actions → macOS preview → Run workflow** 手动生成保留 14 天的测试产物。
+默认产物位于 `target/aarch64-apple-darwin/release/bundle/`。如果实机最终确认是 Intel，可改用 `npm run macos:build -- x86_64-apple-darwin`。也可以在 GitHub 仓库的 **Actions → macOS preview → Run workflow** 手动生成保留 14 天的 Apple Silicon 测试产物。
 
 现有 Windows `.exe` 仍不能直接在 macOS 上运行。Mac 到位后先执行以下命令确认机器真实架构与系统版本，再进行安装验证：
 

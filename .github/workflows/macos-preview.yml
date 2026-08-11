@@ -7,8 +7,8 @@ permissions:
   contents: read
 
 jobs:
-  build-universal:
-    name: Build universal app and DMG
+  build-apple-silicon:
+    name: Build Apple Silicon app and DMG
     runs-on: macos-14
     timeout-minutes: 90
 
@@ -34,7 +34,7 @@ jobs:
       - name: Set up Rust targets
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -47,7 +47,7 @@ jobs:
       - name: Check macOS source readiness
         run: npm run macos:check
 
-      - name: Build universal preview
+      - name: Build Apple Silicon preview
         run: npm run macos:build
 
       - name: Stage artifacts
@@ -55,18 +55,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/macos
-          APP_PATH="$(find target/universal-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
-          DMG_PATH="$(find target/universal-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          APP_PATH="$(find target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          DMG_PATH="$(find target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
           test -n "$APP_PATH"
           test -n "$DMG_PATH"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" artifacts/macos/C.le.console-macos-universal.app.zip
-          cp "$DMG_PATH" artifacts/macos/C.le.console-macos-universal.dmg
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" artifacts/macos/C.le.console-macos-arm64.app.zip
+          cp "$DMG_PATH" artifacts/macos/C.le.console-macos-arm64.dmg
           shasum -a 256 artifacts/macos/* > artifacts/macos/SHA256SUMS.txt
 
       - name: Upload preview artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: C.le.console-macos-universal-preview
+          name: C.le.console-macos-arm64-preview
           path: artifacts/macos/*
           if-no-files-found: error
           retention-days: 14

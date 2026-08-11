@@ -64,7 +64,7 @@ for (const script of ['macos:check', 'macos:sidecars', 'macos:build']) {
 }
 
 if (process.platform === 'darwin') {
-  for (const command of ['xcodebuild', 'go', 'rustup', 'node', 'npm', 'lipo']) {
+  for (const command of ['xcodebuild', 'go', 'rustup', 'node', 'npm']) {
     try {
       execFileSync('/usr/bin/which', [command], { stdio: 'ignore' });
     } catch {
@@ -81,7 +81,7 @@ if (failures.length > 0) {
 
 console.log('macOS source readiness: OK');
 console.log('- targets: app, dmg');
-console.log('- architectures: Apple Silicon, Intel, universal');
+console.log('- architectures: Apple Silicon by default; Intel can be built separately');
 console.log('- minimum system: macOS 12.0');
 console.log('- bundled sidecars: cle-cliproxy, jimeng-api');
 console.log('- deferred on macOS: cockpit-cliproxy (Claude Web helper)');
