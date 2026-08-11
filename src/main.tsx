@@ -132,6 +132,22 @@ if (visualReviewTarget === "jimeng") {
       </React.StrictMode>,
     );
   });
+} else if (visualReviewTarget === "dashboard-data") {
+  void import("./dev/DashboardDataVisualReview").then(({ DashboardDataVisualReview }) => {
+    root.render(
+      <React.StrictMode>
+        <DashboardDataVisualReview />
+      </React.StrictMode>,
+    );
+  });
+} else if (visualReviewTarget === "manual") {
+  void import("./dev/ManualVisualReview").then(({ ManualVisualReview }) => {
+    root.render(
+      <React.StrictMode>
+        <ManualVisualReview />
+      </React.StrictMode>,
+    );
+  });
 } else if (
   !("__TAURI_INTERNALS__" in window)
   || ![

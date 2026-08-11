@@ -13,6 +13,7 @@ import type {
   JimengDeviceFlow, JimengRepairReport,
 } from '../types/jimengApi';
 import './JimengApiServicePage.unified.css';
+import jimengIcon from '../assets/jimeng.png';
 
 type Tab = 'overview' | 'accounts' | 'image' | 'video' | 'tasks' | 'api';
 type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
@@ -522,7 +523,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       <div className="page-tabs-row page-tabs-center page-tabs-row-with-leading jimeng-top-tabs">
         <div className="page-tabs-leading">
           <div className="jimeng-context-label">
-            <WandSparkles size={17} />
+            <img src={jimengIcon} alt="" aria-hidden="true" className="jimeng-model-icon" />
             <span>独立创作网关</span>
           </div>
         </div>
@@ -549,7 +550,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       </div>
 
       <header className="jimeng-hero">
-        <div className="jimeng-hero-mark"><WandSparkles size={30} /></div>
+        <div className="jimeng-hero-mark"><img src={jimengIcon} alt="" aria-hidden="true" className="jimeng-hero-logo" /></div>
         <div>
           <div className="jimeng-eyebrow">JIMENG / DREAMINA CREATIVE GATEWAY</div>
           <h1>即梦创作 API</h1>

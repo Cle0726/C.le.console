@@ -1,0 +1,396 @@
+/*
+ * Responsive text and control safety
+ *
+ * WebView zoom changes the effective CSS viewport without reliably triggering
+ * every legacy media query. Keep text-bearing flex/grid children shrinkable,
+ * let descriptive copy wrap, and avoid fixed-height controls clipping CJK.
+ */
+
+:where(
+  .main-wrapper,
+  .main-content,
+  .page-container,
+  .page-header,
+  .page-top-strip,
+  .page-tabs-row,
+  .toolbar,
+  .account-command-dock,
+  .account-selection-toolbar,
+  .codex-overview-selection-bar,
+  .manual-page,
+  .jimeng-page,
+  .jimeng-content
+) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  box-sizing: border-box;
+}
+
+:where(
+  .page-header > *,
+  .page-top-strip > *,
+  .page-tabs-row > *,
+  .toolbar > *,
+  .account-command-dock > *,
+  .account-selection-toolbar > *,
+  .codex-overview-selection-bar > *,
+  .manual-card-title-wrap,
+  .manual-card-title-block,
+  .jimeng-panel-title > div,
+  .jimeng-hero > div,
+  .jimeng-account-main,
+  .card-title,
+  .card-content
+) {
+  min-inline-size: 0;
+}
+
+:where(
+  .page-title,
+  .page-subtitle,
+  .page-top-strip-label,
+  .scene-title,
+  .scene-subtitle,
+  .manual-card-title-block h3,
+  .manual-card-title-block p,
+  .jimeng-panel-title h2,
+  .jimeng-panel-title p,
+  .jimeng-hero h1,
+  .jimeng-hero p,
+  .empty-state h3,
+  .empty-state p
+) {
+  max-inline-size: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* The legacy primary gradient can resolve too dark in the night palette.
+   Manual headings are instructional text, so keep their contrast deterministic
+   instead of using transparent gradient-filled glyphs. */
+.manual-page .page-title {
+  color: var(--text-primary) !important;
+  background: none !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+
+/* The material layer makes buttons `position: relative !important`. The
+   account-overview layout control is intentionally anchored to its scene
+   header; if that global rule wins, `right: 52px` shifts the in-flow button
+   through the left edge instead of positioning it from the right edge. */
+.dashboard-data-scene-header .scene-layout-button {
+  position: absolute !important;
+  inset-block-start: 13px !important;
+  inset-inline-start: auto !important;
+  inset-inline-end: 52px !important;
+  inline-size: auto !important;
+  min-inline-size: 132px;
+  max-inline-size: min(180px, calc(100% - 180px));
+}
+
+/* Real JiMeng/Dreamina product icon, shared by spatial/classic navigation and
+   the creative gateway header. */
+.jimeng-model-icon {
+  display: block;
+  inline-size: 20px;
+  block-size: 20px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.spatial-nav-item .jimeng-model-icon {
+  inline-size: 18px;
+  block-size: 18px;
+  border-radius: 5px;
+}
+
+.jimeng-context-label .jimeng-model-icon {
+  inline-size: 18px;
+  block-size: 18px;
+  border-radius: 5px;
+}
+
+.jimeng-hero-mark {
+  overflow: hidden;
+}
+
+.jimeng-hero-logo {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+/* Manual cards previously inherited a fixed control height from the glass
+   button layer. Long titles then painted over their summaries. */
+.manual-card-header {
+  block-size: auto !important;
+  min-block-size: 68px;
+  align-items: flex-start;
+  overflow: visible;
+}
+
+.manual-card-title-wrap {
+  flex: 1 1 auto;
+  inline-size: auto;
+  max-inline-size: calc(100% - 30px);
+}
+
+.manual-card-title-block {
+  flex: 1 1 auto;
+}
+
+.manual-card-title-block h3 {
+  white-space: normal !important;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+.manual-card-title-block p {
+  white-space: normal !important;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.manual-card-arrow {
+  margin-block-start: 8px;
+}
+
+/* JiMeng headings need to grow with browser zoom instead of being clipped by
+   the decorative panel surface. */
+.jimeng-panel,
+.jimeng-studio,
+.jimeng-panel-title {
+  block-size: auto !important;
+  min-inline-size: 0;
+}
+
+.jimeng-panel-title {
+  align-items: flex-start;
+}
+
+.jimeng-panel-title > div {
+  flex: 1 1 auto;
+}
+
+.jimeng-panel-title h2,
+.jimeng-panel-title p {
+  white-space: normal !important;
+}
+
+.jimeng-panel-title h2 {
+  line-height: 1.35;
+}
+
+.jimeng-panel-title p {
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.jimeng-account-actions,
+.jimeng-command-bar,
+.jimeng-hero,
+.jimeng-tabs {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.jimeng-endpoint-row > *,
+.jimeng-secret-row > *,
+.jimeng-check-list > div > * {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+/* There is one authoritative select-all control per account page. The shared
+   toolbar owns it and grows naturally when selected actions appear. */
+.account-selection-toolbar,
+.codex-overview-selection-bar {
+  block-size: auto !important;
+  min-block-size: 46px;
+  overflow: visible;
+}
+
+.codex-overview-selection-left,
+.codex-overview-selection-actions {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+}
+
+.codex-overview-select-all {
+  min-inline-size: max-content;
+  white-space: nowrap;
+}
+
+/* Long translated labels must stay inside controls. Icon-only controls retain
+   their square geometry; text controls can become taller when necessary. */
+:where(.btn, .filter-tab, .nav-item, .single-select-dropdown-trigger):not(.icon-only) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.btn:not(.icon-only) {
+  block-size: auto;
+  min-block-size: 36px;
+  white-space: normal;
+  line-height: 1.3;
+}
+
+:where(.btn, .filter-tab, .nav-item, .single-select-dropdown-trigger) > span {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+:where(.filter-tab, .nav-item, .single-select-dropdown-trigger) > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:where(
+  .table-container,
+  .account-table-container,
+  .codex-api-service-table,
+  .mm-model-table
+) {
+  max-inline-size: 100%;
+  overflow-x: auto;
+}
+
+/* Explicit scale bands complement media queries because Tauri/WebView zoom is
+   not guaranteed to change media-query results on Windows. */
+html[data-ui-scale-band='large'] :where(
+  .manual-card-header,
+  .jimeng-panel-title,
+  .page-header,
+  .toolbar,
+  .account-command-dock,
+  .account-selection-toolbar,
+  .codex-overview-selection-bar
+),
+html[data-ui-scale-band='xlarge'] :where(
+  .manual-card-header,
+  .jimeng-panel-title,
+  .page-header,
+  .toolbar,
+  .account-command-dock,
+  .account-selection-toolbar,
+  .codex-overview-selection-bar
+) {
+  block-size: auto !important;
+  flex-wrap: wrap;
+}
+
+html[data-ui-scale-band='large'] :where(
+  .manual-info-grid,
+  .jimeng-accounts-layout,
+  .jimeng-api-layout
+),
+html[data-ui-scale-band='xlarge'] :where(
+  .manual-info-grid,
+  .jimeng-accounts-layout,
+  .jimeng-api-layout,
+  .jimeng-stat-grid
+) {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+html[data-ui-scale-band='large'] .jimeng-panel,
+html[data-ui-scale-band='xlarge'] .jimeng-panel {
+  padding: 16px;
+}
+
+@media (max-width: 1100px) {
+  .manual-card-header {
+    padding: 14px;
+  }
+
+  .manual-info-grid,
+  .jimeng-accounts-layout,
+  .jimeng-api-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .jimeng-panel-title {
+    margin-bottom: 14px;
+  }
+
+  .jimeng-endpoint-row {
+    grid-template-columns: 52px minmax(0, 1fr) !important;
+  }
+
+  .jimeng-endpoint-row > span {
+    grid-column: 2;
+  }
+}
+
+/* The centered tab group reserves an equally wide phantom column opposite the
+   leading context badge. At medium effective widths (including WebView zoom)
+   that symmetry can push the last JiMeng tab outside the viewport. Stack the
+   badge above one self-contained horizontal tab scroller before that happens. */
+@media (max-width: 1180px) {
+  .jimeng-top-tabs.page-tabs-row-with-leading {
+    grid-template-columns: minmax(0, 1fr) !important;
+    justify-items: stretch;
+    gap: 10px;
+  }
+
+  .jimeng-top-tabs .page-tabs-leading,
+  .jimeng-top-tabs .page-tabs {
+    grid-column: 1 !important;
+    max-inline-size: 100%;
+  }
+
+  .jimeng-top-tabs .page-tabs-leading {
+    justify-self: start;
+  }
+
+  .jimeng-top-tabs .page-tabs {
+    inline-size: 100%;
+    justify-self: stretch;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+  }
+}
+
+@media (max-width: 760px) {
+  .dashboard-data-scene-header .scene-layout-button {
+    position: static !important;
+    inset: auto !important;
+    inline-size: 100% !important;
+    max-inline-size: none;
+    margin-block-start: 10px;
+  }
+}
+
+@media (max-width: 720px) {
+  .manual-card-title-wrap {
+    gap: 10px;
+  }
+
+  .manual-card-title-block h3 {
+    font-size: 15px;
+  }
+
+  .manual-card-title-block p {
+    margin-top: 4px;
+    font-size: 12px;
+  }
+
+  .jimeng-panel {
+    padding: 14px;
+  }
+
+  .jimeng-panel-title {
+    gap: 9px;
+  }
+
+  .jimeng-secret-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

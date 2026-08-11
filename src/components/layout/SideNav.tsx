@@ -1,4 +1,4 @@
-import { Settings, GaugeCircle, LayoutGrid, SlidersHorizontal, FileText, ChevronDown, PanelLeftClose, PanelLeftOpen, ShieldCheck, Network, PanelsTopLeft, WandSparkles } from 'lucide-react';
+import { Settings, GaugeCircle, LayoutGrid, SlidersHorizontal, FileText, ChevronDown, PanelLeftClose, PanelLeftOpen, ShieldCheck, Network, PanelsTopLeft } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   useState,
@@ -30,6 +30,7 @@ import { getPlatformLabel, renderPlatformIcon } from '../../utils/platformMeta';
 import { useAntigravityRuntimeTarget } from '../../hooks/useAntigravityRuntimeTarget';
 import { setAntigravityRuntimeTargetFromPlatform } from '../../utils/antigravityRuntimeTarget';
 import appIcon from '../../assets/app-icon-rounded.png';
+import jimengIcon from '../../assets/jimeng.png';
 
 interface SideNavProps {
   page: Page;
@@ -891,7 +892,7 @@ export function SideNav({
                   title={t('nav.jimengApiService', '即梦创作 API')}
                   aria-current={page === 'jimeng-api-service' ? 'page' : undefined}
                 >
-                  <WandSparkles size={18} />
+                  <img src={jimengIcon} alt="" aria-hidden="true" className="jimeng-model-icon" />
                   <span className="spatial-nav-tooltip">{t('nav.jimengApiService', '即梦创作 API')}</span>
                 </button>
                 <button
@@ -1120,6 +1121,38 @@ export function SideNav({
             </button>
           );
         })}
+
+        <button
+          className={`nav-item ${page === 'jimeng-api-service' ? 'active' : ''}`}
+          onClick={() => setPage('jimeng-api-service')}
+          title={t('nav.jimengApiService', '即梦创作 API')}
+        >
+          <img
+            src={jimengIcon}
+            alt=""
+            aria-hidden="true"
+            className="jimeng-model-icon"
+            style={{ width: isClassicLayout ? classicMainIconSize : 20, height: isClassicLayout ? classicMainIconSize : 20 }}
+          />
+          {showClassicLabels ? (
+            <span className="nav-item-text">{t('nav.jimengApiService', '即梦创作 API')}</span>
+          ) : !isClassicLayout ? (
+            <span className="tooltip">{t('nav.jimengApiService', '即梦创作 API')}</span>
+          ) : null}
+        </button>
+
+        <button
+          className={`nav-item ${page === 'jimeng-infinite-canvas' ? 'active' : ''}`}
+          onClick={() => setPage('jimeng-infinite-canvas')}
+          title={t('nav.jimengInfiniteCanvas', '无限画布')}
+        >
+          <PanelsTopLeft size={isClassicLayout ? classicMainIconSize : 20} />
+          {showClassicLabels ? (
+            <span className="nav-item-text">{t('nav.jimengInfiniteCanvas', '无限画布')}</span>
+          ) : !isClassicLayout ? (
+            <span className="tooltip">{t('nav.jimengInfiniteCanvas', '无限画布')}</span>
+          ) : null}
+        </button>
 
         <button
           className={`nav-item ${page === 'multi-model-api-service' ? 'active' : ''}`}

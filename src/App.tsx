@@ -18,6 +18,7 @@ import './styles/liquid-glass-26.css';
    control. Must stay last: it corrects the page stylesheets that lazily-loaded
    pages inject at runtime. */
 import './styles/liquid-glass-system.css';
+import './styles/responsive-text-safety.css';
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrentWebview } from '@tauri-apps/api/webview';

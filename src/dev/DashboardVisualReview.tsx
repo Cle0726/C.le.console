@@ -1,6 +1,8 @@
 import "../App.css";
 import "../styles/ui-unified-2026.css";
 import "../styles/liquid-glass-26.css";
+import "../styles/liquid-glass-system.css";
+import "../styles/responsive-text-safety.css";
 import "./DashboardVisualReview.css";
 import { AmbientInteractionLayer } from "../components/AmbientInteractionLayer";
 import { DashboardLaunchpad } from "../components/DashboardShowcase";
