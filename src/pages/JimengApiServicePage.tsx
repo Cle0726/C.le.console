@@ -124,6 +124,20 @@ function accountActionFailureText(rows: AccountActionRow[]) {
   return `${labels} 操作失败：${failed[0]?.error || '上游未返回有效结果'}`;
 }
 
+function generationErrorText(error: unknown) {
+  const message = String(error);
+  if (/browser identity missing|requiresBrowserLogin|login error|session expired|HTTP (401|403)|网页登录态/i.test(message)) {
+    return `所选账号的网页登录态已失效，请在“账号池”中重新完成浏览器登录。\n${message}`;
+  }
+  if (/quota|insufficient|credit|额度|积分/i.test(message)) {
+    return `账号积分不足或领取失败，请先在“账号池”中查询或领取积分。\n${message}`;
+  }
+  if (/模型不支持|不支持模型|not supported|invalid.*model/i.test(message)) {
+    return `当前账号不支持所选模型，请切换账号、模型或使用自动故障切换。\n${message}`;
+  }
+  return message;
+}
+
 export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => void } = {}) {
   const [state, setState] = useState<JimengApiState | null>(null);
   const [draft, setDraft] = useState<JimengApiConfig | null>(null);
@@ -170,9 +184,9 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
           : next
       ));
       setDraft((current) => quiet && current ? current : structuredClone(next.config));
-      const firstEnabledAccountId = next.config.accounts.find((account) => account.enabled)?.id ?? '';
-      setImageAccountId((current) => current || firstEnabledAccountId);
-      setVideoAccountId((current) => current || firstEnabledAccountId);
+      const enabledAccountIds = new Set(next.config.accounts.filter((account) => account.enabled).map((account) => account.id));
+      setImageAccountId((current) => current && enabledAccountIds.has(current) ? current : '');
+      setVideoAccountId((current) => current && enabledAccountIds.has(current) ? current : '');
     } catch (error) {
       setNotice({ tone: 'error', text: `读取即梦服务状态失败：${String(error)}` });
     } finally {
@@ -369,11 +383,12 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
           : item));
       setNotice({ tone: 'success', text: '生成任务已完成' });
     } catch (error) {
+      const message = generationErrorText(error);
       setTasks((current) => current.map((item) =>
         item.id === task.id
-          ? { ...item, status: 'failed', error: String(error), finishedAt: Date.now() }
+          ? { ...item, status: 'failed', error: message, finishedAt: Date.now() }
           : item));
-      setNotice({ tone: 'error', text: `生成失败：${String(error)}` });
+      setNotice({ tone: 'error', text: `生成失败：${message}` });
     } finally {
       setBusy(null);
     }

@@ -1,15 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { PERFORMANCE_MODE_ATTRIBUTE } from '../utils/performanceMode';
 
-const TILT_SELECTOR = [
-  '.spatial-command-hero',
-  '.main-card',
-  '.stat-card',
-  '.account-card',
-  '.settings-card',
-  '.codex-api-service-panel',
-].join(',');
-
 export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
   const cursorRef = useRef<HTMLDivElement>(null);
   const bubbleLayerRef = useRef<HTMLDivElement>(null);
@@ -45,14 +36,6 @@ export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
     let lastMoveTime = performance.now();
     let last = performance.now();
 
-    // Nuzzle: when the pointer first reaches a card, the pet leans in and rubs
-    // against it a couple of times, like a cat, then settles.
-    let lastCard: Element | null = null;
-    let nuzzleStart = -1;
-    let nuzzleCardX = 0;
-    let nuzzleCardY = 0;
-    const NUZZLE_MS = 950;
-
     // Cache the redrawable body path + eye so we can rebuild the outline each frame.
     const el0 = cursorRef.current;
     const bodyEl = el0 ? el0.querySelector<SVGPathElement>('.pet-fish-body') : null;
@@ -68,7 +51,7 @@ export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
     // Build the fish silhouette from a flexing spine that carries a wave from
     // head (right) to tail (left) — real fish undulation, not a rigid shear.
     // amp = lateral sway that grows toward the tail; curve = steady bend from turning.
-    const SEG = 18;
+    const SEG = 12;
     const buildFish = (phase: number, amp: number, curve: number) => {
       const cx = (s: number) => 66 - 52 * s; // nose x=66 -> tail base x=14
       const yoff = (s: number) =>
@@ -131,10 +114,10 @@ export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
     const BODY_FOLLOW = 9;
     const TURN_SPEED = 11;
     // Lite keeps the fish, but reduces its redraw cadence instead of removing it.
-    const FAST_FRAME_MS = 1000 / (liteMode ? 40 : 60);
-    const SLOW_FRAME_MS = 1000 / (liteMode ? 18 : 30);
-    const FAST_BODY_FRAME_MS = 1000 / (liteMode ? 22 : 36);
-    const SLOW_BODY_FRAME_MS = 1000 / (liteMode ? 9 : 14);
+    const FAST_FRAME_MS = 1000 / (liteMode ? 30 : 45);
+    const SLOW_FRAME_MS = 1000 / (liteMode ? 15 : 24);
+    const FAST_BODY_FRAME_MS = 1000 / (liteMode ? 14 : 24);
+    const SLOW_BODY_FRAME_MS = 1000 / (liteMode ? 7 : 10);
     let lastBodyPaint = 0;
 
     const shortestAngle = (from: number, to: number) => {
@@ -148,7 +131,7 @@ export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
       frame = 0;
       const sinceMove = now - lastMoveTime;
       const distanceToTarget = Math.hypot(targetX - fishX, targetY - fishY);
-      const fastMotion = sinceMove < 260 || distanceToTarget > 10 || nuzzleStart >= 0;
+      const fastMotion = sinceMove < 260 || distanceToTarget > 10;
       const minimumFrameMs = fastMotion ? FAST_FRAME_MS : SLOW_FRAME_MS;
       if (now - last < minimumFrameMs) {
         frame = window.requestAnimationFrame(step);
@@ -163,25 +146,6 @@ export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
       // swimming little loops around the resting point, like a fish in a bowl.
       let goalX = targetX;
       let goalY = targetY;
-
-      // Cat-like nuzzle: lean into the card a couple of times on arrival.
-      let nuzzle = 0;
-      if (nuzzleStart >= 0) {
-        const nt = (now - nuzzleStart) / NUZZLE_MS;
-        if (nt >= 1) {
-          nuzzleStart = -1;
-        } else {
-          const envelope = Math.sin(nt * Math.PI); // ease in/out over the window
-          const rubs = Math.sin(nt * Math.PI * 4); // ~2 rubs back and forth
-          nuzzle = envelope;
-          const vx = nuzzleCardX - fishX;
-          const vy = nuzzleCardY - fishY;
-          const len = Math.hypot(vx, vy) || 1;
-          const push = envelope * rubs * 12;
-          goalX += (vx / len) * push;
-          goalY += (vy / len) * push;
-        }
-      }
 
       const t = 1 - Math.exp(-BODY_FOLLOW * dt);
       const dx = goalX - fishX;
@@ -211,9 +175,9 @@ export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
         // the whole outline flexes like a real fish. Beats faster/harder the
         // quicker it swims and flutters while nuzzling, but never fully stops —
         // a gentle idle ripple keeps it alive.
-        const beat = (6 + Math.min(18, stepDist * 1.7)) * (1 + nuzzle * 0.8); // rad/s
+        const beat = 6 + Math.min(18, stepDist * 1.7); // rad/s
         swimPhase += beat * dt;
-        const amp = (idle ? 2.4 : Math.min(7.5, 2.4 + stepDist * 0.62)) + nuzzle * 3.5;
+        const amp = idle ? 2.4 : Math.min(7.5, 2.4 + stepDist * 0.62);
 
         // Bend the body into turns (eased so it doesn't jitter).
         const turnDeg = shortestAngle(prevHeading, heading) * (180 / Math.PI);
@@ -222,7 +186,8 @@ export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
         bendState += (targetBend - bendState) * (1 - Math.exp(-8 * dt));
 
         const bodyFrameMs = idle ? SLOW_BODY_FRAME_MS : FAST_BODY_FRAME_MS;
-        if (bodyEl && now - lastBodyPaint >= bodyFrameMs) {
+        const performanceTier = root.dataset.frameTier === 'performance';
+        if (bodyEl && now - lastBodyPaint >= bodyFrameMs * (performanceTier ? 1.6 : 1)) {
           const fish = buildFish(swimPhase, amp, bendState);
           bodyEl.setAttribute('d', fish.d);
           if (eyeEl) {
@@ -249,7 +214,6 @@ export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
 
       const settled = sinceMove > 900
         && Math.hypot(targetX - fishX, targetY - fishY) < 0.18
-        && nuzzleStart < 0
         && foamAlpha < 0.015;
       if (!settled) frame = window.requestAnimationFrame(step);
     };
@@ -266,21 +230,6 @@ export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
         frame = window.requestAnimationFrame(step);
       }
 
-      const target = event.target instanceof Element ? event.target.closest<HTMLElement>(TILT_SELECTOR) : null;
-
-      if (target) {
-        // Newly reached this card -> trigger a nuzzle toward the point on the
-        // card nearest the pet, so it rubs the edge it arrived at.
-        if (target !== lastCard) {
-          const rect = target.getBoundingClientRect();
-          lastCard = target;
-          nuzzleCardX = Math.min(rect.right, Math.max(rect.left, event.clientX));
-          nuzzleCardY = Math.min(rect.bottom, Math.max(rect.top, event.clientY));
-          nuzzleStart = performance.now();
-        }
-      } else {
-        lastCard = null;
-      }
     };
 
     const onPointerLeave = () => {
@@ -306,7 +255,7 @@ export function PetFishCursorLayer({ enabled = true }: { enabled?: boolean }) {
       // CSS owns the short animation, so a click does not start another JS
       // animation loop. The cap also prevents rapid clicking from accumulating
       // compositor layers.
-      while (layer.childElementCount > 14) layer.firstElementChild?.remove();
+      while (layer.childElementCount + count > 12) layer.firstElementChild?.remove();
       for (let index = 0; index < count; index += 1) {
         const bubble = document.createElement('i');
         bubble.className = 'pet-click-bubble';

@@ -954,6 +954,11 @@ fn classify_upstream_error(error: &str) -> UpstreamErrorKind {
         || value.contains("forbidden")
         || value.contains("invalid token")
         || value.contains("session expired")
+        || value.contains("browser identity missing")
+        || value.contains("requiresbrowserlogin")
+        || value.contains("login error")
+        || value.contains("网页登录态")
+        || value.contains("重新完成浏览器登录")
     {
         UpstreamErrorKind::Auth
     } else if value.contains("http 429")
@@ -1870,6 +1875,17 @@ async fn send_media_once(
     endpoint: &str,
     request: &JimengMediaRequest,
 ) -> Result<Value, String> {
+    // The local sidecar can be healthy while an individual browser Session is
+    // stale. Fail before submitting a long media task and return an actionable
+    // account error instead of making the UI wait for a vague upstream failure.
+    validate_session_account(config, account)
+        .await
+        .map_err(|error| {
+            format!(
+                "账号 {} 的网页登录态不可用于生成，请在账号池重新完成浏览器登录: {}",
+                account.name, error
+            )
+        })?;
     let client = http_client()?;
     let url = format!("http://127.0.0.1:{}{}", config.port, endpoint);
     let token = token_for_account(account);
@@ -2424,6 +2440,10 @@ mod tests {
     fn classifies_retryable_and_non_retryable_failures() {
         assert_eq!(
             classify_upstream_error("HTTP 401: expired"),
+            UpstreamErrorKind::Auth
+        );
+        assert_eq!(
+            classify_upstream_error("browser identity missing: requiresBrowserLogin"),
             UpstreamErrorKind::Auth
         );
         assert_eq!(
