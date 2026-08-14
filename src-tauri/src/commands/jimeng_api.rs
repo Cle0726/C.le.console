@@ -1,5 +1,7 @@
+use crate::modules::doubao_web::{self, DoubaoWebState, DoubaoWebVideoRequest};
 use crate::modules::jimeng_api::{self, JimengApiConfig, JimengApiState, JimengMediaRequest};
 use serde_json::Value;
+use tauri::AppHandle;
 
 #[tauri::command]
 pub async fn jimeng_api_get_state() -> Result<JimengApiState, String> {
@@ -61,4 +63,27 @@ pub async fn jimeng_api_poll_device_flow(flow_id: String) -> Result<Value, Strin
 #[tauri::command]
 pub async fn jimeng_api_cancel_device_flow(flow_id: String) -> Result<(), String> {
     jimeng_api::cancel_device_flow(&flow_id)
+}
+
+#[tauri::command]
+pub async fn doubao_web_open_login(app: AppHandle) -> Result<DoubaoWebState, String> {
+    doubao_web::open_login(app).await
+}
+
+#[tauri::command]
+pub async fn doubao_web_get_state(app: AppHandle) -> Result<DoubaoWebState, String> {
+    doubao_web::get_state(app).await
+}
+
+#[tauri::command]
+pub async fn doubao_web_logout(app: AppHandle) -> Result<DoubaoWebState, String> {
+    doubao_web::logout(app).await
+}
+
+#[tauri::command]
+pub async fn doubao_web_generate_video(
+    app: AppHandle,
+    request: DoubaoWebVideoRequest,
+) -> Result<Value, String> {
+    doubao_web::generate_video(app, request).await
 }

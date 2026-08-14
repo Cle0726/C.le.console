@@ -11,6 +11,7 @@ import { jimengApiService } from '../services/jimengApiService';
 import type {
   JimengAccount, JimengApiConfig, JimengApiState, JimengMediaRequest, JimengRegion,
   JimengDeviceFlow, JimengRepairReport,
+  DoubaoWebState,
 } from '../types/jimengApi';
 import './JimengApiServicePage.unified.css';
 import jimengIcon from '../assets/jimeng.png';
@@ -59,8 +60,10 @@ const REGIONS: Array<{ id: JimengRegion; label: string }> = [
 const RATIOS = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'];
 const IMAGE_RESOLUTIONS = ['1k', '2k', '4k'];
 const VIDEO_RESOLUTIONS = ['720p', '1080p'];
+const DOUBAO_WEB_MODEL_ID = 'doubao-web-seedance-2.0';
 
 function videoDurations(model: string): number[] {
+  if (model === DOUBAO_WEB_MODEL_ID) return [5];
   if (model.includes('veo3')) return [8];
   if (model.includes('sora2')) return [4, 8, 12];
   if (model.includes('seedance-2.0')) return Array.from({ length: 12 }, (_, index) => index + 4);
@@ -149,6 +152,8 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
   const [accountResult, setAccountResult] = useState<unknown>(null);
   const [repair, setRepair] = useState<JimengRepairReport | null>(null);
   const [tasks, setTasks] = useState<TaskRecord[]>(restoreTasks);
+  const [doubaoWeb, setDoubaoWeb] = useState<DoubaoWebState | null>(null);
+  const [doubaoWebBusy, setDoubaoWebBusy] = useState(false);
 
   const [imageMode, setImageMode] = useState<'generation' | 'composition'>('generation');
   const [imageAccountId, setImageAccountId] = useState('');
@@ -257,15 +262,19 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     [selectedImageAccount?.authMethod, selectedImageRegion, state?.models],
   );
   const videoModels = useMemo(
-    () => state?.models.filter((model) =>
-      model.kind === 'video'
-      && (!selectedVideoRegion || model.regions.includes(selectedVideoRegion))
-      && (selectedVideoAccount?.authMethod !== 'oauthDevice'
-        || model.id === 'jimeng-video-seedance-2.0'
-        || model.id === 'jimeng-video-seedance-2.0-fast')) ?? [],
+    () => [
+      ...(state?.models.filter((model) =>
+        model.kind === 'video'
+        && (!selectedVideoRegion || model.regions.includes(selectedVideoRegion))
+        && (selectedVideoAccount?.authMethod !== 'oauthDevice'
+          || model.id === 'jimeng-video-seedance-2.0'
+          || model.id === 'jimeng-video-seedance-2.0-fast')) ?? []),
+      { id: DOUBAO_WEB_MODEL_ID, kind: 'video' as const, regions: ['cn' as const] },
+    ],
     [selectedVideoAccount?.authMethod, selectedVideoRegion, state?.models],
   );
   const durationOptions = useMemo(() => videoDurations(videoModel), [videoModel]);
+  const isDoubaoWebVideo = videoModel === DOUBAO_WEB_MODEL_ID;
   const supportsOmni = selectedVideoRegion === 'cn'
     && (videoModel === 'jimeng-video-seedance-2.0' || videoModel === 'jimeng-video-seedance-2.0-fast');
 
@@ -292,6 +301,48 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       setVideoMode('text');
     }
   }, [supportsOmni, videoMode]);
+
+  useEffect(() => {
+    if (!isDoubaoWebVideo) return;
+    setVideoMode('text');
+    setVideoAccountId('');
+    setVideoRatio((current) => ['1:1', '16:9', '9:16'].includes(current) ? current : '16:9');
+    void jimengApiService.getDoubaoWebState().then(setDoubaoWeb).catch(() => undefined);
+  }, [isDoubaoWebVideo]);
+
+  useEffect(() => {
+    if (!isDoubaoWebVideo || !doubaoWeb?.windowOpen) return;
+    const timer = window.setInterval(() => {
+      void jimengApiService.getDoubaoWebState().then(setDoubaoWeb).catch(() => undefined);
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [doubaoWeb?.windowOpen, isDoubaoWebVideo]);
+
+  const openDoubaoWebLogin = async () => {
+    setDoubaoWebBusy(true);
+    try {
+      const next = await jimengApiService.openDoubaoWebLogin();
+      setDoubaoWeb(next);
+      setNotice({ tone: 'info', text: next.loggedIn ? '豆包网页版已登录' : '请在专用窗口完成豆包登录，完成后本页会自动检测' });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `无法打开豆包网页版：${String(error)}` });
+    } finally {
+      setDoubaoWebBusy(false);
+    }
+  };
+
+  const logoutDoubaoWeb = async () => {
+    setDoubaoWebBusy(true);
+    try {
+      const next = await jimengApiService.logoutDoubaoWeb();
+      setDoubaoWeb(next);
+      setNotice({ tone: 'success', text: next.message });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `清除豆包登录状态失败：${String(error)}` });
+    } finally {
+      setDoubaoWebBusy(false);
+    }
+  };
 
   const save = async (config = draft) => {
     if (!config) return;
@@ -437,6 +488,22 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     }
     if (videoMode === 'omni' && !supportsOmni) {
       setNotice({ tone: 'error', text: 'Omni Reference 仅支持中国区 Seedance 2.0 / Fast 账号' });
+      return;
+    }
+    if (isDoubaoWebVideo) {
+      if (videoMode !== 'text') {
+        setNotice({ tone: 'error', text: '豆包网页版首版接入当前支持文生视频，请切换到“文生视频”' });
+        return;
+      }
+      if (!['1:1', '16:9', '9:16'].includes(videoRatio)) {
+        setNotice({ tone: 'error', text: '豆包网页版当前仅支持 1:1、16:9、9:16' });
+        return;
+      }
+      await runTask('video', videoModel, videoPrompt, () =>
+        jimengApiService.generateDoubaoWebVideo({
+          prompt: videoPrompt.trim(),
+          ratio: videoRatio as '1:1' | '16:9' | '9:16',
+        }));
       return;
     }
     const urls = referenceUrls.split('\n').map((value) => value.trim()).filter(Boolean);
@@ -717,21 +784,33 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
                 ['first-last', '首尾帧', '两张图片控制过渡'],
                 ['omni', 'Omni Reference', '混合图片与视频参考'],
               ] as const).map(([id, title, desc]) => (
-                <button key={id} className={videoMode === id ? 'active' : ''} onClick={() => setVideoMode(id)} disabled={id === 'omni' && !supportsOmni}><strong>{title}</strong><span>{desc}</span></button>
+                <button key={id} className={videoMode === id ? 'active' : ''} onClick={() => setVideoMode(id)} disabled={(isDoubaoWebVideo && id !== 'text') || (id === 'omni' && !supportsOmni)}><strong>{title}</strong><span>{desc}</span></button>
               ))}
             </div>
+            {isDoubaoWebVideo && (
+              <div className={`jimeng-doubao-login${doubaoWeb?.loggedIn ? ' online' : ''}`}>
+                <div>
+                  <Globe2 size={20} />
+                  <span><strong>{doubaoWeb?.loggedIn ? '豆包网页版已登录' : '豆包网页版未登录'}</strong><small>{doubaoWeb?.message || '使用独立浏览器配置，不需要手动复制 Cookie'}</small></span>
+                </div>
+                <div>
+                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy} onClick={() => void openDoubaoWebLogin()}>{doubaoWebBusy ? <LoaderCircle className="spin" size={16} /> : <Globe2 size={16} />}{doubaoWeb?.loggedIn ? '打开豆包网页版' : '登录豆包网页版'}</button>
+                  {doubaoWeb?.loggedIn && <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy} onClick={() => void logoutDoubaoWeb()}>退出登录</button>}
+                </div>
+              </div>
+            )}
             <div className="jimeng-form-grid">
-              <label><span>使用账号</span><select value={videoAccountId} onChange={(event) => setVideoAccountId(event.target.value)}><option value="">自动故障切换</option>{enabledAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.region.toUpperCase()}</option>)}</select></label>
-              <label><span>模型</span><select value={videoModel} onChange={(event) => setVideoModel(event.target.value)}>{videoModels.map((model) => <option key={model.id}>{model.id}</option>)}</select></label>
-              <label><span>比例</span><select value={videoRatio} onChange={(event) => setVideoRatio(event.target.value)}>{RATIOS.filter((ratio) => ratio !== '3:2' && ratio !== '2:3').map((ratio) => <option key={ratio}>{ratio}</option>)}</select></label>
-              <label><span>分辨率</span><select value={videoResolution} onChange={(event) => setVideoResolution(event.target.value)}>{VIDEO_RESOLUTIONS.map((resolution) => <option key={resolution}>{resolution}</option>)}</select></label>
+              <label><span>使用账号</span><select value={videoAccountId} onChange={(event) => setVideoAccountId(event.target.value)} disabled={isDoubaoWebVideo}><option value="">{isDoubaoWebVideo ? '豆包网页版会话' : '自动故障切换'}</option>{!isDoubaoWebVideo && enabledAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.region.toUpperCase()}</option>)}</select></label>
+              <label><span>模型</span><select value={videoModel} onChange={(event) => setVideoModel(event.target.value)}>{videoModels.map((model) => <option key={model.id} value={model.id}>{model.id === DOUBAO_WEB_MODEL_ID ? '豆包网页版 · Seedance 2.0' : model.id}</option>)}</select></label>
+              <label><span>比例</span><select value={videoRatio} onChange={(event) => setVideoRatio(event.target.value)}>{RATIOS.filter((ratio) => isDoubaoWebVideo ? ['1:1', '16:9', '9:16'].includes(ratio) : ratio !== '3:2' && ratio !== '2:3').map((ratio) => <option key={ratio}>{ratio}</option>)}</select></label>
+              <label><span>分辨率</span><select value={isDoubaoWebVideo ? 'auto' : videoResolution} onChange={(event) => setVideoResolution(event.target.value)} disabled={isDoubaoWebVideo}>{isDoubaoWebVideo ? <option value="auto">由豆包自动选择</option> : VIDEO_RESOLUTIONS.map((resolution) => <option key={resolution}>{resolution}</option>)}</select></label>
               <label><span>时长（秒）</span><select value={videoDuration} onChange={(event) => setVideoDuration(Number(event.target.value))}>{durationOptions.map((duration) => <option key={duration} value={duration}>{duration} 秒</option>)}</select></label>
               <label className="span-2"><span>提示词</span><textarea rows={5} value={videoPrompt} onChange={(event) => setVideoPrompt(event.target.value)} placeholder={videoMode === 'omni' ? '@image_file_1 作为主体，运动参考 @video_file_1…' : '描述镜头、主体动作、运镜与氛围…'} /></label>
               {videoMode !== 'text' && <div className="span-2 jimeng-upload-zone"><button className="btn btn-secondary jimeng-button" onClick={async () => setVideoImagePaths((await chooseFiles('image')).slice(0, videoMode === 'first' ? 1 : videoMode === 'first-last' ? 2 : 9))}><Upload size={17} />选择参考图片</button><span>已选择 {videoImagePaths.length} 张</span></div>}
               {videoMode === 'omni' && <div className="span-2 jimeng-upload-zone"><button className="btn btn-secondary jimeng-button" onClick={async () => setVideoReferencePaths((await chooseFiles('video')).slice(0, 3))}><Film size={17} />选择参考视频</button><span>已选择 {videoReferencePaths.length} 个</span></div>}
-              <label className="span-2"><span>网络素材 URL（每行一个，可选）</span><textarea rows={3} value={referenceUrls} onChange={(event) => setReferenceUrls(event.target.value)} /></label>
+              {!isDoubaoWebVideo && <label className="span-2"><span>网络素材 URL（每行一个，可选）</span><textarea rows={3} value={referenceUrls} onChange={(event) => setReferenceUrls(event.target.value)} /></label>}
             </div>
-            <button className="btn btn-primary jimeng-generate" onClick={() => void submitVideo()} disabled={!!busy || !enabledAccounts.length}><Film size={20} />开始生成视频</button>
+            <button className="btn btn-primary jimeng-generate" onClick={() => void submitVideo()} disabled={!!busy || (!isDoubaoWebVideo && !enabledAccounts.length)}><Film size={20} />开始生成视频</button>
           </section>
         )}
 

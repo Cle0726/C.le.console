@@ -5,6 +5,8 @@ import type {
   JimengDeviceFlow,
   JimengMediaRequest,
   JimengRepairReport,
+  DoubaoWebState,
+  DoubaoWebVideoRequest,
 } from '../types/jimengApi';
 
 const isJimengVisualReview =
@@ -70,4 +72,12 @@ export const jimengApiService = {
     invoke<JimengDeviceFlow>('jimeng_api_poll_device_flow', { flowId }),
   cancelDeviceFlow: (flowId: string) =>
     invoke<void>('jimeng_api_cancel_device_flow', { flowId }),
+  getDoubaoWebState: () =>
+    invoke<DoubaoWebState>('doubao_web_get_state'),
+  openDoubaoWebLogin: () =>
+    invoke<DoubaoWebState>('doubao_web_open_login'),
+  logoutDoubaoWeb: () =>
+    invoke<DoubaoWebState>('doubao_web_logout'),
+  generateDoubaoWebVideo: (request: DoubaoWebVideoRequest) =>
+    invoke<Record<string, unknown>>('doubao_web_generate_video', { request }),
 };

@@ -75,3 +75,15 @@ export interface JimengDeviceFlow {
   message?: string;
   account?: JimengAccount;
 }
+
+export interface DoubaoWebState {
+  windowOpen: boolean;
+  loggedIn: boolean;
+  currentUrl?: string | null;
+  message: string;
+}
+
+export interface DoubaoWebVideoRequest {
+  prompt: string;
+  ratio: '1:1' | '16:9' | '9:16';
+}
