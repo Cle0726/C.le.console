@@ -72,12 +72,20 @@ export const jimengApiService = {
     invoke<JimengDeviceFlow>('jimeng_api_poll_device_flow', { flowId }),
   cancelDeviceFlow: (flowId: string) =>
     invoke<void>('jimeng_api_cancel_device_flow', { flowId }),
-  getDoubaoWebState: () =>
-    invoke<DoubaoWebState>('doubao_web_get_state'),
-  openDoubaoWebLogin: () =>
-    invoke<DoubaoWebState>('doubao_web_open_login'),
-  logoutDoubaoWeb: () =>
-    invoke<DoubaoWebState>('doubao_web_logout'),
+  getDoubaoWebState: (selectedAccountId?: string | null) =>
+    invoke<DoubaoWebState>('doubao_web_get_state', { selectedAccountId: selectedAccountId ?? null }),
+  addDoubaoWebAccount: (platformId = 'doubao', name?: string) =>
+    invoke<DoubaoWebState>('doubao_web_add_account', { platformId, name: name || null }),
+  setDoubaoWebAccountEnabled: (accountId: string, enabled: boolean) =>
+    invoke<DoubaoWebState>('doubao_web_set_account_enabled', { accountId, enabled }),
+  renameDoubaoWebAccount: (accountId: string, name: string) =>
+    invoke<DoubaoWebState>('doubao_web_rename_account', { accountId, name }),
+  removeDoubaoWebAccount: (accountId: string) =>
+    invoke<DoubaoWebState>('doubao_web_remove_account', { accountId }),
+  openDoubaoWebLogin: (accountId: string) =>
+    invoke<DoubaoWebState>('doubao_web_open_login', { accountId }),
+  logoutDoubaoWeb: (accountId: string) =>
+    invoke<DoubaoWebState>('doubao_web_logout', { accountId }),
   generateDoubaoWebVideo: (request: DoubaoWebVideoRequest) =>
     invoke<Record<string, unknown>>('doubao_web_generate_video', { request }),
 };

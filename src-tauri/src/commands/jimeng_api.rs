@@ -66,18 +66,62 @@ pub async fn jimeng_api_cancel_device_flow(flow_id: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub async fn doubao_web_open_login(app: AppHandle) -> Result<DoubaoWebState, String> {
-    doubao_web::open_login(app).await
+pub async fn doubao_web_get_state(
+    app: AppHandle,
+    selected_account_id: Option<String>,
+) -> Result<DoubaoWebState, String> {
+    doubao_web::get_state(app, selected_account_id).await
 }
 
 #[tauri::command]
-pub async fn doubao_web_get_state(app: AppHandle) -> Result<DoubaoWebState, String> {
-    doubao_web::get_state(app).await
+pub async fn doubao_web_add_account(
+    app: AppHandle,
+    platform_id: Option<String>,
+    name: Option<String>,
+) -> Result<DoubaoWebState, String> {
+    doubao_web::add_account(app, platform_id, name).await
 }
 
 #[tauri::command]
-pub async fn doubao_web_logout(app: AppHandle) -> Result<DoubaoWebState, String> {
-    doubao_web::logout(app).await
+pub async fn doubao_web_set_account_enabled(
+    app: AppHandle,
+    account_id: String,
+    enabled: bool,
+) -> Result<DoubaoWebState, String> {
+    doubao_web::set_account_enabled(app, account_id, enabled).await
+}
+
+#[tauri::command]
+pub async fn doubao_web_rename_account(
+    app: AppHandle,
+    account_id: String,
+    name: String,
+) -> Result<DoubaoWebState, String> {
+    doubao_web::rename_account(app, account_id, name).await
+}
+
+#[tauri::command]
+pub async fn doubao_web_remove_account(
+    app: AppHandle,
+    account_id: String,
+) -> Result<DoubaoWebState, String> {
+    doubao_web::remove_account(app, account_id).await
+}
+
+#[tauri::command]
+pub async fn doubao_web_open_login(
+    app: AppHandle,
+    account_id: String,
+) -> Result<DoubaoWebState, String> {
+    doubao_web::open_login(app, account_id).await
+}
+
+#[tauri::command]
+pub async fn doubao_web_logout(
+    app: AppHandle,
+    account_id: String,
+) -> Result<DoubaoWebState, String> {
+    doubao_web::logout(app, account_id).await
 }
 
 #[tauri::command]

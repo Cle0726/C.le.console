@@ -152,7 +152,7 @@ export function JimengInfiniteCanvasPage({ onNavigate }: JimengInfiniteCanvasPag
           <button
             className="infinite-workspace-icon-button"
             type="button"
-            title="返回即梦创作 API"
+            title="返回网页创作中心"
             onClick={() => onNavigate('jimeng-api-service')}
           >
             <ArrowLeft size={17} />
@@ -201,7 +201,7 @@ export function JimengInfiniteCanvasPage({ onNavigate }: JimengInfiniteCanvasPag
             <RefreshCw size={15} />
             <span>刷新</span>
           </button>
-          <button type="button" onClick={() => onNavigate('jimeng-api-service')} title="返回 C.le 即梦服务">
+          <button type="button" onClick={() => onNavigate('jimeng-api-service')} title="返回 C.le 网页创作中心">
             <ServerCog size={15} />
             <span>即梦服务</span>
           </button>

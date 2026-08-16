@@ -1,4 +1,4 @@
-import { Settings, GaugeCircle, LayoutGrid, SlidersHorizontal, FileText, ChevronDown, PanelLeftClose, PanelLeftOpen, ShieldCheck, Network, PanelsTopLeft } from 'lucide-react';
+import { Settings, GaugeCircle, LayoutGrid, SlidersHorizontal, FileText, ChevronDown, PanelLeftClose, PanelLeftOpen, ShieldCheck, Network, PanelsTopLeft, Globe2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   useState,
@@ -30,7 +30,6 @@ import { getPlatformLabel, renderPlatformIcon } from '../../utils/platformMeta';
 import { useAntigravityRuntimeTarget } from '../../hooks/useAntigravityRuntimeTarget';
 import { setAntigravityRuntimeTargetFromPlatform } from '../../utils/antigravityRuntimeTarget';
 import appIcon from '../../assets/app-icon-rounded.png';
-import jimengIcon from '../../assets/jimeng.png';
 
 interface SideNavProps {
   page: Page;
@@ -889,11 +888,11 @@ export function SideNav({
                     closeSpatialNavigation(true);
                     setPage('jimeng-api-service');
                   }}
-                  title={t('nav.jimengApiService', '即梦创作 API')}
+                  title={t('nav.jimengApiService', '网页创作中心')}
                   aria-current={page === 'jimeng-api-service' ? 'page' : undefined}
                 >
-                  <img src={jimengIcon} alt="" aria-hidden="true" className="jimeng-model-icon" />
-                  <span className="spatial-nav-tooltip">{t('nav.jimengApiService', '即梦创作 API')}</span>
+                  <Globe2 size={18} />
+                  <span className="spatial-nav-tooltip">{t('nav.jimengApiService', '网页创作中心')}</span>
                 </button>
                 <button
                   ref={spatialFirstActionRef}
@@ -1125,19 +1124,13 @@ export function SideNav({
         <button
           className={`nav-item ${page === 'jimeng-api-service' ? 'active' : ''}`}
           onClick={() => setPage('jimeng-api-service')}
-          title={t('nav.jimengApiService', '即梦创作 API')}
+          title={t('nav.jimengApiService', '网页创作中心')}
         >
-          <img
-            src={jimengIcon}
-            alt=""
-            aria-hidden="true"
-            className="jimeng-model-icon"
-            style={{ width: isClassicLayout ? classicMainIconSize : 20, height: isClassicLayout ? classicMainIconSize : 20 }}
-          />
+          <Globe2 size={isClassicLayout ? classicMainIconSize : 20} />
           {showClassicLabels ? (
-            <span className="nav-item-text">{t('nav.jimengApiService', '即梦创作 API')}</span>
+            <span className="nav-item-text">{t('nav.jimengApiService', '网页创作中心')}</span>
           ) : !isClassicLayout ? (
-            <span className="tooltip">{t('nav.jimengApiService', '即梦创作 API')}</span>
+            <span className="tooltip">{t('nav.jimengApiService', '网页创作中心')}</span>
           ) : null}
         </button>
 

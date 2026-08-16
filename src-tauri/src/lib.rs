@@ -896,6 +896,10 @@ pub fn run() {
             commands::jimeng_api::jimeng_api_cancel_device_flow,
             commands::jimeng_api::doubao_web_open_login,
             commands::jimeng_api::doubao_web_get_state,
+            commands::jimeng_api::doubao_web_add_account,
+            commands::jimeng_api::doubao_web_set_account_enabled,
+            commands::jimeng_api::doubao_web_rename_account,
+            commands::jimeng_api::doubao_web_remove_account,
             commands::jimeng_api::doubao_web_logout,
             commands::jimeng_api::doubao_web_generate_video,
             // Full Infinite Canvas workspace runtime

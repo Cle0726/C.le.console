@@ -11,12 +11,11 @@ import { jimengApiService } from '../services/jimengApiService';
 import type {
   JimengAccount, JimengApiConfig, JimengApiState, JimengMediaRequest, JimengRegion,
   JimengDeviceFlow, JimengRepairReport,
-  DoubaoWebState,
+  DoubaoWebState, WebCreatorPlatformId,
 } from '../types/jimengApi';
 import './JimengApiServicePage.unified.css';
-import jimengIcon from '../assets/jimeng.png';
 
-type Tab = 'overview' | 'accounts' | 'image' | 'video' | 'tasks' | 'api';
+type Tab = 'platforms' | 'overview' | 'accounts' | 'image' | 'video' | 'tasks' | 'api';
 type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
 type AccountActionRow = {
   accountId?: string;
@@ -144,7 +143,7 @@ function generationErrorText(error: unknown) {
 export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => void } = {}) {
   const [state, setState] = useState<JimengApiState | null>(null);
   const [draft, setDraft] = useState<JimengApiConfig | null>(null);
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>('platforms');
   const [busy, setBusy] = useState<string | null>('load');
   const [notice, setNotice] = useState<Notice>(null);
   const [editing, setEditing] = useState<JimengAccount | null>(null);
@@ -153,7 +152,12 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
   const [repair, setRepair] = useState<JimengRepairReport | null>(null);
   const [tasks, setTasks] = useState<TaskRecord[]>(restoreTasks);
   const [doubaoWeb, setDoubaoWeb] = useState<DoubaoWebState | null>(null);
+  const [doubaoWebAccountId, setDoubaoWebAccountId] = useState('');
+  const [doubaoWebAccountName, setDoubaoWebAccountName] = useState('');
   const [doubaoWebBusy, setDoubaoWebBusy] = useState(false);
+  const [webCreatorPlatformId, setWebCreatorPlatformId] = useState<WebCreatorPlatformId>('doubao');
+  const [webCreatorAccountId, setWebCreatorAccountId] = useState('');
+  const [webCreatorAccountName, setWebCreatorAccountName] = useState('');
 
   const [imageMode, setImageMode] = useState<'generation' | 'composition'>('generation');
   const [imageAccountId, setImageAccountId] = useState('');
@@ -275,6 +279,26 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
   );
   const durationOptions = useMemo(() => videoDurations(videoModel), [videoModel]);
   const isDoubaoWebVideo = videoModel === DOUBAO_WEB_MODEL_ID;
+  const doubaoWebAccounts = useMemo(
+    () => doubaoWeb?.accounts.filter((account) => account.platformId === 'doubao') ?? [],
+    [doubaoWeb?.accounts],
+  );
+  const selectedDoubaoWebAccount = useMemo(
+    () => doubaoWebAccounts.find((account) => account.id === doubaoWebAccountId) ?? null,
+    [doubaoWebAccountId, doubaoWebAccounts],
+  );
+  const selectedWebCreatorPlatform = useMemo(
+    () => doubaoWeb?.platforms.find((platform) => platform.id === webCreatorPlatformId) ?? null,
+    [doubaoWeb?.platforms, webCreatorPlatformId],
+  );
+  const webCreatorAccounts = useMemo(
+    () => doubaoWeb?.accounts.filter((account) => account.platformId === webCreatorPlatformId) ?? [],
+    [doubaoWeb?.accounts, webCreatorPlatformId],
+  );
+  const selectedWebCreatorAccount = useMemo(
+    () => webCreatorAccounts.find((account) => account.id === webCreatorAccountId) ?? null,
+    [webCreatorAccountId, webCreatorAccounts],
+  );
   const supportsOmni = selectedVideoRegion === 'cn'
     && (videoModel === 'jimeng-video-seedance-2.0' || videoModel === 'jimeng-video-seedance-2.0-fast');
 
@@ -307,23 +331,58 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     setVideoMode('text');
     setVideoAccountId('');
     setVideoRatio((current) => ['1:1', '16:9', '9:16'].includes(current) ? current : '16:9');
-    void jimengApiService.getDoubaoWebState().then(setDoubaoWeb).catch(() => undefined);
-  }, [isDoubaoWebVideo]);
+    void jimengApiService.getDoubaoWebState(doubaoWebAccountId || null).then((next) => {
+      setDoubaoWeb(next);
+      const accounts = next.accounts.filter((account) => account.platformId === 'doubao');
+      setDoubaoWebAccountId((current) => accounts.some((account) => account.id === current) ? current : '');
+    }).catch(() => undefined);
+  }, [isDoubaoWebVideo]); // Account selection is intentionally refreshed separately.
 
   useEffect(() => {
-    if (!isDoubaoWebVideo || !doubaoWeb?.windowOpen) return;
+    if (tab !== 'platforms') return;
+    void jimengApiService.getDoubaoWebState(webCreatorAccountId || null).then(setDoubaoWeb).catch(() => undefined);
+  }, [tab]);
+
+  useEffect(() => {
+    const next = webCreatorAccounts.find((account) => account.id === webCreatorAccountId)
+      ?? webCreatorAccounts[0]
+      ?? null;
+    setWebCreatorAccountId(next?.id || '');
+    setWebCreatorAccountName(next?.name || '');
+  }, [webCreatorAccountId, webCreatorAccounts]);
+
+  useEffect(() => {
+    if ((!isDoubaoWebVideo && tab !== 'platforms') || !doubaoWeb?.accounts.some((account) => account.windowOpen)) return;
     const timer = window.setInterval(() => {
-      void jimengApiService.getDoubaoWebState().then(setDoubaoWeb).catch(() => undefined);
-    }, 2500);
+      void jimengApiService.getDoubaoWebState(doubaoWebAccountId || null).then(setDoubaoWeb).catch(() => undefined);
+    }, 5000);
     return () => window.clearInterval(timer);
-  }, [doubaoWeb?.windowOpen, isDoubaoWebVideo]);
+  }, [doubaoWeb?.accounts, doubaoWebAccountId, isDoubaoWebVideo, tab, webCreatorAccountId]);
+
+  useEffect(() => {
+    setDoubaoWebAccountName(selectedDoubaoWebAccount?.name || '');
+  }, [selectedDoubaoWebAccount?.id, selectedDoubaoWebAccount?.name]);
+
+  const applyDoubaoWebState = (next: DoubaoWebState) => {
+    setDoubaoWeb(next);
+    const selected = next.selectedAccountId
+      ? next.accounts.find((account) => account.id === next.selectedAccountId)
+      : null;
+    if (selected?.platformId === 'doubao') setDoubaoWebAccountId(selected.id);
+    if (selected?.platformId === webCreatorPlatformId) {
+      setWebCreatorAccountId(selected.id);
+      setWebCreatorAccountName(selected.name);
+    }
+  };
 
   const openDoubaoWebLogin = async () => {
+    if (!doubaoWebAccountId) return;
     setDoubaoWebBusy(true);
     try {
-      const next = await jimengApiService.openDoubaoWebLogin();
-      setDoubaoWeb(next);
-      setNotice({ tone: 'info', text: next.loggedIn ? '豆包网页版已登录' : '请在专用窗口完成豆包登录，完成后本页会自动检测' });
+      const next = await jimengApiService.openDoubaoWebLogin(doubaoWebAccountId);
+      applyDoubaoWebState(next);
+      const account = next.accounts.find((item) => item.id === doubaoWebAccountId);
+      setNotice({ tone: 'info', text: account?.loggedIn ? `${account.name} 已登录` : '请在专用窗口完成豆包登录，完成后本页会自动检测' });
     } catch (error) {
       setNotice({ tone: 'error', text: `无法打开豆包网页版：${String(error)}` });
     } finally {
@@ -331,14 +390,101 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     }
   };
 
-  const logoutDoubaoWeb = async () => {
+  const addDoubaoWebAccount = async () => {
     setDoubaoWebBusy(true);
     try {
-      const next = await jimengApiService.logoutDoubaoWeb();
-      setDoubaoWeb(next);
-      setNotice({ tone: 'success', text: next.message });
+      const next = await jimengApiService.addDoubaoWebAccount();
+      applyDoubaoWebState(next);
+      setNotice({ tone: 'info', text: '新账号已创建，请在打开的专用窗口完成登录' });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `新增豆包账号失败：${String(error)}` });
+    } finally {
+      setDoubaoWebBusy(false);
+    }
+  };
+
+  const renameDoubaoWebAccount = async () => {
+    if (!doubaoWebAccountId || !doubaoWebAccountName.trim()) return;
+    setDoubaoWebBusy(true);
+    try {
+      const next = await jimengApiService.renameDoubaoWebAccount(doubaoWebAccountId, doubaoWebAccountName);
+      applyDoubaoWebState(next);
+      setNotice({ tone: 'success', text: '豆包账号名称已保存' });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `重命名豆包账号失败：${String(error)}` });
+    } finally {
+      setDoubaoWebBusy(false);
+    }
+  };
+
+  const removeDoubaoWebAccount = async () => {
+    if (!doubaoWebAccountId || !selectedDoubaoWebAccount) return;
+    if (!window.confirm(`删除“${selectedDoubaoWebAccount.name}”？该账号的独立豆包登录数据也会被清理。`)) return;
+    setDoubaoWebBusy(true);
+    try {
+      const next = await jimengApiService.removeDoubaoWebAccount(doubaoWebAccountId);
+      applyDoubaoWebState(next);
+      setNotice({ tone: 'success', text: '豆包账号及其独立登录数据已删除' });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `删除豆包账号失败：${String(error)}` });
+    } finally {
+      setDoubaoWebBusy(false);
+    }
+  };
+
+  const logoutDoubaoWeb = async () => {
+    if (!doubaoWebAccountId) return;
+    setDoubaoWebBusy(true);
+    try {
+      const next = await jimengApiService.logoutDoubaoWeb(doubaoWebAccountId);
+      applyDoubaoWebState(next);
+      setNotice({ tone: 'success', text: '所选豆包账号已退出登录' });
     } catch (error) {
       setNotice({ tone: 'error', text: `清除豆包登录状态失败：${String(error)}` });
+    } finally {
+      setDoubaoWebBusy(false);
+    }
+  };
+
+  const runWebCreatorAccountAction = async (
+    action: 'add' | 'open' | 'rename' | 'toggle' | 'logout' | 'remove',
+  ) => {
+    const account = selectedWebCreatorAccount;
+    if (action !== 'add' && !account) return;
+    if (action === 'remove' && account && !window.confirm(`删除“${account.name}”？该账号的独立网页登录数据也会被清理。`)) return;
+    setDoubaoWebBusy(true);
+    try {
+      let next: DoubaoWebState;
+      if (action === 'add') {
+        next = await jimengApiService.addDoubaoWebAccount(webCreatorPlatformId);
+      } else if (action === 'open') {
+        next = await jimengApiService.openDoubaoWebLogin(account!.id);
+      } else if (action === 'rename') {
+        next = await jimengApiService.renameDoubaoWebAccount(account!.id, webCreatorAccountName);
+      } else if (action === 'toggle') {
+        next = await jimengApiService.setDoubaoWebAccountEnabled(account!.id, !account!.enabled);
+      } else if (action === 'logout') {
+        next = await jimengApiService.logoutDoubaoWeb(account!.id);
+      } else {
+        next = await jimengApiService.removeDoubaoWebAccount(account!.id);
+      }
+      applyDoubaoWebState(next);
+      setNotice({
+        tone: 'success',
+        text: action === 'add'
+          ? `已创建${selectedWebCreatorPlatform?.name || ''}独立账号窗口，请完成登录`
+          : action === 'open'
+            ? '网页账号窗口已打开'
+            : action === 'rename'
+              ? '账号名称已保存'
+              : action === 'toggle'
+                ? account!.enabled ? '账号已停用' : '账号已启用'
+                : action === 'logout'
+                  ? '网页登录数据已清除'
+                  : '账号及独立网页登录数据已删除',
+      });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `网页账号操作失败：${String(error)}` });
     } finally {
       setDoubaoWebBusy(false);
     }
@@ -491,6 +637,10 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       return;
     }
     if (isDoubaoWebVideo) {
+      if (!doubaoWebAccounts.some((account) => account.enabled)) {
+        setNotice({ tone: 'error', text: '请先在网页创作中心添加并启用豆包账号' });
+        return;
+      }
       if (videoMode !== 'text') {
         setNotice({ tone: 'error', text: '豆包网页版首版接入当前支持文生视频，请切换到“文生视频”' });
         return;
@@ -501,6 +651,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       }
       await runTask('video', videoModel, videoPrompt, () =>
         jimengApiService.generateDoubaoWebVideo({
+          accountId: doubaoWebAccountId || null,
           prompt: videoPrompt.trim(),
           ratio: videoRatio as '1:1' | '16:9' | '9:16',
         }));
@@ -581,7 +732,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     return (
       <div className="jimeng-page jimeng-loading">
         <LoaderCircle className="spin" size={28} />
-        <span>正在装载即梦创作 API…</span>
+        <span>正在装载网页创作中心…</span>
       </div>
     );
   }
@@ -597,7 +748,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     <div className="jimeng-page">
       <div className="page-top-strip jimeng-page-strip">
         <div className="page-top-strip-left">
-          <span className="page-top-strip-label">即梦创作 API</span>
+          <span className="page-top-strip-label">网页创作中心</span>
         </div>
         <div className="page-top-strip-right-placeholder" aria-hidden="true" />
       </div>
@@ -605,12 +756,13 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       <div className="page-tabs-row page-tabs-center page-tabs-row-with-leading jimeng-top-tabs">
         <div className="page-tabs-leading">
           <div className="jimeng-context-label">
-            <img src={jimengIcon} alt="" aria-hidden="true" className="jimeng-model-icon" />
-            <span>独立创作网关</span>
+            <Globe2 size={20} />
+            <span>多平台创作网关</span>
           </div>
         </div>
         <nav className="page-tabs filter-tabs jimeng-tabs">
           {([
+            ['platforms', <Globe2 size={17} />, '网页平台'],
             ['overview', <Gauge size={17} />, '服务总览'],
             ['accounts', <KeyRound size={17} />, '账号池'],
             ['image', <ImageIcon size={17} />, '图片生成'],
@@ -632,11 +784,11 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       </div>
 
       <header className="jimeng-hero">
-        <div className="jimeng-hero-mark"><img src={jimengIcon} alt="" aria-hidden="true" className="jimeng-hero-logo" /></div>
+        <div className="jimeng-hero-mark"><Globe2 size={40} aria-hidden="true" /></div>
         <div>
-          <div className="jimeng-eyebrow">JIMENG / DREAMINA CREATIVE GATEWAY</div>
-          <h1>即梦创作 API</h1>
-          <p>独立账号池、图像合成、视频生成与故障自愈，不影响 C.le. 主 API 网关。</p>
+          <div className="jimeng-eyebrow">C.LE. / MULTI-PLATFORM CREATIVE WORKSPACE</div>
+          <h1>网页创作中心</h1>
+          <p>统一管理豆包、即梦、通义千问、小云雀和抖音网页账号，同时保留即梦 API、视频生成与无限画布。</p>
         </div>
         <div className={`jimeng-live ${state.running ? 'online' : ''}`}>
           <i />
@@ -672,6 +824,82 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       )}
 
       <main className="jimeng-content">
+        {tab === 'platforms' && (
+          <div className="web-creator-workspace">
+            <section className="web-creator-platform-grid" aria-label="网页创作平台">
+              {doubaoWeb?.platforms.map((platform) => {
+                const accounts = doubaoWeb.accounts.filter((account) => account.platformId === platform.id);
+                const online = accounts.filter((account) => account.loggedIn).length;
+                return (
+                  <button
+                    key={platform.id}
+                    type="button"
+                    className={`web-creator-platform-card${webCreatorPlatformId === platform.id ? ' active' : ''}`}
+                    onClick={() => setWebCreatorPlatformId(platform.id)}
+                  >
+                    <i>{platform.shortName}</i>
+                    <span><strong>{platform.name}</strong><small>{platform.description}</small></span>
+                    <em>{accounts.length} 个账号 · {online} 个已检测登录</em>
+                  </button>
+                );
+              })}
+            </section>
+
+            <section className="jimeng-panel web-creator-account-panel">
+              <div className="jimeng-panel-title">
+                <Globe2 size={19} />
+                <div>
+                  <h2>{selectedWebCreatorPlatform?.name || '网页平台'}账号</h2>
+                  <p>每个账号拥有独立浏览器数据目录；关闭窗口不会退出登录。</p>
+                </div>
+                <button className="btn btn-primary jimeng-button" disabled={doubaoWebBusy} onClick={() => void runWebCreatorAccountAction('add')}>
+                  <Plus size={16} />新增账号
+                </button>
+              </div>
+
+              <div className="web-creator-account-list">
+                {webCreatorAccounts.map((account) => (
+                  <button
+                    key={account.id}
+                    type="button"
+                    className={`web-creator-account-card${webCreatorAccountId === account.id ? ' active' : ''}${!account.enabled ? ' disabled' : ''}`}
+                    onClick={() => {
+                      setWebCreatorAccountId(account.id);
+                      setWebCreatorAccountName(account.name);
+                    }}
+                  >
+                    <span><strong>{account.name}</strong><small>{account.message}</small></span>
+                    <em className={account.busy ? 'busy' : account.loggedIn ? 'online' : ''}>
+                      {account.busy ? '生成中' : account.loggedIn ? '已登录' : account.statusVerified ? '未登录' : '待检测'}
+                    </em>
+                    {!!account.lastError && <small className="web-creator-account-error">上次错误：{account.lastError}</small>}
+                  </button>
+                ))}
+                {!webCreatorAccounts.length && (
+                  <div className="jimeng-empty">还没有{selectedWebCreatorPlatform?.name}账号，点击“新增账号”创建独立登录环境。</div>
+                )}
+              </div>
+
+              {selectedWebCreatorAccount && (
+                <div className="web-creator-account-controls">
+                  <input
+                    value={webCreatorAccountName}
+                    maxLength={40}
+                    aria-label="网页账号名称"
+                    onChange={(event) => setWebCreatorAccountName(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === 'Enter') void runWebCreatorAccountAction('rename'); }}
+                  />
+                  <button className="btn btn-primary jimeng-button" disabled={doubaoWebBusy} onClick={() => void runWebCreatorAccountAction('open')}><Globe2 size={16} />打开网页</button>
+                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy || !webCreatorAccountName.trim() || webCreatorAccountName.trim() === selectedWebCreatorAccount.name} onClick={() => void runWebCreatorAccountAction('rename')}><Save size={15} />保存名称</button>
+                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy || selectedWebCreatorAccount.busy} onClick={() => void runWebCreatorAccountAction('toggle')}><Power size={15} />{selectedWebCreatorAccount.enabled ? '停用' : '启用'}</button>
+                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy || selectedWebCreatorAccount.busy} onClick={() => void runWebCreatorAccountAction('logout')}>退出登录</button>
+                  <button className="btn btn-secondary jimeng-button danger" disabled={doubaoWebBusy || selectedWebCreatorAccount.busy} onClick={() => void runWebCreatorAccountAction('remove')}><Trash2 size={15} />删除</button>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+
         {tab === 'overview' && (
           <div className="jimeng-overview">
             <div className="jimeng-stat-grid">
@@ -788,19 +1016,27 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
               ))}
             </div>
             {isDoubaoWebVideo && (
-              <div className={`jimeng-doubao-login${doubaoWeb?.loggedIn ? ' online' : ''}`}>
-                <div>
+              <div className={`jimeng-doubao-login${selectedDoubaoWebAccount?.loggedIn ? ' online' : ''}`}>
+                <div className="jimeng-doubao-status">
                   <Globe2 size={20} />
-                  <span><strong>{doubaoWeb?.loggedIn ? '豆包网页版已登录' : '豆包网页版未登录'}</strong><small>{doubaoWeb?.message || '使用独立浏览器配置，不需要手动复制 Cookie'}</small></span>
+                  <span><strong>{selectedDoubaoWebAccount ? `${selectedDoubaoWebAccount.name} · ${selectedDoubaoWebAccount.loggedIn ? '已登录' : '未登录'}` : `自动故障切换 · ${doubaoWebAccounts.filter((account) => account.enabled).length} 个启用账号`}</strong><small>{selectedDoubaoWebAccount?.message || '登录失效、额度不足或临时错误时自动尝试下一个账号'}</small></span>
                 </div>
-                <div>
-                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy} onClick={() => void openDoubaoWebLogin()}>{doubaoWebBusy ? <LoaderCircle className="spin" size={16} /> : <Globe2 size={16} />}{doubaoWeb?.loggedIn ? '打开豆包网页版' : '登录豆包网页版'}</button>
-                  {doubaoWeb?.loggedIn && <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy} onClick={() => void logoutDoubaoWeb()}>退出登录</button>}
+                <div className="jimeng-doubao-actions">
+                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy} onClick={() => void addDoubaoWebAccount()}><Plus size={16} />新增账号</button>
+                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy || !selectedDoubaoWebAccount} onClick={() => void openDoubaoWebLogin()}>{doubaoWebBusy ? <LoaderCircle className="spin" size={16} /> : <Globe2 size={16} />}{selectedDoubaoWebAccount?.loggedIn ? '打开网页' : '登录账号'}</button>
+                  {selectedDoubaoWebAccount?.loggedIn && <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy} onClick={() => void logoutDoubaoWeb()}>退出登录</button>}
                 </div>
+                {selectedDoubaoWebAccount && (
+                  <div className="jimeng-doubao-account-edit">
+                    <input value={doubaoWebAccountName} maxLength={40} aria-label="豆包账号名称" onChange={(event) => setDoubaoWebAccountName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void renameDoubaoWebAccount(); }} />
+                    <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy || !doubaoWebAccountName.trim() || doubaoWebAccountName.trim() === selectedDoubaoWebAccount.name} onClick={() => void renameDoubaoWebAccount()}><Save size={15} />保存名称</button>
+                    <button className="btn btn-secondary jimeng-button danger" disabled={doubaoWebBusy} onClick={() => void removeDoubaoWebAccount()}><Trash2 size={15} />删除账号</button>
+                  </div>
+                )}
               </div>
             )}
             <div className="jimeng-form-grid">
-              <label><span>使用账号</span><select value={videoAccountId} onChange={(event) => setVideoAccountId(event.target.value)} disabled={isDoubaoWebVideo}><option value="">{isDoubaoWebVideo ? '豆包网页版会话' : '自动故障切换'}</option>{!isDoubaoWebVideo && enabledAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.region.toUpperCase()}</option>)}</select></label>
+              <label><span>使用账号</span>{isDoubaoWebVideo ? <select value={doubaoWebAccountId} onChange={(event) => { const accountId = event.target.value; setDoubaoWebAccountId(accountId); setDoubaoWebAccountName(doubaoWebAccounts.find((account) => account.id === accountId)?.name || ''); }}><option value="">自动故障切换</option>{doubaoWebAccounts.map((account) => <option key={account.id} value={account.id} disabled={!account.enabled}>{account.name} · {!account.enabled ? '已停用' : account.loggedIn ? '已登录' : '未登录'}</option>)}</select> : <select value={videoAccountId} onChange={(event) => setVideoAccountId(event.target.value)}><option value="">自动故障切换</option>{enabledAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.region.toUpperCase()}</option>)}</select>}</label>
               <label><span>模型</span><select value={videoModel} onChange={(event) => setVideoModel(event.target.value)}>{videoModels.map((model) => <option key={model.id} value={model.id}>{model.id === DOUBAO_WEB_MODEL_ID ? '豆包网页版 · Seedance 2.0' : model.id}</option>)}</select></label>
               <label><span>比例</span><select value={videoRatio} onChange={(event) => setVideoRatio(event.target.value)}>{RATIOS.filter((ratio) => isDoubaoWebVideo ? ['1:1', '16:9', '9:16'].includes(ratio) : ratio !== '3:2' && ratio !== '2:3').map((ratio) => <option key={ratio}>{ratio}</option>)}</select></label>
               <label><span>分辨率</span><select value={isDoubaoWebVideo ? 'auto' : videoResolution} onChange={(event) => setVideoResolution(event.target.value)} disabled={isDoubaoWebVideo}>{isDoubaoWebVideo ? <option value="auto">由豆包自动选择</option> : VIDEO_RESOLUTIONS.map((resolution) => <option key={resolution}>{resolution}</option>)}</select></label>
@@ -810,7 +1046,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
               {videoMode === 'omni' && <div className="span-2 jimeng-upload-zone"><button className="btn btn-secondary jimeng-button" onClick={async () => setVideoReferencePaths((await chooseFiles('video')).slice(0, 3))}><Film size={17} />选择参考视频</button><span>已选择 {videoReferencePaths.length} 个</span></div>}
               {!isDoubaoWebVideo && <label className="span-2"><span>网络素材 URL（每行一个，可选）</span><textarea rows={3} value={referenceUrls} onChange={(event) => setReferenceUrls(event.target.value)} /></label>}
             </div>
-            <button className="btn btn-primary jimeng-generate" onClick={() => void submitVideo()} disabled={!!busy || (!isDoubaoWebVideo && !enabledAccounts.length)}><Film size={20} />开始生成视频</button>
+            <button className="btn btn-primary jimeng-generate" onClick={() => void submitVideo()} disabled={!!busy || (isDoubaoWebVideo ? !doubaoWebAccounts.some((account) => account.enabled) : !enabledAccounts.length)}><Film size={20} />开始生成视频</button>
           </section>
         )}
 

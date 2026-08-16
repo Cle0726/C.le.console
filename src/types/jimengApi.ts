@@ -76,14 +76,41 @@ export interface JimengDeviceFlow {
   account?: JimengAccount;
 }
 
-export interface DoubaoWebState {
+export interface DoubaoWebAccountState {
+  id: string;
+  name: string;
+  platformId: WebCreatorPlatformId;
+  enabled: boolean;
+  busy: boolean;
   windowOpen: boolean;
   loggedIn: boolean;
+  statusVerified: boolean;
   currentUrl?: string | null;
+  message: string;
+  lastError?: string | null;
+  consecutiveFailures: number;
+}
+
+export type WebCreatorPlatformId = 'doubao' | 'jimeng' | 'qianwen' | 'xiaoyunque' | 'douyin';
+
+export interface WebCreatorPlatform {
+  id: WebCreatorPlatformId;
+  name: string;
+  shortName: string;
+  description: string;
+  homeUrl: string;
+  capabilities: string[];
+}
+
+export interface DoubaoWebState {
+  platforms: WebCreatorPlatform[];
+  accounts: DoubaoWebAccountState[];
+  selectedAccountId?: string | null;
   message: string;
 }
 
 export interface DoubaoWebVideoRequest {
+  accountId?: string | null;
   prompt: string;
   ratio: '1:1' | '16:9' | '9:16';
 }
