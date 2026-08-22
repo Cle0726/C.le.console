@@ -10,7 +10,8 @@ The core contract is intentionally strict:
 4. Canon facts have explicit authority and timeline scope.
 5. AI/import extraction writes Candidate Claims, never Canon directly.
 6. Model context is compiled through deterministic gates; retrieval cannot bypass story rules.
-7. SQLite indexes and workflow data are rebuildable runtime artifacts, never Canon.
+7. Objective world state is not assumed to be POV-visible state.
+8. SQLite indexes and workflow data are rebuildable runtime artifacts, never Canon.
 
 ## v0.3 scope
 
@@ -22,12 +23,14 @@ v0.3 keeps all v0.2 state/Canon/claim foundations and adds the first Story Conte
 - timeline-aware and authority-aware Canon selection
 - `reveal_at` spoiler guard
 - explicit POV knowledge guard based on `knowledge.gained/lost` events
+- conservative POV-safe objective-state projection (`location` only by default)
+- scene-bound entity/state visibility so arbitrary retrieved future entities do not leak
 - manual pins that remain subject to all gates
 - dependency expansion from safe parents, with every dependency re-validated
 - semantic retriever protocol where search results are candidates only
 - deterministic output independent of retriever return order
 - soft context budget for optional content; required identity/state context is retained
-- explainable exclusions (`not_revealed`, `pov_unknown`, `canon_ambiguous`, `shadowed_by_authority`, `budget`, `unknown_ref`, etc.)
+- explainable exclusions (`not_revealed`, `pov_unknown`, `pov_entity_unbound`, `pov_state_unbound`, `canon_ambiguous`, `shadowed_by_authority`, `budget`, `unknown_ref`, etc.)
 - `storyos context` CLI command
 
 A real vector database is deliberately **not** part of v0.3. Vector search will be an adapter behind the `SemanticRetriever` boundary so it cannot become a source of truth or bypass the gating layer.
@@ -43,11 +46,19 @@ Use for prose generation from a specific character/story viewpoint. A Canon fact
 3. already revealable at that sequence;
 4. public, or explicitly known by the POV character.
 
+Objective Story State is handled separately. Full `state.values` may contain author-only facts, so POV mode projects only explicitly allowed state keys. v0.3 defaults to:
+
+```text
+location
+```
+
+The caller/project policy can add more safe keys explicitly. Entity IDs referenced by those POV-safe state values can become scene-bound—for example the current location—while an unrelated future character returned by semantic search remains excluded.
+
 A 0.99 semantic similarity score and a manual pin still cannot override these checks.
 
 ### AUTHOR mode
 
-Use for planning, structural analysis, continuity editing and author-only reasoning. AUTHOR mode may include true-but-unrevealed Canon, but it still obeys story-time validity and Canon authority resolution.
+Use for planning, structural analysis, continuity editing and author-only reasoning. AUTHOR mode may include true-but-unrevealed Canon and complete objective state, but it still obeys story-time validity and Canon authority resolution.
 
 ## Project channels
 
@@ -79,7 +90,15 @@ storyos context examples/demo \
   --pov chr_00000000000000000000000000000001 \
   --mode pov
 
-# Author planning context may see true-but-unrevealed Canon.
+# Additional objective state keys must be explicitly declared POV-safe.
+storyos context examples/demo \
+  --through 150 \
+  --participant chr_00000000000000000000000000000001 \
+  --pov chr_00000000000000000000000000000001 \
+  --mode pov \
+  --pov-state-key location
+
+# Author planning context may see true-but-unrevealed Canon and full objective state.
 storyos context examples/demo \
   --through 150 \
   --participant chr_00000000000000000000000000000001 \
