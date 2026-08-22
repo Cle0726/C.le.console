@@ -13,6 +13,7 @@ from storyos.duanxian_import import DuanxianImportError, DuanxianV39Importer
 from storyos.index import StoryIndex
 from storyos.inspector import ContextInspector
 from storyos.knowledge import KnowledgeTimeline
+from storyos.materialization import MaterializationError, MaterializationWorkbench
 from storyos.project import StoryProject
 from storyos.retrieval import RetrievalIndexError, SQLiteCanonicalRetriever
 from storyos.state import StoryStateProjector
@@ -106,6 +107,20 @@ def main() -> None:
         action="store_true",
         help="Explicitly replace a different existing review decision",
     )
+
+    p_mat_plan = sub.add_parser(
+        "materialization-plan",
+        help="Recheck reviewed claims and build a read-only quarantine materialization plan",
+    )
+    p_mat_plan.add_argument("project")
+    p_mat_plan.add_argument("--claim", dest="claim_id", default=None)
+
+    p_mat_stage = sub.add_parser(
+        "materialization-stage",
+        help="Persist one ready reviewed claim as a non-canonical quarantine candidate",
+    )
+    p_mat_stage.add_argument("project")
+    p_mat_stage.add_argument("claim_id")
 
     p_validate = sub.add_parser("validate", help="Validate canonical and staging project files")
     p_validate.add_argument("project")
@@ -215,6 +230,38 @@ def main() -> None:
                     "policy": {
                         "canonical_mutation": False,
                         "materialization_required": True,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    if args.command == "materialization-plan":
+        try:
+            payload = MaterializationWorkbench().build_plan(project, claim_id=args.claim_id)
+        except (MaterializationError, ValueError) as exc:
+            parser.exit(2, f"storyos: materialization plan failed: {exc}\n")
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    if args.command == "materialization-stage":
+        try:
+            candidate, result = MaterializationWorkbench().stage(project, claim_id=args.claim_id)
+        except (MaterializationError, ValueError) as exc:
+            parser.exit(2, f"storyos: materialization staging failed: {exc}\n")
+        print(
+            json.dumps(
+                {
+                    "schema": "story.materialization-result.v1",
+                    "result": result,
+                    "candidate": candidate,
+                    "policy": {
+                        "quarantine_only": True,
+                        "canonical_mutation": False,
+                        "commit_required": True,
                     },
                 },
                 ensure_ascii=False,
