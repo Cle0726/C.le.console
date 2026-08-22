@@ -59,6 +59,20 @@
         "alwaysOnTop": false,
         "center": true,
         "visible": false
+      },
+      {
+        "label": "web-creator-workspace",
+        "title": "C.le. 网页创作工作台",
+        "url": "index.html",
+        "create": true,
+        "width": 1480,
+        "height": 920,
+        "minWidth": 1050,
+        "minHeight": 700,
+        "center": true,
+        "resizable": true,
+        "visible": false,
+        "backgroundColor": "#0B0C0E"
       }
     ],
     "security": {

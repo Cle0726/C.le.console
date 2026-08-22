@@ -127,18 +127,19 @@ pub fn show_workspace_window(app: &AppHandle) -> Result<(), String> {
         return window.set_focus().map_err(|error| error.to_string());
     }
 
-    WebviewWindowBuilder::new(
-        app,
-        CREATOR_WORKSPACE_WINDOW_LABEL,
-        WebviewUrl::App("index.html?web-creator-workspace=1".into()),
-    )
-    .title("C.le. 网页创作工作台")
-    .inner_size(1480.0, 920.0)
-    .min_inner_size(1050.0, 700.0)
-    .center()
-    .resizable(true)
-    .build()
-    .map_err(|error| format!("打开网页创作工作台失败: {error}"))?;
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|item| item.label == CREATOR_WORKSPACE_WINDOW_LABEL)
+        .ok_or_else(|| "网页创作工作台窗口配置不存在".to_string())?;
+    let window = WebviewWindowBuilder::from_config(app, config)
+        .map_err(|error| format!("读取网页创作工作台窗口配置失败: {error}"))?
+        .build()
+        .map_err(|error| format!("打开网页创作工作台失败: {error}"))?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
     Ok(())
 }
 

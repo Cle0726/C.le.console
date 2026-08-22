@@ -574,7 +574,16 @@ pub fn run() {
                     }
                 }
             }
-            WindowEvent::CloseRequested { .. } => {
+            WindowEvent::CloseRequested { api, .. } => {
+                if window.label() == modules::web_creator_workspace::CREATOR_WORKSPACE_WINDOW_LABEL
+                {
+                    api.prevent_close();
+                    let _ = modules::web_creator_workspace::hide(window.app_handle());
+                    if let Err(err) = window.hide() {
+                        logger::log_warn(&format!("[WebCreator] 隐藏网页创作工作台失败: {}", err));
+                    }
+                    return;
+                }
                 if window.label() != "main" {
                     return;
                 }
