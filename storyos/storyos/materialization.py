@@ -322,17 +322,15 @@ class MaterializationWorkbench:
 
 
 def quarantine_mapping_from_plan_item(item: dict[str, Any]) -> dict[str, Any]:
-    """Return the exact quarantine file mapping expected for one ready plan item.
+    """Return the exact quarantine mapping implied by a plan item with candidate data.
 
-    This pure function is shared by quarantine staging and the later canonical commit
-    gate so the commit gate can compare the staged file against the current protocol
-    without duplicating assembly logic.
+    Staging itself still requires `ready: true`. The commit gate also uses this pure
+    function for exact comparisons and recovery inspection after an earlier authorized
+    canonical create, where current Canon may now make the materialization item blocked.
     """
-    if not item.get("ready"):
-        raise MaterializationError("cannot build quarantine mapping from a blocked plan item")
     candidate_raw = item.get("candidate")
     if not isinstance(candidate_raw, dict):
-        raise MaterializationError("ready materialization item is missing candidate data")
+        raise MaterializationError("materialization item is missing candidate data")
     candidate = dict(candidate_raw)
     kind = str(item.get("kind") or "")
     target_id = str(item.get("target_id") or "")
@@ -340,7 +338,7 @@ def quarantine_mapping_from_plan_item(item: dict[str, Any]) -> dict[str, Any]:
     if kind not in {"event", "fact"}:
         raise MaterializationError(f"unsupported materialization kind: {kind}")
     if not target_id or not claim_id:
-        raise MaterializationError("ready materialization item is missing target/claim identity")
+        raise MaterializationError("materialization item is missing target/claim identity")
 
     return {
         "schema": "story.materialization-candidate.v1",
