@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.claim-extraction-report.v1",
+  "title": "StoryOS Candidate Claim Extraction Report v1",
+  "type": "object",
+  "required": ["schema", "adapter", "sequence_policy", "counts", "claim_ids", "unresolved", "policy"],
+  "properties": {
+    "schema": {"const": "story.claim-extraction-report.v1"},
+    "adapter": {"type": "string", "minLength": 1},
+    "sequence_policy": {
+      "type": "object",
+      "required": ["season_stride", "episode_stride", "scene_stride", "clause_ordinal_range"],
+      "properties": {
+        "season_stride": {"type": "integer", "minimum": 1},
+        "episode_stride": {"type": "integer", "minimum": 1},
+        "scene_stride": {"type": "integer", "minimum": 1},
+        "clause_ordinal_range": {
+          "type": "array",
+          "prefixItems": [{"type": "integer"}, {"type": "integer"}],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "counts": {
+      "type": "object",
+      "required": ["scenes_scanned", "claims_total", "unresolved_total", "by_rule"],
+      "properties": {
+        "scenes_scanned": {"type": "integer", "minimum": 0},
+        "claims_total": {"type": "integer", "minimum": 0},
+        "unresolved_total": {"type": "integer", "minimum": 0},
+        "by_rule": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+      },
+      "additionalProperties": false
+    },
+    "claim_ids": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^clm_[0-9a-f]{32}$"},
+      "uniqueItems": true
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["scene_ref", "source_scene_id", "field", "raw", "reason"],
+        "properties": {
+          "scene_ref": {"type": "string", "pattern": "^scn_[0-9a-f]{32}$"},
+          "source_scene_id": {"type": "string"},
+          "field": {"type": "string"},
+          "raw": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "policy": {"type": "object", "additionalProperties": {"type": "boolean"}}
+  },
+  "additionalProperties": false
+}
