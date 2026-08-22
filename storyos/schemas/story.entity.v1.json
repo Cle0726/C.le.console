@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.entity.v1",
+  "title": "StoryOS Entity v1",
+  "type": "object",
+  "required": ["schema", "id", "kind", "name"],
+  "properties": {
+    "schema": {"const": "story.entity.v1"},
+    "id": {"type": "string", "pattern": "^[a-z]+_[0-9a-f]{32}$"},
+    "kind": {"enum": ["character", "location", "organization", "concept", "plot", "canon", "scene", "relationship"]},
+    "name": {"type": "string", "minLength": 1},
+    "slug": {"type": "string"},
+    "aliases": {"type": "array", "items": {"type": "string"}},
+    "data": {"type": "object"}
+  },
+  "additionalProperties": true
+}
