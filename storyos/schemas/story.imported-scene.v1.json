@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.imported-scene.v1",
+  "title": "StoryOS Imported Scene Source Record v1",
+  "type": "object",
+  "required": ["schema", "id", "source_scene_id", "episode", "space_time", "present_raw", "active_task_raw", "state_diff_raw", "exit_snapshot_raw", "canonical_event_materialized", "source"],
+  "properties": {
+    "schema": {"const": "story.imported-scene.v1"},
+    "id": {"type": "string", "pattern": "^scn_[0-9a-f]{32}$"},
+    "source_scene_id": {"type": "string", "minLength": 1},
+    "episode": {"type": "integer", "minimum": 1},
+    "space_time": {"type": "string"},
+    "present_raw": {"type": "string"},
+    "active_task_raw": {"type": "string"},
+    "state_diff_raw": {"type": "string"},
+    "exit_snapshot_raw": {"type": "string"},
+    "canonical_event_materialized": {"const": false},
+    "source": {
+      "type": "object",
+      "required": ["path", "ledger_version"],
+      "properties": {
+        "path": {"type": "string"},
+        "ledger_version": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
