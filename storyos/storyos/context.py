@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from enum import Enum
+from itertools import islice
 from typing import Any, Iterable, Mapping, Protocol
 
+from storyos import __version__
 from storyos.authority import CanonFact, CanonResolver
 from storyos.knowledge import KnowledgeTimeline
 from storyos.project import StoryProject
@@ -41,9 +44,9 @@ class ContextRequest:
     def __post_init__(self) -> None:
         if not isinstance(self.mode, ContextMode):
             object.__setattr__(self, "mode", ContextMode(self.mode))
-        object.__setattr__(self, "participants", tuple(self.participants))
-        object.__setattr__(self, "pinned", tuple(self.pinned))
-        object.__setattr__(self, "pov_state_keys", tuple(self.pov_state_keys))
+        object.__setattr__(self, "participants", _unique_tuple(self.participants))
+        object.__setattr__(self, "pinned", _unique_tuple(self.pinned))
+        object.__setattr__(self, "pov_state_keys", _unique_tuple(self.pov_state_keys))
 
     def validate(self) -> None:
         if self.through_sequence < 0:
@@ -54,8 +57,8 @@ class ContextRequest:
             raise ValueError("semantic_limit must be >= 0")
         if self.mode is ContextMode.POV and self.pov is None:
             raise ValueError("POV context mode requires pov")
-        if any(not key.strip() for key in self.pov_state_keys):
-            raise ValueError("pov_state_keys cannot contain empty keys")
+        if any(not isinstance(key, str) or not key.strip() for key in self.pov_state_keys):
+            raise ValueError("pov_state_keys must contain non-empty strings")
 
 
 @dataclass(frozen=True)
@@ -81,11 +84,8 @@ class ExcludedContextItem:
 
 @dataclass(frozen=True)
 class ContextManifest:
-    through_sequence: int
-    mode: ContextMode
-    pov: str | None
-    max_chars: int
-    pov_state_keys: tuple[str, ...]
+    request: ContextRequest
+    retrieval_hits: tuple[RetrievalHit, ...]
     included: tuple[ContextItem, ...]
     excluded: tuple[ExcludedContextItem, ...]
 
@@ -100,11 +100,25 @@ class ContextManifest:
     def as_dict(self) -> dict:
         return {
             "schema": "story.context.v1",
-            "through_sequence": self.through_sequence,
-            "mode": self.mode.value,
-            "pov": self.pov,
-            "pov_state_keys": list(self.pov_state_keys),
-            "budget": {"max_chars": self.max_chars, "used_chars": self.used_chars},
+            "compiler_version": __version__,
+            "request": {
+                "through_sequence": self.request.through_sequence,
+                "mode": self.request.mode.value,
+                "pov": self.request.pov,
+                "participants": list(self.request.participants),
+                "pinned": list(self.request.pinned),
+                "semantic_query": self.request.semantic_query,
+                "semantic_limit": self.request.semantic_limit,
+                "pov_state_keys": list(self.request.pov_state_keys),
+            },
+            "budget": {
+                "max_chars": self.request.max_chars,
+                "used_chars": self.used_chars,
+            },
+            "retrieval_hits": [
+                {"ref": hit.ref, "score": hit.score}
+                for hit in self.retrieval_hits
+            ],
             "included": [
                 {
                     "ref": item.ref,
@@ -227,10 +241,22 @@ class ContextCompiler:
                 add(resolution.fact.id, "participant_canon", 700)
 
         # Semantic search contributes candidates only; no direct inclusion is possible.
-        if request.semantic_query and self.retriever is not None:
-            for hit in self.retriever.search(request.semantic_query, limit=request.semantic_limit):
-                score = max(0.0, min(1.0, float(hit.score)))
-                add(hit.ref, "semantic_retrieval", 500 + int(score * 100))
+        retrieval_scores: dict[str, float] = {}
+        if request.semantic_query and self.retriever is not None and request.semantic_limit > 0:
+            raw_hits = self.retriever.search(request.semantic_query, limit=request.semantic_limit)
+            for hit in islice(raw_hits, request.semantic_limit):
+                score = float(hit.score)
+                if not math.isfinite(score):
+                    raise ValueError(f"semantic score must be finite for {hit.ref}")
+                score = max(0.0, min(1.0, score))
+                retrieval_scores[hit.ref] = max(score, retrieval_scores.get(hit.ref, 0.0))
+
+        retrieval_hits = tuple(
+            RetrievalHit(ref=ref, score=score)
+            for ref, score in sorted(retrieval_scores.items(), key=lambda pair: (-pair[1], pair[0]))
+        )
+        for hit in retrieval_hits:
+            add(hit.ref, "semantic_retrieval", 500 + int(hit.score * 100))
 
         safe_items: list[ContextItem] = []
         processed: set[str] = set()
@@ -295,11 +321,8 @@ class ContextCompiler:
             used += item.char_count
 
         return ContextManifest(
-            through_sequence=request.through_sequence,
-            mode=request.mode,
-            pov=request.pov,
-            max_chars=request.max_chars,
-            pov_state_keys=request.pov_state_keys,
+            request=request,
+            retrieval_hits=retrieval_hits,
             included=tuple(included),
             excluded=tuple(_dedupe_excluded(excluded)),
         )
@@ -344,18 +367,23 @@ class ContextCompiler:
             if request.mode is ContextMode.POV and ref not in pov_bound_entities:
                 return None, ExcludedContextItem(ref, "pov_entity_unbound")
             # Arbitrary entity.data is intentionally not injected here; it may contain hidden author notes.
-            content = json.dumps(
-                {
+            if request.mode is ContextMode.POV:
+                identity = {
+                    "type": "entity",
+                    "id": entity.id,
+                    "kind": entity.kind,
+                    "name": entity.name,
+                }
+            else:
+                identity = {
                     "type": "entity",
                     "id": entity.id,
                     "kind": entity.kind,
                     "name": entity.name,
                     "slug": entity.slug,
                     "aliases": list(entity.aliases),
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            )
+                }
+            content = json.dumps(identity, ensure_ascii=False, sort_keys=True)
             return ContextItem(
                 ref=ref,
                 kind="entity",
@@ -467,6 +495,10 @@ def _extract_entity_refs(value: Any, known_entity_ids: set[str]) -> set[str]:
         for child in value:
             refs.update(_extract_entity_refs(child, known_entity_ids))
     return refs
+
+
+def _unique_tuple(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(values))
 
 
 def _state_ref(entity_id: str, sequence: int) -> str:
