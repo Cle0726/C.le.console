@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.imported-editorial-insert.v1",
+  "title": "StoryOS Imported Editorial Insert v1",
+  "type": "object",
+  "required": ["schema", "id", "insert_id", "display_episode", "mode", "canonical_mutation", "inherit_state_to_next", "source"],
+  "properties": {
+    "schema": {"const": "story.imported-editorial-insert.v1"},
+    "id": {"type": "string", "pattern": "^scn_[0-9a-f]{32}$"},
+    "insert_id": {"type": "string", "minLength": 1},
+    "display_episode": {"type": "integer", "minimum": 1},
+    "mode": {"type": "string", "minLength": 1},
+    "source_scenes": {"type": "array", "items": {"type": "string"}},
+    "core_source_scene": {"type": ["string", "null"]},
+    "source_geometry": {},
+    "canonical_mutation": {"const": false},
+    "inherit_state_to_next": {"type": "boolean"},
+    "return_target": {"type": ["string", "null"]},
+    "return_anchor": {"type": ["string", "null"]},
+    "constraints": {"type": "string"},
+    "source": {
+      "type": "object",
+      "required": ["path", "ledger_version"],
+      "properties": {
+        "path": {"type": "string"},
+        "ledger_version": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}
