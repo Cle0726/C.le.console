@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cle-storyos"
-version = "0.5.0"
-description = "Deterministic story state, Canon context, retrieval and mother-package migration for long-form fiction"
+version = "0.6.0"
+description = "Deterministic story state, Canon context, retrieval, migration and candidate-claim extraction for long-form fiction"
 requires-python = ">=3.11"
 dependencies = [
   "PyYAML>=6.0.2",
