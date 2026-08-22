@@ -1,0 +1,152 @@
+name: Windows signed release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            third_party/jimeng-api/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sidecars/cle-cliproxy/go.mod
+          cache-dependency-path: sidecars/cle-cliproxy/go.sum
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Verify release version and signing secrets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content -LiteralPath 'package.json' -Raw | ConvertFrom-Json).version
+          $tag = '${{ github.ref_name }}'
+
+          if ('${{ github.event_name }}' -eq 'push' -and $tag -ne "v$version") {
+            throw "Release tag $tag does not match package.json version v$version. Update package.json and run npm run sync-version before tagging."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBLIC_KEY)) {
+            throw 'Missing GitHub Actions secret: TAURI_UPDATER_PUBLIC_KEY'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw 'Missing GitHub Actions secret: TAURI_SIGNING_PRIVATE_KEY'
+          }
+
+          Write-Host "Release version: $version"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build cle-cliproxy Windows sidecar
+        shell: pwsh
+        working-directory: sidecars/cle-cliproxy
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'bin' | Out-Null
+          $env:GOOS = 'windows'
+          $env:GOARCH = 'amd64'
+          $env:CGO_ENABLED = '0'
+          go build -buildvcs=false -trimpath -ldflags '-s -w' -o 'bin/cle-cliproxy-x86_64-pc-windows-msvc.exe' .
+
+      - name: Build Jimeng Windows sidecar
+        shell: pwsh
+        run: ./scripts/build-jimeng-sidecar.ps1
+
+      - name: Restore cockpit sidecar from current portable baseline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baseline = 'release/C.le.console_1.1.4_x64_portable.zip'
+          if (-not (Test-Path -LiteralPath $baseline)) {
+            throw "Temporary cockpit baseline archive is missing: $baseline"
+          }
+
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'cle-console-portable-baseline'
+          if (Test-Path -LiteralPath $extractRoot) {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force
+          }
+          Expand-Archive -LiteralPath $baseline -DestinationPath $extractRoot -Force
+
+          $source = Get-ChildItem -LiteralPath $extractRoot -Recurse -File -Filter 'cockpit-cliproxy.exe' |
+            Select-Object -First 1
+          if (-not $source) {
+            throw 'cockpit-cliproxy.exe was not found in the portable baseline archive.'
+          }
+
+          $destinationDir = 'sidecars/cockpit-cliproxy/bin'
+          New-Item -ItemType Directory -Force -Path $destinationDir | Out-Null
+          $destination = Join-Path $destinationDir 'cockpit-cliproxy-x86_64-pc-windows-msvc.exe'
+          Copy-Item -LiteralPath $source.FullName -Destination $destination -Force
+          Write-Host "Restored temporary cockpit sidecar from $($source.FullName)"
+          Write-Warning 'Temporary compatibility path: replace this step once cockpit-cliproxy source/build input is restored to the repository.'
+
+      - name: Verify Windows sidecars
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $required = @(
+            'sidecars/cle-cliproxy/bin/cle-cliproxy-x86_64-pc-windows-msvc.exe',
+            'sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe',
+            'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Missing required Windows sidecar: $path"
+            }
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-Host "$hash  $path"
+          }
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Build, sign and publish Windows release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.event_name == 'push' && github.ref_name || 'v__VERSION__' }}
+          releaseName: 'C.le.控制台 v__VERSION__'
+          releaseBody: 'Windows signed release for C.le.控制台. See CHANGELOG.md for details.'
+          releaseDraft: false
+          prerelease: false
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: true
+          args: --config src-tauri/tauri.updater.conf.json
