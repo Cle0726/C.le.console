@@ -1,7 +1,9 @@
 from pathlib import Path
+import json
 
 import pytest
 
+from storyos.cli import main as cli_main
 from storyos.context import (
     ContextCompiler,
     ContextMode,
@@ -9,6 +11,7 @@ from storyos.context import (
     RetrievalHit,
 )
 from storyos.entities import StoryEntity
+from storyos.events import StoryEvent
 from storyos.project import StoryProject
 
 
@@ -32,7 +35,7 @@ class FakeRetriever:
 
 
 class ProjectWithHiddenEntity:
-    """Test-only project wrapper containing a known but scene-unbound entity."""
+    """Test-only project wrapper with hidden objective state and a future entity."""
 
     def __init__(self, base: StoryProject):
         self.base = base
@@ -52,7 +55,15 @@ class ProjectWithHiddenEntity:
         return self.base.load_canon_facts()
 
     def load_events(self):
-        return self.base.load_events()
+        hidden_relation = StoryEvent.from_mapping({
+            "id": "evt_00000000000000000000000000000098",
+            "subject": KADEN,
+            "type": "secret_relation.set",
+            "at": {"sequence": 120},
+            "payload": {"value": HIDDEN},
+            "source": {"kind": "test_objective_state"},
+        })
+        return [*self.base.load_events(), hidden_relation]
 
 
 def excluded_reasons(manifest, ref: str) -> set[str]:
@@ -260,10 +271,43 @@ def test_semantic_retrieval_cannot_leak_known_but_scene_unbound_entity_or_state(
     assert hidden_state not in included_refs(manifest)
     assert "pov_entity_unbound" in excluded_reasons(manifest, HIDDEN)
     assert "pov_state_unbound" in excluded_reasons(manifest, hidden_state)
+    assert HIDDEN not in manifest.render()
     assert "未来角色" not in manifest.render()
 
 
-def test_entity_referenced_by_current_pov_state_is_scene_bound():
+def test_objective_hidden_state_is_filtered_from_default_pov_state_projection():
+    project = ProjectWithHiddenEntity(StoryProject.open(demo_root()))
+    manifest = ContextCompiler(project).compile(
+        ContextRequest(
+            through_sequence=200,
+            participants=(KADEN,),
+            pov=KADEN,
+            mode=ContextMode.POV,
+        )
+    )
+
+    state_item = next(item for item in manifest.included if item.ref == f"state:{KADEN}@200")
+    state_payload = json.loads(state_item.content)
+    assert state_payload["values"] == {"location": WORKSHOP}
+    assert HIDDEN not in state_item.content
+
+
+def test_author_mode_keeps_full_objective_state():
+    project = ProjectWithHiddenEntity(StoryProject.open(demo_root()))
+    manifest = ContextCompiler(project).compile(
+        ContextRequest(
+            through_sequence=200,
+            participants=(KADEN,),
+            mode=ContextMode.AUTHOR,
+        )
+    )
+
+    state_item = next(item for item in manifest.included if item.ref == f"state:{KADEN}@200")
+    state_payload = json.loads(state_item.content)
+    assert state_payload["values"]["secret_relation"] == HIDDEN
+
+
+def test_entity_referenced_by_current_pov_safe_state_is_scene_bound():
     project = StoryProject.open(demo_root())
     compiler = ContextCompiler(
         project,
@@ -280,3 +324,37 @@ def test_entity_referenced_by_current_pov_state_is_scene_bound():
     )
 
     assert WORKSHOP in included_refs(manifest)
+
+
+def test_context_request_normalizes_string_mode():
+    request = ContextRequest(through_sequence=1, pov=KADEN, mode="pov")
+    assert request.mode is ContextMode.POV
+
+
+def test_context_cli_emits_explainable_manifest(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "storyos",
+            "context",
+            str(demo_root()),
+            "--through",
+            "150",
+            "--participant",
+            KADEN,
+            "--pov",
+            KADEN,
+            "--mode",
+            "pov",
+            "--pin",
+            FACT,
+        ],
+    )
+    cli_main()
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["schema"] == "story.context.v1"
+    assert payload["mode"] == "pov"
+    assert payload["pov_state_keys"] == ["location"]
+    excluded = {(item["ref"], item["reason"]) for item in payload["excluded"]}
+    assert (FACT, "not_revealed") in excluded
