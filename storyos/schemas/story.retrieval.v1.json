@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.retrieval.v1",
+  "title": "StoryOS Retrieval Result v1",
+  "type": "object",
+  "required": ["schema", "query", "limit", "hits"],
+  "properties": {
+    "schema": {"const": "story.retrieval.v1"},
+    "query": {"type": "string"},
+    "limit": {"type": "integer", "minimum": 0},
+    "hits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref", "score"],
+        "properties": {
+          "ref": {"type": "string"},
+          "score": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
