@@ -1,0 +1,41 @@
+name: Refresh updater Cargo lock
+
+on:
+  push:
+    branches:
+      - feature/windows-update-notifier
+    paths:
+      - .github/workflows/refresh-updater-lock.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v5
+        with:
+          ref: feature/windows-update-notifier
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve dependencies
+        run: cargo metadata --manifest-path src-tauri/Cargo.toml --format-version 1 > /dev/null
+
+      - name: Commit Cargo.lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add Cargo.lock
+          if git diff --cached --quiet; then
+            echo "Cargo.lock already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "build: lock Tauri updater dependency"
+          git push origin HEAD:feature/windows-update-notifier
