@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.claim-review-queue.v1",
+  "title": "StoryOS Claim Review Queue v1",
+  "type": "object",
+  "required": ["schema", "filters", "summary", "items", "policy"],
+  "properties": {
+    "schema": {"const": "story.claim-review-queue.v1"},
+    "filters": {"type": "object"},
+    "summary": {
+      "type": "object",
+      "required": ["claims", "blocked_by_current_canon_or_state", "reviewed", "unreviewed", "stale_reviews", "decisions", "extraction_unresolved"],
+      "properties": {
+        "claims": {"type": "integer", "minimum": 0},
+        "blocked_by_current_canon_or_state": {"type": "integer", "minimum": 0},
+        "reviewed": {"type": "integer", "minimum": 0},
+        "unreviewed": {"type": "integer", "minimum": 0},
+        "stale_reviews": {"type": "integer", "minimum": 0},
+        "decisions": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "extraction_unresolved": {"type": ["integer", "null"], "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "items": {"type": "array", "items": {"type": "object"}},
+    "policy": {
+      "type": "object",
+      "required": ["review_decisions_are_noncanonical", "review_does_not_change_claim_status", "materialization_is_separate"],
+      "properties": {
+        "review_decisions_are_noncanonical": {"const": true},
+        "review_does_not_change_claim_status": {"const": true},
+        "materialization_is_separate": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

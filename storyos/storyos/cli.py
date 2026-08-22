@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from storyos.authority import CanonResolver
+from storyos.claim_review import ClaimReviewError, ClaimReviewWorkbench, ReviewDecision
 from storyos.claims import ClaimStager
 from storyos.context import ContextCompiler, ContextMode, ContextRequest
 from storyos.duanxian_import import DuanxianImportError, DuanxianV39Importer
@@ -68,6 +69,44 @@ def main() -> None:
         help="Persist deterministic claims under staging/claims/world_state; default is dry-run",
     )
 
+    p_review = sub.add_parser(
+        "claim-review",
+        help="Build an explainable non-canonical review queue for staged claims",
+    )
+    p_review.add_argument("project")
+    p_review.add_argument("--subject", default=None)
+    p_review.add_argument("--predicate", default=None, help="Predicate prefix filter")
+    p_review.add_argument("--claim", dest="claim_id", default=None)
+
+    p_decide = sub.add_parser(
+        "claim-decide",
+        help="Persist a non-canonical review decision sidecar for one staged claim",
+    )
+    p_decide.add_argument("project")
+    p_decide.add_argument("claim_id")
+    p_decide.add_argument(
+        "--decision",
+        required=True,
+        choices=[decision.value for decision in ReviewDecision],
+    )
+    p_decide.add_argument(
+        "--predicate",
+        dest="normalized_predicate",
+        default=None,
+        help="Normalized target predicate; required for accept decisions",
+    )
+    p_decide.add_argument(
+        "--value-json",
+        default=None,
+        help="Normalized target value as JSON; required for accept decisions",
+    )
+    p_decide.add_argument("--note", default="")
+    p_decide.add_argument(
+        "--replace",
+        action="store_true",
+        help="Explicitly replace a different existing review decision",
+    )
+
     p_validate = sub.add_parser("validate", help="Validate canonical and staging project files")
     p_validate.add_argument("project")
 
@@ -126,16 +165,63 @@ def main() -> None:
             persistence = (
                 extractor.persist(project, extraction)
                 if args.write
-                else {
-                    "write": False,
-                    "claims_total": len(extraction.claims),
-                }
+                else {"write": False, "claims_total": len(extraction.claims)}
             )
         except WorldStateClaimExtractionError as exc:
             parser.exit(2, f"storyos: World State extraction failed: {exc}\n")
         payload = extraction.report()
         payload["persistence"] = persistence
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    if args.command == "claim-review":
+        try:
+            payload = ClaimReviewWorkbench().build_queue(
+                project,
+                subject=args.subject,
+                predicate=args.predicate,
+                claim_id=args.claim_id,
+            )
+        except ClaimReviewError as exc:
+            parser.exit(2, f"storyos: claim review failed: {exc}\n")
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    if args.command == "claim-decide":
+        kwargs = {}
+        if args.value_json is not None:
+            try:
+                kwargs["normalized_value"] = json.loads(args.value_json)
+            except json.JSONDecodeError as exc:
+                parser.exit(2, f"storyos: invalid --value-json: {exc}\n")
+        try:
+            review, result = ClaimReviewWorkbench().decide(
+                project,
+                claim_id=args.claim_id,
+                decision=args.decision,
+                normalized_predicate=args.normalized_predicate,
+                note=args.note,
+                replace=args.replace,
+                **kwargs,
+            )
+        except (ClaimReviewError, ValueError) as exc:
+            parser.exit(2, f"storyos: claim decision failed: {exc}\n")
+        print(
+            json.dumps(
+                {
+                    "schema": "story.claim-review-result.v1",
+                    "result": result,
+                    "review": review.as_mapping(),
+                    "policy": {
+                        "canonical_mutation": False,
+                        "materialization_required": True,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return
 
     if args.command == "validate":
@@ -202,13 +288,7 @@ def main() -> None:
             args.entity,
             through_sequence=args.through,
         )
-        print(
-            json.dumps(
-                {"entity": args.entity, "through": args.through, "facts": sorted(facts)},
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        print(json.dumps({"entity": args.entity, "through": args.through, "facts": sorted(facts)}, ensure_ascii=False, indent=2))
         return
 
     if args.command == "claims":
@@ -243,10 +323,7 @@ def main() -> None:
                     "schema": "story.retrieval.v1",
                     "query": args.query,
                     "limit": args.limit,
-                    "hits": [
-                        {"ref": hit.ref, "score": hit.score}
-                        for hit in hits
-                    ],
+                    "hits": [{"ref": hit.ref, "score": hit.score} for hit in hits],
                 },
                 ensure_ascii=False,
                 indent=2,

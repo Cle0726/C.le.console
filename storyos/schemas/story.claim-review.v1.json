@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.claim-review.v1",
+  "title": "StoryOS Claim Review Decision v1",
+  "type": "object",
+  "required": ["schema", "claim_id", "claim_fingerprint", "decision", "normalized", "note", "policy"],
+  "properties": {
+    "schema": {"const": "story.claim-review.v1"},
+    "claim_id": {"type": "string", "pattern": "^clm_[0-9a-f]{32}$"},
+    "claim_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "decision": {
+      "type": "string",
+      "enum": ["accept_event_candidate", "accept_fact_candidate", "reject", "defer"]
+    },
+    "normalized": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["predicate", "value"],
+          "properties": {
+            "predicate": {"type": "string", "minLength": 1},
+            "value": {}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "note": {"type": "string"},
+    "policy": {
+      "type": "object",
+      "required": ["canonical_mutation", "materialization_required"],
+      "properties": {
+        "canonical_mutation": {"const": false},
+        "materialization_required": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

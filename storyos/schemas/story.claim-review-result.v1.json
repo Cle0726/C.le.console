@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.claim-review-result.v1",
+  "title": "StoryOS Claim Review Command Result v1",
+  "type": "object",
+  "required": ["schema", "result", "review", "policy"],
+  "properties": {
+    "schema": {"const": "story.claim-review-result.v1"},
+    "result": {"type": "string", "enum": ["created", "unchanged", "replaced"]},
+    "review": {"$ref": "story.claim-review.v1"},
+    "policy": {
+      "type": "object",
+      "required": ["canonical_mutation", "materialization_required"],
+      "properties": {
+        "canonical_mutation": {"const": false},
+        "materialization_required": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
