@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cle-storyos"
-version = "0.1.0"
-description = "Deterministic story state engine for long-form fiction"
+version = "0.2.0"
+description = "Deterministic story state, canon authority and claim staging engine for long-form fiction"
 requires-python = ">=3.11"
 dependencies = [
   "PyYAML>=6.0.2",
