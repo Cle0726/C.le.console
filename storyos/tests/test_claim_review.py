@@ -23,8 +23,13 @@ def _copy_demo(tmp_path: Path) -> StoryProject:
     return StoryProject.open(target)
 
 
+def _canonical_snapshot(project: StoryProject):
+    return project.load_events(), project.load_canon_facts()
+
+
 def test_review_queue_exposes_claim_checks_and_is_noncanonical(tmp_path):
     project = _copy_demo(tmp_path)
+    before_events, before_facts = _canonical_snapshot(project)
     queue = ClaimReviewWorkbench().build_queue(project)
 
     assert queue["schema"] == "story.claim-review-queue.v1"
@@ -37,14 +42,16 @@ def test_review_queue_exposes_claim_checks_and_is_noncanonical(tmp_path):
     assert any(issue["code"] == "canon_conflict" for issue in queue["items"][0]["check"]["issues"])
     assert queue["policy"]["review_decisions_are_noncanonical"] is True
 
-    assert project.load_events() == []
-    assert len(project.load_canon_facts()) == 1
+    after_events, after_facts = _canonical_snapshot(project)
+    assert after_events == before_events
+    assert after_facts == before_facts
 
 
 def test_reject_decision_is_sidecar_and_does_not_change_claim_status(tmp_path):
     project = _copy_demo(tmp_path)
     workbench = ClaimReviewWorkbench()
-    before = project.load_claims()[0]
+    before_claim = project.load_claims()[0]
+    before_events, before_facts = _canonical_snapshot(project)
 
     review, result = workbench.decide(
         project,
@@ -56,11 +63,12 @@ def test_reject_decision_is_sidecar_and_does_not_change_claim_status(tmp_path):
     assert result == "created"
     assert review.decision is ReviewDecision.REJECT
     assert review.normalized is None
-    after = project.load_claims()[0]
-    assert after == before
-    assert after.status.value == "approved"  # legacy source status remains irrelevant
-    assert project.load_events() == []
-    assert len(project.load_canon_facts()) == 1
+    after_claim = project.load_claims()[0]
+    assert after_claim == before_claim
+    assert after_claim.status.value == "approved"  # legacy source status remains irrelevant
+    after_events, after_facts = _canonical_snapshot(project)
+    assert after_events == before_events
+    assert after_facts == before_facts
 
     queue = workbench.build_queue(project)
     assert queue["summary"]["reviewed"] == 1
@@ -71,6 +79,7 @@ def test_reject_decision_is_sidecar_and_does_not_change_claim_status(tmp_path):
 def test_accept_decision_requires_explicit_normalized_target(tmp_path):
     project = _copy_demo(tmp_path)
     workbench = ClaimReviewWorkbench()
+    before_events, before_facts = _canonical_snapshot(project)
 
     with pytest.raises(ClaimReviewError, match="require --predicate"):
         workbench.decide(
@@ -98,7 +107,9 @@ def test_accept_decision_requires_explicit_normalized_target(tmp_path):
     assert result == "created"
     assert review.normalized == {"predicate": "identity.role", "value": "antagonist"}
     assert review.as_mapping()["policy"]["canonical_mutation"] is False
-    assert project.load_events() == []
+    after_events, after_facts = _canonical_snapshot(project)
+    assert after_events == before_events
+    assert after_facts == before_facts
 
 
 def test_different_review_requires_explicit_replace(tmp_path):
@@ -152,6 +163,7 @@ def test_review_becomes_stale_when_source_claim_changes(tmp_path):
 
 def test_cli_review_and_decision_are_explicit_sidecar_operations(tmp_path, monkeypatch, capsys):
     project = _copy_demo(tmp_path)
+    before_events, before_facts = _canonical_snapshot(project)
 
     monkeypatch.setattr("sys.argv", ["storyos", "claim-review", str(project.root), "--claim", CLAIM])
     cli_main()
@@ -182,4 +194,8 @@ def test_cli_review_and_decision_are_explicit_sidecar_operations(tmp_path, monke
     assert result["result"] == "created"
     assert result["review"]["decision"] == "accept_fact_candidate"
     assert result["policy"]["canonical_mutation"] is False
-    assert StoryProject.open(project.root).load_events() == []
+
+    reopened = StoryProject.open(project.root)
+    after_events, after_facts = _canonical_snapshot(reopened)
+    assert after_events == before_events
+    assert after_facts == before_facts
