@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from storyos.context import (
     ContextCompiler,
     ContextMode,
@@ -165,3 +167,43 @@ def test_unknown_semantic_reference_is_explainably_excluded():
     )
 
     assert "unknown_ref" in excluded_reasons(manifest, UNKNOWN)
+
+
+def test_retrieval_order_does_not_change_context_manifest():
+    project = StoryProject.open(demo_root())
+    request = ContextRequest(
+        through_sequence=200,
+        participants=(KADEN,),
+        pov=KADEN,
+        semantic_query="same query",
+        mode=ContextMode.POV,
+    )
+    first = ContextCompiler(
+        project,
+        retriever=FakeRetriever([
+            RetrievalHit(FACT, 0.8),
+            RetrievalHit(UNKNOWN, 0.8),
+        ]),
+    ).compile(request)
+    second = ContextCompiler(
+        project,
+        retriever=FakeRetriever([
+            RetrievalHit(UNKNOWN, 0.8),
+            RetrievalHit(FACT, 0.8),
+        ]),
+    ).compile(request)
+
+    assert first.as_dict() == second.as_dict()
+    assert first.render() == second.render()
+
+
+def test_pov_context_requires_explicit_pov_identity():
+    project = StoryProject.open(demo_root())
+    with pytest.raises(ValueError, match="requires pov"):
+        ContextCompiler(project).compile(
+            ContextRequest(
+                through_sequence=150,
+                participants=(KADEN,),
+                mode=ContextMode.POV,
+            )
+        )
