@@ -7,6 +7,7 @@ from pathlib import Path
 
 from storyos.authority import CanonResolver
 from storyos.claims import ClaimStager
+from storyos.context import ContextCompiler, ContextMode, ContextRequest
 from storyos.index import StoryIndex
 from storyos.knowledge import KnowledgeTimeline
 from storyos.project import StoryProject
@@ -41,6 +42,21 @@ def main() -> None:
     p_claims = sub.add_parser("claims", help="Check staged claims without modifying Canon")
     p_claims.add_argument("project")
     p_claims.add_argument("--id", dest="claim_id", default=None)
+
+    p_context = sub.add_parser("context", help="Compile explainable deterministic model context")
+    p_context.add_argument("project")
+    p_context.add_argument("--through", type=int, required=True)
+    p_context.add_argument("--participant", action="append", default=[])
+    p_context.add_argument("--pov", default=None)
+    p_context.add_argument("--pin", action="append", default=[])
+    p_context.add_argument("--max-chars", type=int, default=12000)
+    p_context.add_argument("--mode", choices=[mode.value for mode in ContextMode], default=ContextMode.POV.value)
+    p_context.add_argument(
+        "--pov-state-key",
+        action="append",
+        default=None,
+        help="Objective state key allowed into POV context; repeatable. Defaults to location.",
+    )
 
     args = parser.parse_args()
     project = StoryProject.open(args.project)
@@ -139,6 +155,34 @@ def main() -> None:
                 }
             )
         print(json.dumps({"claims": results}, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    if args.command == "context":
+        mode = ContextMode(args.mode)
+        pov_state_keys = tuple(args.pov_state_key or ("location",))
+        request = ContextRequest(
+            through_sequence=args.through,
+            participants=tuple(args.participant),
+            pov=args.pov,
+            pinned=tuple(args.pin),
+            max_chars=args.max_chars,
+            mode=mode,
+            pov_state_keys=pov_state_keys,
+        )
+        manifest = ContextCompiler(project).compile(request)
+        payload = manifest.as_dict()
+        # Stable compatibility fields remain at the top level while the full
+        # normalized request is retained under payload["request"] for audit/replay.
+        payload.update(
+            {
+                "through_sequence": request.through_sequence,
+                "mode": request.mode.value,
+                "pov": request.pov,
+                "pov_state_keys": list(request.pov_state_keys),
+            }
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
 
 
 def _fact_payload(fact):
