@@ -36,6 +36,14 @@ class ContextRequest:
     semantic_limit: int = 8
     max_chars: int = 12000
     mode: ContextMode = ContextMode.POV
+    pov_state_keys: tuple[str, ...] = ("location",)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mode, ContextMode):
+            object.__setattr__(self, "mode", ContextMode(self.mode))
+        object.__setattr__(self, "participants", tuple(self.participants))
+        object.__setattr__(self, "pinned", tuple(self.pinned))
+        object.__setattr__(self, "pov_state_keys", tuple(self.pov_state_keys))
 
     def validate(self) -> None:
         if self.through_sequence < 0:
@@ -46,6 +54,8 @@ class ContextRequest:
             raise ValueError("semantic_limit must be >= 0")
         if self.mode is ContextMode.POV and self.pov is None:
             raise ValueError("POV context mode requires pov")
+        if any(not key.strip() for key in self.pov_state_keys):
+            raise ValueError("pov_state_keys cannot contain empty keys")
 
 
 @dataclass(frozen=True)
@@ -75,6 +85,7 @@ class ContextManifest:
     mode: ContextMode
     pov: str | None
     max_chars: int
+    pov_state_keys: tuple[str, ...]
     included: tuple[ContextItem, ...]
     excluded: tuple[ExcludedContextItem, ...]
 
@@ -92,6 +103,7 @@ class ContextManifest:
             "through_sequence": self.through_sequence,
             "mode": self.mode.value,
             "pov": self.pov,
+            "pov_state_keys": list(self.pov_state_keys),
             "budget": {"max_chars": self.max_chars, "used_chars": self.used_chars},
             "included": [
                 {
@@ -179,8 +191,8 @@ class ContextCompiler:
                 add(_state_ref(request.pov, request.through_sequence), "pov_state", 1050, required=True)
 
         # In POV mode, arbitrary entity/state retrieval is conservative by default.
-        # Besides explicit participants/POV, an entity is scene-bound when current
-        # participant/POV state directly references its stable entity ID (e.g. location).
+        # Besides explicit participants/POV, an entity is scene-bound when POV-safe
+        # current state directly references its stable ID (e.g. the current location).
         pov_bound_entities = _pov_bound_entities(
             request=request,
             states=states,
@@ -287,6 +299,7 @@ class ContextCompiler:
             mode=request.mode,
             pov=request.pov,
             max_chars=request.max_chars,
+            pov_state_keys=request.pov_state_keys,
             included=tuple(included),
             excluded=tuple(_dedupe_excluded(excluded)),
         )
@@ -310,7 +323,8 @@ class ContextCompiler:
             if request.mode is ContextMode.POV and entity_id not in pov_bound_entities:
                 return None, ExcludedContextItem(ref, "pov_state_unbound")
             state = states.get(entity_id)
-            values = {} if state is None else state.values
+            objective_values = {} if state is None else state.values
+            values = _context_state_values(objective_values, request)
             content = json.dumps(
                 {"type": "state", "entity": entity_id, "through": request.through_sequence, "values": values},
                 ensure_ascii=False,
@@ -409,6 +423,13 @@ class ContextCompiler:
         return None, ExcludedContextItem(ref, "unknown_ref")
 
 
+def _context_state_values(values: Mapping[str, Any], request: ContextRequest) -> dict[str, Any]:
+    if request.mode is ContextMode.AUTHOR:
+        return dict(values)
+    allowed = set(request.pov_state_keys)
+    return {key: value for key, value in values.items() if key in allowed}
+
+
 def _pov_bound_entities(
     *,
     request: ContextRequest,
@@ -426,7 +447,8 @@ def _pov_bound_entities(
         state = states.get(entity_id)
         if state is None:
             continue
-        for value in state.values.values():
+        visible_values = _context_state_values(state.values, request)
+        for value in visible_values.values():
             bound.update(_extract_entity_refs(value, known_entity_ids))
     return bound
 
