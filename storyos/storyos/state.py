@@ -16,7 +16,7 @@ class EntityState:
 
 
 class StoryStateProjector:
-    """Deterministically derive point-in-time state from ordered events."""
+    """Deterministically derive point-in-time state from ordered canonical events."""
 
     def project(
         self,
@@ -44,12 +44,16 @@ class StoryStateProjector:
             return
 
         if event.type == "knowledge.gained":
-            fact = str(event.payload["fact"])
+            fact = _fact_id(event)
+            if fact is None:
+                raise ValueError("knowledge.gained requires payload.fact_id or payload.fact")
             state.knowledge.add(fact)
             return
 
         if event.type == "knowledge.lost":
-            fact = str(event.payload["fact"])
+            fact = _fact_id(event)
+            if fact is None:
+                raise ValueError("knowledge.lost requires payload.fact_id or payload.fact")
             state.knowledge.discard(fact)
             return
 
@@ -65,3 +69,8 @@ class StoryStateProjector:
 
         # Unknown namespaced events remain valid source data but intentionally
         # have no projection effect until an explicit rule is implemented.
+
+
+def _fact_id(event: StoryEvent) -> str | None:
+    value = event.payload.get("fact_id", event.payload.get("fact"))
+    return None if value is None else str(value)
