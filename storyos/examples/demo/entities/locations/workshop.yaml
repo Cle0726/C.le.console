@@ -1,0 +1,8 @@
+schema: story.entity.v1
+id: loc_00000000000000000000000000000001
+kind: location
+name: 修理铺
+slug: workshop
+aliases: []
+data:
+  type: workshop

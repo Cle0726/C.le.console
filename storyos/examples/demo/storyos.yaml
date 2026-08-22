@@ -1,0 +1,16 @@
+schema: story.project.v1
+id: story_demo
+name: StoryOS Demo
+language: zh-CN
+
+paths:
+  manuscript: manuscript
+  entities: entities
+  canon: canon
+  plots: plots
+  events: events
+  relationships: relationships
+
+runtime:
+  index: .storyos/index.sqlite
+  workflow: .storyos/workflow.sqlite

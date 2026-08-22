@@ -1,0 +1,12 @@
+schema: story.canon.v1
+id: canon_00000000000000000000000000000001
+subject: chr_00000000000000000000000000000001
+predicate: identity.role
+value: protagonist
+authority: locked
+valid_from: 0
+reveal_at: 200
+source:
+  note: demo locked fact
+tags:
+  - identity

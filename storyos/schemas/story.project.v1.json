@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.project.v1",
+  "title": "StoryOS Project Manifest v1",
+  "type": "object",
+  "required": ["schema", "id", "name"],
+  "properties": {
+    "schema": {"const": "story.project.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "name": {"type": "string", "minLength": 1},
+    "language": {"type": "string"},
+    "paths": {"type": "object", "additionalProperties": {"type": "string"}},
+    "runtime": {"type": "object", "additionalProperties": {"type": "string"}}
+  },
+  "additionalProperties": true
+}

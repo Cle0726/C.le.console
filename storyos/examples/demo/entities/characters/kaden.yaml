@@ -1,0 +1,8 @@
+schema: story.entity.v1
+id: chr_00000000000000000000000000000001
+kind: character
+name: 凯登
+slug: kaden
+aliases: []
+data:
+  role: protagonist

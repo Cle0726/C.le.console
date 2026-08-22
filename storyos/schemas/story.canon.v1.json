@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.canon.v1",
+  "title": "StoryOS Canon Fact v1",
+  "type": "object",
+  "required": ["schema", "id", "subject", "predicate", "value", "authority"],
+  "properties": {
+    "schema": {"const": "story.canon.v1"},
+    "id": {"type": "string", "pattern": "^canon_[0-9a-f]{32}$"},
+    "subject": {"type": "string", "pattern": "^[a-z]+_[0-9a-f]{32}$"},
+    "predicate": {"type": "string", "minLength": 1},
+    "value": {},
+    "authority": {
+      "type": "string",
+      "enum": ["locked", "current", "draft", "planning", "alternative", "deprecated"]
+    },
+    "valid_from": {"type": ["integer", "null"], "minimum": 0},
+    "valid_to": {"type": ["integer", "null"], "minimum": 0},
+    "reveal_at": {"type": ["integer", "null"], "minimum": 0},
+    "source": {"type": "object"},
+    "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+  },
+  "additionalProperties": false
+}
