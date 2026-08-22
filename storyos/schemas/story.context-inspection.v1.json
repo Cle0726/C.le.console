@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.context-inspection.v1",
+  "title": "StoryOS Context Inspection v1",
+  "type": "object",
+  "required": ["schema", "request", "summary"],
+  "properties": {
+    "schema": {"const": "story.context-inspection.v1"},
+    "request": {
+      "type": "object",
+      "required": ["through_sequence", "mode", "pov", "participants", "pinned", "semantic_query", "semantic_limit", "pov_state_keys"],
+      "properties": {
+        "through_sequence": {"type": "integer", "minimum": 0},
+        "mode": {"type": "string", "enum": ["author", "pov"]},
+        "pov": {"type": ["string", "null"]},
+        "participants": {"type": "array", "items": {"type": "string"}},
+        "pinned": {"type": "array", "items": {"type": "string"}},
+        "semantic_query": {"type": ["string", "null"]},
+        "semantic_limit": {"type": "integer", "minimum": 0},
+        "pov_state_keys": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["through_sequence", "mode", "pov", "included_count", "excluded_count", "retrieval_hit_count", "blocked_retrieval_count", "blocked_retrieval_refs", "budget", "exclusion_reason_counts"],
+      "properties": {
+        "through_sequence": {"type": "integer", "minimum": 0},
+        "mode": {"type": "string", "enum": ["author", "pov"]},
+        "pov": {"type": ["string", "null"]},
+        "included_count": {"type": "integer", "minimum": 0},
+        "excluded_count": {"type": "integer", "minimum": 0},
+        "retrieval_hit_count": {"type": "integer", "minimum": 0},
+        "blocked_retrieval_count": {"type": "integer", "minimum": 0},
+        "blocked_retrieval_refs": {"type": "array", "items": {"type": "string"}},
+        "budget": {
+          "type": "object",
+          "required": ["used_chars", "max_chars", "utilization"],
+          "properties": {
+            "used_chars": {"type": "integer", "minimum": 0},
+            "max_chars": {"type": "integer", "minimum": 0},
+            "utilization": {"type": "number", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "exclusion_reason_counts": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        }
+      },
+      "additionalProperties": false
+    },
+    "trace": {"$ref": "#/$defs/trace"},
+    "traces": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/trace"}
+    }
+  },
+  "$defs": {
+    "trace": {
+      "type": "object",
+      "required": ["ref", "retrieval_score", "included", "kind", "reasons", "exclusion_reasons", "exclusion_details", "priority", "required", "char_count"],
+      "properties": {
+        "ref": {"type": "string"},
+        "retrieval_score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "included": {"type": "boolean"},
+        "kind": {"type": ["string", "null"]},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "exclusion_reasons": {"type": "array", "items": {"type": "string"}},
+        "exclusion_details": {"type": "array", "items": {"type": "string"}},
+        "priority": {"type": ["integer", "null"]},
+        "required": {"type": "boolean"},
+        "char_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {"required": ["trace"], "not": {"required": ["traces"]}},
+    {"required": ["traces"], "not": {"required": ["trace"]}}
+  ],
+  "additionalProperties": false
+}
