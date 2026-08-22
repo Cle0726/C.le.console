@@ -2,7 +2,6 @@ from pathlib import Path
 
 from storyos.authority import CanonAuthority, CanonFact, CanonResolver
 from storyos.claims import ClaimStager
-from storyos.events import StoryPosition
 from storyos.knowledge import KnowledgeTimeline
 from storyos.project import StoryProject
 from storyos.state import StoryStateProjector
@@ -28,6 +27,7 @@ def test_locked_canon_resolves_independently_of_reveal_timing():
     assert resolution.fact is not None
     assert resolution.fact.value == "protagonist"
     assert resolution.fact.authority is CanonAuthority.LOCKED
+    assert resolution.fact.revealed_at(None) is False
     assert resolution.fact.revealed_at(199) is False
     assert resolution.fact.revealed_at(200) is True
 
