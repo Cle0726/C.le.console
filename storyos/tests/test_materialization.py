@@ -181,8 +181,9 @@ def test_ready_event_candidate_is_deterministic_idempotent_and_noncanonical(tmp_
     assert first_item == second_item
     assert first_item["ready"] is True
     assert first_item["kind"] == "event"
-    assert first_item["canonical_payload"]["type"] == "injury.left_hand.set"
-    assert first_item["canonical_payload"]["payload"]["value"] == "numb"
+    payload = first_item["candidate"]["canonical_payload"]
+    assert payload["type"] == "injury.left_hand.set"
+    assert payload["payload"]["value"] == "numb"
 
     before = _canonical_snapshot(first_project)
     candidate, result = MaterializationWorkbench().stage(first_project, claim_id=CLAIM)
