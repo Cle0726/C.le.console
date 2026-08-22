@@ -34,6 +34,15 @@ class SQLiteCanonicalRetriever:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
 
+    def validate(self) -> None:
+        if not self.db_path.is_file():
+            raise RetrievalIndexError(f"missing StoryOS index: {self.db_path}")
+        try:
+            with closing(sqlite3.connect(self.db_path)) as conn:
+                self._validate_index(conn)
+        except sqlite3.Error as exc:
+            raise RetrievalIndexError(f"cannot read StoryOS index: {exc}") from exc
+
     def search(self, query: str, *, limit: int = 8) -> tuple[RetrievalHit, ...]:
         if limit < 0:
             raise ValueError("retrieval limit must be >= 0")
@@ -45,12 +54,9 @@ class SQLiteCanonicalRetriever:
             return ()
         normalized_query = _normalize_text(query)
 
-        if not self.db_path.is_file():
-            raise RetrievalIndexError(f"missing StoryOS index: {self.db_path}")
-
+        self.validate()
         try:
             with closing(sqlite3.connect(self.db_path)) as conn:
-                self._validate_index(conn)
                 documents = tuple(self._load_documents(conn))
         except sqlite3.Error as exc:
             raise RetrievalIndexError(f"cannot read StoryOS index: {exc}") from exc
