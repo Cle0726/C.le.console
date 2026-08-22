@@ -134,6 +134,7 @@ class DuanxianV39Importer:
         allow_dirty_source: bool = False,
     ) -> dict[str, Any]:
         target = Path(target_root).resolve()
+        self._assert_target_outside_source(target)
         self._assert_empty_target(target)
         plan = self.build_plan()
         if plan.dirty and not allow_dirty_source:
@@ -514,6 +515,12 @@ class DuanxianV39Importer:
         if insert.get("canonical_mutation") is not False:
             raise DuanxianImportError(
                 "v3.9 editorial insert must remain non-canonical-mutation source data"
+            )
+
+    def _assert_target_outside_source(self, target: Path) -> None:
+        if target == self.source_root or self.source_root in target.parents:
+            raise DuanxianImportError(
+                f"target must be outside the source mother package: {target}"
             )
 
     @staticmethod
