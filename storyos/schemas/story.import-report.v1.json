@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.import-report.v1",
+  "title": "StoryOS Import Report v1",
+  "type": "object",
+  "required": ["schema", "adapter", "plan_fingerprint", "source", "integrity", "counts", "policy", "warnings"],
+  "properties": {
+    "schema": {"const": "story.import-report.v1"},
+    "adapter": {"type": "string", "minLength": 1},
+    "plan_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source": {
+      "type": "object",
+      "required": ["package_version", "prose_version", "world_state_revision", "file_count_total"],
+      "properties": {
+        "package_version": {"type": "string"},
+        "prose_version": {"type": "string"},
+        "world_state_revision": {"type": "string"},
+        "file_count_total": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "integrity": {
+      "type": "object",
+      "required": ["expected_hashes", "matched_hashes", "missing", "mismatches", "declared_file_count", "actual_file_count", "file_count_mismatch"],
+      "properties": {
+        "expected_hashes": {"type": "integer", "minimum": 0},
+        "matched_hashes": {"type": "integer", "minimum": 0},
+        "missing": {"type": "array", "items": {"type": "string"}},
+        "mismatches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "expected", "actual"],
+            "properties": {
+              "path": {"type": "string"},
+              "expected": {"type": "string"},
+              "actual": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "declared_file_count": {"type": "integer", "minimum": 0},
+        "actual_file_count": {"type": "integer", "minimum": 0},
+        "file_count_mismatch": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "policy": {"type": "object", "additionalProperties": {"type": "boolean"}},
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

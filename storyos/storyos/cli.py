@@ -8,6 +8,7 @@ from pathlib import Path
 from storyos.authority import CanonResolver
 from storyos.claims import ClaimStager
 from storyos.context import ContextCompiler, ContextMode, ContextRequest
+from storyos.duanxian_import import DuanxianImportError, DuanxianV39Importer
 from storyos.index import StoryIndex
 from storyos.inspector import ContextInspector
 from storyos.knowledge import KnowledgeTimeline
@@ -39,6 +40,18 @@ def _add_context_args(parser: argparse.ArgumentParser, *, inspector: bool = Fals
 def main() -> None:
     parser = argparse.ArgumentParser(prog="storyos")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_import = sub.add_parser(
+        "import-duanxian-v39",
+        help="Import the Duanxian Season 1 v3.9 mother package into a new StoryOS project",
+    )
+    p_import.add_argument("source")
+    p_import.add_argument("target")
+    p_import.add_argument(
+        "--allow-dirty-source",
+        action="store_true",
+        help="Allow known source hash/file-count differences and record them in the import report",
+    )
 
     p_validate = sub.add_parser("validate", help="Validate canonical and staging project files")
     p_validate.add_argument("project")
@@ -77,6 +90,18 @@ def main() -> None:
     _add_context_args(p_inspect, inspector=True)
 
     args = parser.parse_args()
+
+    if args.command == "import-duanxian-v39":
+        try:
+            report = DuanxianV39Importer(args.source).apply(
+                args.target,
+                allow_dirty_source=args.allow_dirty_source,
+            )
+        except DuanxianImportError as exc:
+            parser.exit(2, f"storyos: import failed: {exc}\n")
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
     project = StoryProject.open(args.project)
 
     if args.command == "validate":
