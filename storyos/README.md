@@ -1,150 +1,115 @@
-# C.le. StoryOS v0.4
+# C.le. StoryOS v0.5
 
-StoryOS is a deterministic story-state, Canon and context foundation for long-form fiction projects.
+StoryOS is a deterministic story-state, Canon, context and migration foundation for long-form fiction.
 
-The core contract is intentionally strict:
+## Core contract
 
 1. Human-readable project files are the canonical source of truth.
 2. Stable IDs are independent from display names and file names.
-3. Story state is derived only from canonical story events.
-4. Canon facts have explicit authority and timeline scope.
-5. AI/import extraction writes Candidate Claims, never Canon directly.
-6. Retrieval produces candidates only; it cannot bypass story/context rules.
+3. Story State is derived only from canonical Story Events.
+4. Canon Facts have explicit authority and timeline scope.
+5. AI/import extraction may propose Candidate Claims, never Canon directly.
+6. Retrieval produces candidates only and cannot bypass context guards.
 7. Objective world state is not assumed to be POV-visible state.
-8. SQLite indexes and workflow data are rebuildable runtime artifacts, never Canon.
+8. SQLite/workflow indexes are disposable runtime data.
+9. Mother-package migration must be lossless before it becomes interpretive.
 
-## v0.4 scope
+## v0.5: 《断弦之歌》v3.9 migration
 
-v0.4 keeps the v0.3 Context Compiler and adds the first real retrieval/debugging layer:
+v0.5 adds a deterministic importer for the Season 1 v3.9 production mother package:
 
-- deterministic `SQLiteCanonicalRetriever`
-- retrieval corpus restricted to stable entities + mainline Canon facts
-- Story Events and staged Candidate Claims are excluded from retrieval
-- Unicode NFKC/case normalization and CJK-aware lexical query terms
-- deterministic 0..1 scores with stable tie-breaking
-- `ContextInspector` summary and per-ref trace
-- raw retrieval audit (`ref`, score)
-- `storyos retrieve` CLI command
-- `storyos context --query` for real retrieval followed by all v0.3 gates
-- `storyos context-inspect` for compact why-in / why-out diagnostics
-- automatic rebuild of a missing/unsupported disposable `.storyos/index.sqlite` from canonical files
-- `story.retrieval.v1` and `story.context-inspection.v1` output schemas
-
-A future embedding/vector adapter will implement the same retriever boundary. It will not replace the deterministic Context Compiler or become a source of truth.
-
-## Retrieval safety boundary
-
-The v0.4 retriever reads only:
-
-```text
-entities
-canon_facts (planning/current/draft/locked mainline authority)
+```bash
+storyos import-duanxian-v39 /path/to/v3.9-mother-package /path/to/new-storyos-project
 ```
 
-It deliberately does **not** search:
+Default behavior is strict. The importer verifies the package manifest before writing a new project. Known source changes can be imported only with an explicit escape hatch:
 
-```text
-events
-staged_claims
-claim_fts
+```bash
+storyos import-duanxian-v39 SOURCE TARGET --allow-dirty-source
 ```
 
-This means an AI-generated Candidate Claim cannot become model context merely because its text is semantically or lexically similar. Even retrieved Canon refs remain candidates until they pass:
+Any mismatch remains visible in `imports/duanxian_v3_9/report.json`.
+
+### Imported layout
 
 ```text
-Timeline
-  ↓
-Canon Authority
-  ↓
-Reveal Guard
-  ↓
-POV Knowledge
-  ↓
-Entity / State Visibility
-  ↓
-POV-safe State Projection
-  ↓
-Budget
-```
-
-## Context modes
-
-### POV mode
-
-Use for prose generation from a specific character/story viewpoint. A Canon fact is eligible only when it is true at the requested sequence, resolves at the highest active mainline authority, is already revealable, and is public or explicitly known by the POV character.
-
-Objective Story State is projected conservatively. The default POV-safe state key is:
-
-```text
-location
-```
-
-Additional state keys must be explicitly opted in. An unrelated future entity returned by retrieval remains excluded.
-
-### AUTHOR mode
-
-Use for planning, structural analysis and continuity editing. AUTHOR mode may include true-but-unrevealed Canon and complete objective state, while still obeying story-time validity and authority resolution.
-
-## Project channels
-
-```text
-story-project/
+new-project/
 ├── storyos.yaml
-├── entities/          # stable story entities
-├── events/            # canonical timeline changes
-├── canon/             # stable facts/rules with authority
-├── staging/
-│   └── claims/        # AI/import proposals; never projected into story state
-└── .storyos/          # disposable index/runtime data
+├── manuscript/
+│   └── S01/                         # 36 byte-preserved episode working copies
+├── entities/
+│   └── characters/                  # 50 deterministic character entities
+├── sources/
+│   ├── mother_package/              # complete byte-exact v3.9 snapshot
+│   └── world_state/
+│       ├── scenes/                   # 118 imported source records
+│       └── editorial_inserts/        # 1 non-mutating insert record
+└── imports/
+    └── duanxian_v3_9/
+        └── report.json
 ```
 
-## CLI examples
+The importer refuses a non-empty target directory so existing author work cannot be overwritten accidentally.
+
+### Deliberate Canon boundary
+
+v0.5 creates:
+
+```text
+50 Character entities
+0 Story Events from state_diff prose
+0 Canon Facts from Canon/outline prose
+0 Candidate Claims from state_diff prose
+```
+
+`World_State_Ledger_36集.json` contains highly useful management text, but fields such as `state_diff` and `exit_snapshot` are still natural-language assertions. They are preserved under `sources/world_state/` rather than silently converted into deterministic state.
+
+Likewise, the Canon/outline documents remain available in the byte-exact source snapshot but are not automatically promoted into `CanonFact` records. A later extraction layer must stage proposed facts/changes for review.
+
+### Deterministic imported IDs
+
+`stable_id(kind, namespace, key)` uses UUID5 behind a fixed StoryOS namespace. The same source identity always receives the same StoryOS ID across machines and repeat imports.
+
+For the v3.9 role table the importer prefers stable asset identities such as `H01` / `T01`; source scene IDs such as `EP01-S01` drive deterministic scene-source IDs. This avoids tying identity to display names or output paths.
+
+## Existing deterministic context stack
+
+v0.5 retains the prior StoryOS layers:
+
+```text
+Canonical files
+    ↓
+Event-sourced Story State / Knowledge Timeline
+    ↓
+Canon Authority + Reveal rules
+    ↓
+Canonical Retriever (entities + mainline Canon only)
+    ↓
+Context Compiler
+    ↓
+POV / AUTHOR context manifests
+    ↓
+Context Inspector
+```
+
+Retrieval never searches staged Candidate Claims or Story Events as free-text candidate material. A retrieved ref must still pass Timeline, Authority, Reveal, POV Knowledge, entity visibility, POV-safe state projection and budget rules.
+
+## Useful CLI commands
 
 ```bash
-storyos validate examples/demo
-storyos index examples/demo
-storyos state examples/demo --through 150
-storyos canon examples/demo chr_00000000000000000000000000000001 identity.role --through 150
-storyos knowledge examples/demo chr_00000000000000000000000000000001 --through 199
-storyos claims examples/demo
+storyos validate PROJECT
+storyos index PROJECT
+storyos state PROJECT --through 150
+storyos canon PROJECT SUBJECT PREDICATE --through 150
+storyos knowledge PROJECT CHARACTER --through 150
+storyos claims PROJECT
+storyos retrieve PROJECT "凯登"
+storyos context PROJECT --through 150 --participant CHAR_ID --pov CHAR_ID --mode pov --query "..."
+storyos context-inspect PROJECT --through 150 --participant CHAR_ID --pov CHAR_ID --mode pov --query "..." --ref REF
 ```
 
-Raw canonical retrieval:
+## Next layer
 
-```bash
-storyos retrieve examples/demo "凯登"
-storyos retrieve examples/demo "identity role" --limit 8
-```
+The next migration stage should not alter the importer. It should read the preserved 118 World State source records and produce reviewable Candidate Claims with source evidence. Only explicit author approval may materialize those claims into Story Events or Canon Facts.
 
-POV context with real retrieval. At sequence 150 the demo locked role fact may be retrieved but must still be excluded by the reveal guard:
-
-```bash
-storyos context examples/demo \
-  --through 150 \
-  --participant chr_00000000000000000000000000000001 \
-  --pov chr_00000000000000000000000000000001 \
-  --mode pov \
-  --query protagonist
-```
-
-Inspect exactly why that ref was blocked:
-
-```bash
-storyos context-inspect examples/demo \
-  --through 150 \
-  --participant chr_00000000000000000000000000000001 \
-  --pov chr_00000000000000000000000000000001 \
-  --mode pov \
-  --query protagonist \
-  --ref canon_00000000000000000000000000000001
-```
-
-The demo deliberately contains a staged claim whose file says `status: approved` and proposes `antagonist`. Running:
-
-```bash
-storyos retrieve examples/demo antagonist
-```
-
-must return no staged-claim hit. File status alone never promotes Candidate Claims into Canon or retrieval context.
-
-Desktop UI, embedding/vector providers, LLM providers, Git-aware approval UX and prompt assembly remain later layers built on top of these contracts.
+Desktop UI, LLM providers, vector/embedding adapters, Git-aware approval UX and prompt assembly remain later layers built on top of these contracts.
