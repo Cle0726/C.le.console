@@ -1,6 +1,6 @@
-# C.le. StoryOS v0.3
+# C.le. StoryOS v0.4
 
-StoryOS is a deterministic story-state and context foundation for long-form fiction projects.
+StoryOS is a deterministic story-state, Canon and context foundation for long-form fiction projects.
 
 The core contract is intentionally strict:
 
@@ -9,56 +9,81 @@ The core contract is intentionally strict:
 3. Story state is derived only from canonical story events.
 4. Canon facts have explicit authority and timeline scope.
 5. AI/import extraction writes Candidate Claims, never Canon directly.
-6. Model context is compiled through deterministic gates; retrieval cannot bypass story rules.
+6. Retrieval produces candidates only; it cannot bypass story/context rules.
 7. Objective world state is not assumed to be POV-visible state.
 8. SQLite indexes and workflow data are rebuildable runtime artifacts, never Canon.
 
-## v0.3 scope
+## v0.4 scope
 
-v0.3 keeps all v0.2 state/Canon/claim foundations and adds the first Story Context Compiler:
+v0.4 keeps the v0.3 Context Compiler and adds the first real retrieval/debugging layer:
 
-- explainable `story.context.v1` Context Manifest
-- AUTHOR and POV context modes
-- mandatory participant and POV identity/state context
-- timeline-aware and authority-aware Canon selection
-- `reveal_at` spoiler guard
-- explicit POV knowledge guard based on `knowledge.gained/lost` events
-- conservative POV-safe objective-state projection (`location` only by default)
-- scene-bound entity/state visibility so arbitrary retrieved future entities do not leak
-- manual pins that remain subject to all gates
-- dependency expansion from safe parents, with every dependency re-validated
-- semantic retriever protocol where search results are candidates only
-- deterministic output independent of retriever return order
-- soft context budget for optional content; required identity/state context is retained
-- explainable exclusions (`not_revealed`, `pov_unknown`, `pov_entity_unbound`, `pov_state_unbound`, `canon_ambiguous`, `shadowed_by_authority`, `budget`, `unknown_ref`, etc.)
-- `storyos context` CLI command
+- deterministic `SQLiteCanonicalRetriever`
+- retrieval corpus restricted to stable entities + mainline Canon facts
+- Story Events and staged Candidate Claims are excluded from retrieval
+- Unicode NFKC/case normalization and CJK-aware lexical query terms
+- deterministic 0..1 scores with stable tie-breaking
+- `ContextInspector` summary and per-ref trace
+- raw retrieval audit (`ref`, score)
+- `storyos retrieve` CLI command
+- `storyos context --query` for real retrieval followed by all v0.3 gates
+- `storyos context-inspect` for compact why-in / why-out diagnostics
+- automatic rebuild of a missing/unsupported disposable `.storyos/index.sqlite` from canonical files
+- `story.retrieval.v1` and `story.context-inspection.v1` output schemas
 
-A real vector database is deliberately **not** part of v0.3. Vector search will be an adapter behind the `SemanticRetriever` boundary so it cannot become a source of truth or bypass the gating layer.
+A future embedding/vector adapter will implement the same retriever boundary. It will not replace the deterministic Context Compiler or become a source of truth.
+
+## Retrieval safety boundary
+
+The v0.4 retriever reads only:
+
+```text
+entities
+canon_facts (planning/current/draft/locked mainline authority)
+```
+
+It deliberately does **not** search:
+
+```text
+events
+staged_claims
+claim_fts
+```
+
+This means an AI-generated Candidate Claim cannot become model context merely because its text is semantically or lexically similar. Even retrieved Canon refs remain candidates until they pass:
+
+```text
+Timeline
+  ↓
+Canon Authority
+  ↓
+Reveal Guard
+  ↓
+POV Knowledge
+  ↓
+Entity / State Visibility
+  ↓
+POV-safe State Projection
+  ↓
+Budget
+```
 
 ## Context modes
 
 ### POV mode
 
-Use for prose generation from a specific character/story viewpoint. A Canon fact is eligible only when it is:
+Use for prose generation from a specific character/story viewpoint. A Canon fact is eligible only when it is true at the requested sequence, resolves at the highest active mainline authority, is already revealable, and is public or explicitly known by the POV character.
 
-1. true at the requested story sequence;
-2. the resolved highest-authority mainline fact;
-3. already revealable at that sequence;
-4. public, or explicitly known by the POV character.
-
-Objective Story State is handled separately. Full `state.values` may contain author-only facts, so POV mode projects only explicitly allowed state keys. v0.3 defaults to:
+Objective Story State is projected conservatively. The default POV-safe state key is:
 
 ```text
 location
 ```
 
-The caller/project policy can add more safe keys explicitly. Entity IDs referenced by those POV-safe state values can become scene-bound—for example the current location—while an unrelated future character returned by semantic search remains excluded.
-
-A 0.99 semantic similarity score and a manual pin still cannot override these checks.
+Additional state keys must be explicitly opted in. An unrelated future entity returned by retrieval remains excluded.
 
 ### AUTHOR mode
 
-Use for planning, structural analysis, continuity editing and author-only reasoning. AUTHOR mode may include true-but-unrevealed Canon and complete objective state, but it still obeys story-time validity and Canon authority resolution.
+Use for planning, structural analysis and continuity editing. AUTHOR mode may include true-but-unrevealed Canon and complete objective state, while still obeying story-time validity and authority resolution.
 
 ## Project channels
 
@@ -82,29 +107,44 @@ storyos state examples/demo --through 150
 storyos canon examples/demo chr_00000000000000000000000000000001 identity.role --through 150
 storyos knowledge examples/demo chr_00000000000000000000000000000001 --through 199
 storyos claims examples/demo
+```
 
-# POV context before the fact is revealed/known: the locked fact is excluded.
-storyos context examples/demo \
-  --through 150 \
-  --participant chr_00000000000000000000000000000001 \
-  --pov chr_00000000000000000000000000000001 \
-  --mode pov
+Raw canonical retrieval:
 
-# Additional objective state keys must be explicitly declared POV-safe.
+```bash
+storyos retrieve examples/demo "凯登"
+storyos retrieve examples/demo "identity role" --limit 8
+```
+
+POV context with real retrieval. At sequence 150 the demo locked role fact may be retrieved but must still be excluded by the reveal guard:
+
+```bash
 storyos context examples/demo \
   --through 150 \
   --participant chr_00000000000000000000000000000001 \
   --pov chr_00000000000000000000000000000001 \
   --mode pov \
-  --pov-state-key location
-
-# Author planning context may see true-but-unrevealed Canon and full objective state.
-storyos context examples/demo \
-  --through 150 \
-  --participant chr_00000000000000000000000000000001 \
-  --mode author
+  --query protagonist
 ```
 
-The demo also deliberately contains a staged claim whose file says `status: approved` while conflicting with locked Canon. It must still have zero effect on projected Story State. This protects the invariant that AI output cannot promote itself into Canon.
+Inspect exactly why that ref was blocked:
 
-Desktop UI, real embedding/vector adapters, model providers, Git-aware approval UX and prompt assembly remain later layers built on top of these contracts.
+```bash
+storyos context-inspect examples/demo \
+  --through 150 \
+  --participant chr_00000000000000000000000000000001 \
+  --pov chr_00000000000000000000000000000001 \
+  --mode pov \
+  --query protagonist \
+  --ref canon_00000000000000000000000000000001
+```
+
+The demo deliberately contains a staged claim whose file says `status: approved` and proposes `antagonist`. Running:
+
+```bash
+storyos retrieve examples/demo antagonist
+```
+
+must return no staged-claim hit. File status alone never promotes Candidate Claims into Canon or retrieval context.
+
+Desktop UI, embedding/vector providers, LLM providers, Git-aware approval UX and prompt assembly remain later layers built on top of these contracts.
