@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterable, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol
 
 from storyos.authority import CanonFact, CanonResolver
 from storyos.knowledge import KnowledgeTimeline
@@ -124,7 +124,7 @@ class ContextCompiler:
     """Compile deterministic, explainable model context from StoryOS source data.
 
     Semantic retrieval is only a candidate source. It cannot bypass Canon authority,
-    story time, reveal timing or POV knowledge gates.
+    story time, reveal timing, POV knowledge, or scene-bound entity visibility gates.
     """
 
     def __init__(
@@ -178,6 +178,15 @@ class ContextCompiler:
                 add(request.pov, "pov", 1100, required=True)
                 add(_state_ref(request.pov, request.through_sequence), "pov_state", 1050, required=True)
 
+        # In POV mode, arbitrary entity/state retrieval is conservative by default.
+        # Besides explicit participants/POV, an entity is scene-bound when current
+        # participant/POV state directly references its stable entity ID (e.g. location).
+        pov_bound_entities = _pov_bound_entities(
+            request=request,
+            states=states,
+            known_entity_ids=set(entities),
+        )
+
         # Manual pins are strong candidates, but still pass all safety gates.
         for ref in request.pinned:
             add(ref, "manual_pin", 900)
@@ -228,6 +237,7 @@ class ContextCompiler:
                 facts=facts,
                 states=states,
                 knowledge=knowledge,
+                pov_bound_entities=pov_bound_entities,
             )
             if rejection is not None:
                 excluded.append(rejection)
@@ -290,12 +300,15 @@ class ContextCompiler:
         facts: Mapping[str, CanonFact],
         states: Mapping[str, object],
         knowledge: KnowledgeTimeline,
+        pov_bound_entities: set[str],
     ) -> tuple[ContextItem | None, ExcludedContextItem | None]:
         ref = candidate.ref
         if ref.startswith("state:"):
             entity_id = _parse_state_ref(ref)
             if entity_id is None or entity_id not in entities:
                 return None, ExcludedContextItem(ref, "unknown_state_ref")
+            if request.mode is ContextMode.POV and entity_id not in pov_bound_entities:
+                return None, ExcludedContextItem(ref, "pov_state_unbound")
             state = states.get(entity_id)
             values = {} if state is None else state.values
             content = json.dumps(
@@ -314,6 +327,8 @@ class ContextCompiler:
 
         entity = entities.get(ref)
         if entity is not None:
+            if request.mode is ContextMode.POV and ref not in pov_bound_entities:
+                return None, ExcludedContextItem(ref, "pov_entity_unbound")
             # Arbitrary entity.data is intentionally not injected here; it may contain hidden author notes.
             content = json.dumps(
                 {
@@ -392,6 +407,44 @@ class ContextCompiler:
             ), None
 
         return None, ExcludedContextItem(ref, "unknown_ref")
+
+
+def _pov_bound_entities(
+    *,
+    request: ContextRequest,
+    states: Mapping[str, object],
+    known_entity_ids: set[str],
+) -> set[str]:
+    if request.mode is not ContextMode.POV:
+        return set(known_entity_ids)
+
+    bound = {entity_id for entity_id in request.participants if entity_id in known_entity_ids}
+    if request.pov in known_entity_ids:
+        bound.add(request.pov)
+
+    for entity_id in tuple(bound):
+        state = states.get(entity_id)
+        if state is None:
+            continue
+        for value in state.values.values():
+            bound.update(_extract_entity_refs(value, known_entity_ids))
+    return bound
+
+
+def _extract_entity_refs(value: Any, known_entity_ids: set[str]) -> set[str]:
+    refs: set[str] = set()
+    if isinstance(value, str):
+        if value in known_entity_ids:
+            refs.add(value)
+        return refs
+    if isinstance(value, Mapping):
+        for child in value.values():
+            refs.update(_extract_entity_refs(child, known_entity_ids))
+        return refs
+    if isinstance(value, (list, tuple, set, frozenset)):
+        for child in value:
+            refs.update(_extract_entity_refs(child, known_entity_ids))
+    return refs
 
 
 def _state_ref(entity_id: str, sequence: int) -> str:
