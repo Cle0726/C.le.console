@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.authoring-entity.v1",
+  "title": "StoryOS Authoring Entity View v1",
+  "type": "object",
+  "required": ["schema", "project_id", "through_sequence", "entity", "state", "events", "canon_facts", "claims", "workflow", "policy"],
+  "properties": {
+    "schema": {"const": "story.authoring-entity.v1"},
+    "project_id": {"type": "string"},
+    "through_sequence": {"type": ["integer", "null"], "minimum": 0},
+    "entity": {"type": "object"},
+    "state": {"type": "object"},
+    "events": {"type": "array", "items": {"type": "object"}},
+    "canon_facts": {"type": "array", "items": {"type": "object"}},
+    "claims": {"type": "array", "items": {"type": "object"}},
+    "workflow": {"type": "object"},
+    "policy": {
+      "type": "object",
+      "required": ["read_only", "canonical_mutation", "staging_mutation"],
+      "properties": {
+        "read_only": {"const": true},
+        "canonical_mutation": {"const": false},
+        "staging_mutation": {"const": false}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

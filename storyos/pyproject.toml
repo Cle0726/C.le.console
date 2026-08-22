@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cle-storyos"
-version = "0.9.0"
-description = "Deterministic story state, Canon context, migration, review, quarantine materialization and explicit audited Canon commit for long-form fiction"
+version = "1.0.0"
+description = "Deterministic long-form fiction state, Canon safety and read-only desktop authoring workspace API"
 requires-python = ">=3.11"
 dependencies = [
   "PyYAML>=6.0.2",
@@ -18,6 +18,7 @@ dev = [
 
 [project.scripts]
 storyos = "storyos.cli:main"
+storyos-workspace = "storyos.workspace_cli:main"
 
 [tool.setuptools]
 packages = ["storyos"]

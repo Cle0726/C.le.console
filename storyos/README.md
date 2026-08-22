@@ -1,6 +1,6 @@
-# C.le. StoryOS v0.9
+# C.le. StoryOS v1.0
 
-StoryOS is a deterministic story-state, Canon, context, migration, extraction, review, quarantine-materialization and explicit Canon-commit foundation for long-form fiction.
+StoryOS is a deterministic long-form fiction engine for manuscript management, story state, Canon safety, review/materialization workflows and AI-safe context. v1.0 adds the first stable **read-only Authoring Workspace API** intended for the desktop UI.
 
 ## Core contract
 
@@ -14,34 +14,164 @@ StoryOS is a deterministic story-state, Canon, context, migration, extraction, r
 8. Retrieval cannot bypass timeline, authority, reveal, POV or knowledge guards.
 9. Natural-language extraction preserves evidence and unresolved ambiguity instead of guessing.
 10. Canon mutation is create-only, explicit, hash-confirmed and audit-authorized.
-11. **Every Canon create must be revalidated against the current world immediately before the write.**
+11. Every Canon create is revalidated against the current world immediately before the write.
+12. **Desktop UI consumes read-only workspace/context contracts instead of reading or mutating StoryOS files directly.**
+
+## v1.0: Authoring Workspace API
+
+v1.0 stops adding write gates and starts exposing stable UI-facing views over the already verified data-safety pipeline.
+
+The workspace layer is deliberately separate from the mutation CLI:
+
+```bash
+storyos-workspace snapshot PROJECT
+storyos-workspace snapshot PROJECT --through 1010100
+storyos-workspace entity PROJECT ENTITY_ID --through 1010100
+storyos-workspace manuscript PROJECT manuscript/S01/EP01_Title.txt
+```
+
+The original `storyos` CLI remains responsible for review/materialization/Canon commit actions. `storyos-workspace` is read-only.
+
+### Workspace snapshot
+
+`storyos-workspace snapshot` returns `story.authoring-workspace.v1` with compact data suitable for the left navigation, dashboard and status surfaces:
+
+```text
+project metadata
+story timeline boundary
+manuscript metadata index
+entity list
+current projected state per entity
+entity event / Canon / Claim counts
+Canon authority summary
+Claim Review summary
+Materialization summary
+Canon Commit readiness summary
+reference diagnostics
+Context Compiler / Inspector capability references
+```
+
+The snapshot does **not** include full manuscript text.
+
+For a long-running multi-season project this matters: refreshing the dashboard should not serialize every chapter on every UI update.
+
+### Manuscript index and document view
+
+The snapshot indexes manuscript working copies using metadata only:
+
+```text
+project-relative path
+title
+season
+episode
+byte size
+character count
+line count
+SHA-256
+```
+
+Full text is loaded explicitly through:
+
+```bash
+storyos-workspace manuscript PROJECT <project-relative-manuscript-path>
+```
+
+The reader accepts UTF-8 text files under the configured manuscript root (`.txt`, `.md`, `.markdown`). Absolute paths and paths escaping the manuscript root are rejected.
+
+For the imported 《断弦之歌》 project, the importer already declares:
+
+```yaml
+paths:
+  manuscript: manuscript
+```
+
+and the 36 Season 1 working copies live under `manuscript/S01/`.
+
+### Entity view
+
+`storyos-workspace entity` returns `story.authoring-entity.v1` for a right-side detail panel:
+
+```text
+entity identity / aliases / structured data
+projected Story State at the requested boundary
+knowledge and resolved plot IDs
+canonical events through the boundary
+Canon Facts with active/mainline-active/revealed flags
+Candidate Claims
+review decision + freshness/current check
+materialization readiness
+Canon Commit readiness + candidate SHA/path/audit identity
+```
+
+This allows a desktop authoring view to answer questions such as:
+
+```text
+Where is this character now?
+What injuries/state keys are currently active?
+What Canon is attached to them?
+What claims still need review?
+Is a reviewed claim ready for quarantine staging?
+Is a quarantined candidate ready for explicit Canon commit?
+```
+
+without giving the workspace layer permission to perform those mutations.
+
+### Historical boundary
+
+Both snapshot and entity views accept `--through SEQUENCE`.
+
+When omitted, the workspace uses the latest canonical Story Event sequence. When provided, projected state and visible event counts stop at that boundary. This is the UI foundation for later controls such as:
+
+```text
+Load World State @ S01E20
+Load World State @ S01E36
+Compare before / after a scene
+```
+
+### Read-only invariant
+
+`AuthoringWorkspace` calls only read/plan APIs:
+
+```text
+StoryProject loaders
+StoryStateProjector
+ClaimReviewWorkbench.build_queue
+MaterializationWorkbench.build_plan
+CanonCommitWorkbench.build_plan
+```
+
+It never calls:
+
+```text
+ClaimReviewWorkbench.decide
+MaterializationWorkbench.stage
+CanonCommitWorkbench.commit
+```
+
+Tests hash the complete project file tree before and after workspace calls and require byte-identical results.
+
+### Context remains a separate authority boundary
+
+v1.0 does not duplicate the Context Compiler. AI-visible information still flows through the already established commands:
+
+```bash
+storyos context PROJECT --through 1010100 --participant CHAR_ID --pov CHAR_ID --mode pov --query "..."
+storyos context-inspect PROJECT --through 1010100 --participant CHAR_ID --pov CHAR_ID --mode pov --query "..." --ref REF
+```
+
+The desktop workspace can therefore show broad author-only state while the AI writing surface consumes a separately compiled, explainable context manifest.
 
 ## v0.9: Explicit Canon Commit Gate
 
-v0.9 is the first StoryOS layer allowed to create canonical `StoryEvent` or `CanonFact` files.
+v0.9 is the only StoryOS layer currently allowed to create canonical `StoryEvent` or `CanonFact` files from reviewed quarantine candidates.
 
-It consumes only an already reviewed and already staged quarantine candidate.
-
-Inspect the current commit plan first:
+Inspect first:
 
 ```bash
-storyos canon-commit-plan PROJECT
 storyos canon-commit-plan PROJECT --claim CLAIM_ID
 ```
 
-A ready item exposes the exact quarantine file and confirmation hash:
-
-```text
-candidate_path
-candidate_sha256
-canonical_path
-canonical_payload
-canonical_payload_sha256
-audit_id
-audit_path
-```
-
-The author then commits explicitly:
+Then explicitly confirm the exact quarantine file hash:
 
 ```bash
 storyos canon-commit PROJECT CLAIM_ID \
@@ -50,140 +180,33 @@ storyos canon-commit PROJECT CLAIM_ID \
   --note "approved exact reviewed candidate"
 ```
 
-There is deliberately no shortcut that automatically reads the hash and commits in one step. The confirmation is a boundary between inspecting the exact quarantine candidate and authorizing a canonical mutation.
+The gate requires current materialization safety, exact quarantine matching, SHA-256 confirmation, an immutable authorization audit written before Canon, a second current-world revalidation immediately before the write, and create-only canonical file creation.
 
-### Commit sequence
-
-A fresh canonical create follows this order:
+Canonical outputs:
 
 ```text
-1. rebuild current materialization plan
-2. require current item to be ready
-3. validate quarantine schema / IDs / policies
-4. require quarantine file to equal current expected candidate
-5. require caller confirmation of exact quarantine SHA-256
-6. derive deterministic audit identity and canonical target
-7. create immutable authorization audit
-8. rebuild the entire current plan again
-9. verify quarantine SHA still matches
-10. verify current Canon / Story State still permits the candidate
-11. create canonical file using create-only filesystem semantics
-12. reload and verify exact written payload
+events/committed/<event-id>.yaml
+canon/committed/<canon-id>.yaml
+audit/canon_commits/<audit-id>.yaml
 ```
 
-The audit is intentionally written before Canon.
-
-If the process fails after authorization but before the canonical create, StoryOS may retain an **unused authorization audit**, but Canon remains unchanged. A later retry may continue only if the exact quarantine candidate and all current world checks are still valid.
-
-### Canon paths
-
-Canonical creates are isolated under deterministic paths:
-
-```text
-events/
-└── committed/
-    └── evt_<stable-id>.yaml
-
-canon/
-└── committed/
-    └── canon_<stable-id>.yaml
-```
-
-Authorization audits are stored separately:
-
-```text
-audit/
-└── canon_commits/
-    └── aud_<stable-id>.yaml
-```
-
-The audit records:
-
-```text
-action = authorize_canonical_create
-actor
-note
-Claim id + Claim fingerprint
-candidate path + candidate SHA-256
-canonical path
-canonical payload + canonical payload SHA-256
-checks performed
-create-only / immutable policy
-```
-
-### Create-only invariant
-
-v0.9 never overwrites an existing canonical file.
-
-If the deterministic target already exists:
-
-```text
-same payload + exact matching immutable audit
-    → previously committed / idempotent unchanged
-
-same payload but no matching audit
-    → canonical_target_untracked / blocked
-
-different payload
-    → canonical_target_conflict / blocked
-
-same target ID elsewhere in canonical storage
-    → canonical_id_exists_elsewhere / blocked
-```
-
-StoryOS does not silently adopt or repair manually created canonical files.
-
-### One committed target per Claim
-
-After a Claim has produced an audited canonical target, changing its review to point to a different Event/Fact does not permit a second commit:
-
-```text
-Claim A
-  → audited Event X
-
-later review changed
-  → Event Y
-  → claim_already_committed
-  → blocked
-```
-
-Corrections should use a future explicit amendment/retraction workflow rather than rewriting the historical approval chain.
-
-### Revalidation after authorization
-
-The authorization audit is not a permanent bypass token.
-
-For example:
-
-```text
-T1 quarantine candidate is safe
-T2 author confirms hash
-T3 authorization audit is written
-T4 a new locked Canon appears
-T5 commit gate rebuilds current plan
-T6 current_conflict
-T7 canonical file is NOT created
-```
-
-The unused audit remains as evidence that an authorization was attempted for that exact candidate, but it does not force Canon through a now-invalid world state.
+Existing canonical files are never overwritten or silently adopted. A Claim that has already produced one audited canonical target cannot be reused to create a second distinct target.
 
 ## v0.8: Reviewed Claim → quarantine materialization
-
-Before v0.9, v0.8 rechecks reviewed Claims and stages exact candidate envelopes without touching Canon:
 
 ```bash
 storyos materialization-plan PROJECT --claim CLAIM_ID
 storyos materialization-stage PROJECT CLAIM_ID
 ```
 
-Quarantine files live under:
+This layer revalidates accepted reviews against current Canon/Story State and writes only to:
 
 ```text
 staging/materialization/events/
 staging/materialization/facts/
 ```
 
-They preserve the Claim fingerprint, review decision, current conflict check, proposed canonical payload and assumptions. Stale reviews, current conflicts and already-canonical duplicates are blocked.
+It does not mutate Canon.
 
 ## v0.7: Claim Review / Normalization
 
@@ -195,7 +218,7 @@ storyos claim-decide PROJECT CLAIM_ID \
   --value-json '"numb"'
 ```
 
-Review decisions live under `staging/reviews/`, require explicit normalization for accept decisions, fingerprint the underlying Claim, and remain non-canonical.
+Review sidecars fingerprint the underlying Claim, require explicit normalization for accept decisions and remain non-canonical.
 
 ## v0.6: World State → Candidate Claims
 
@@ -204,33 +227,24 @@ storyos worldstate-claims PROJECT
 storyos worldstate-claims PROJECT --write
 ```
 
-The extractor deliberately favors precision over recall. A conservative pass over the supplied 《断弦之歌》 v3.9 118-scene World State ledger produced approximately:
+Extraction deliberately favors precision over recall. Ambiguous subjects/groups remain unresolved rather than guessed.
 
-```text
-262 Candidate Claims
-├── 228 explicit-character location observations
-├── 11 direct Entry observations
-├── 8 simple possession observations
-├── 3 explicit condition notes
-└── 12 explicit knowledge notes
-```
+A conservative pass over the supplied 《断弦之歌》 v3.9 118-scene World State ledger produced approximately 262 Candidate Claims.
 
-Ambiguous groups, unsupported semantics and unclear subjects remain unresolved rather than guessed.
-
-## v0.5: 《断弦之歌》v3.9 migration
+## v0.5: 《断弦之歌》 v3.9 migration
 
 ```bash
 storyos import-duanxian-v39 SOURCE TARGET
 ```
 
-The importer verifies the v3.9 manifest, snapshots the source package byte-for-byte, creates 36 manuscript working copies, 50 deterministic character entities, 118 World State source records and one editorial-insert source record. Natural-language management prose is not automatically promoted to Canon.
+The importer verifies the mother-package manifest, snapshots the source package byte-for-byte, creates 36 Season 1 manuscript working copies, 50 deterministic character entities, 118 World State source records and one editorial-insert source record. Natural-language management prose is not automatically promoted to Canon.
 
 ## Current authoring pipeline
 
 ```text
 v3.9 Mother Package
         ↓ lossless import
-Imported Sources
+Imported Sources + manuscript working copies
         ↓ conservative extraction
 Candidate Claims
         ↓ explicit review + normalization
@@ -240,18 +254,25 @@ Quarantine Materialization Candidates
         ↓ hash-confirmed + audit-authorized commit
 StoryEvent / CanonFact
         ↓
-Story State / Knowledge Timeline
-        ↓
-Canon Authority / Reveal / POV gates
+Story State / Knowledge / Canon Authority
+        ├──────────────→ Authoring Workspace API (author/UI view)
         ↓
 Canonical Retriever + Context Compiler
         ↓
-Long-form continuation
+POV / AUTHOR Context Manifest + Inspector
+        ↓
+AI-assisted long-form continuation
 ```
 
-## Useful CLI commands
+## Useful commands
 
 ```bash
+# read-only desktop/UI views
+storyos-workspace snapshot PROJECT
+storyos-workspace entity PROJECT ENTITY_ID --through 1010100
+storyos-workspace manuscript PROJECT manuscript/S01/EP01_Title.txt
+
+# import/extraction/review/commit pipeline
 storyos import-duanxian-v39 SOURCE TARGET
 storyos worldstate-claims PROJECT --write
 storyos claim-review PROJECT
@@ -260,6 +281,8 @@ storyos materialization-plan PROJECT --claim CLAIM_ID
 storyos materialization-stage PROJECT CLAIM_ID
 storyos canon-commit-plan PROJECT --claim CLAIM_ID
 storyos canon-commit PROJECT CLAIM_ID --confirm-sha256 HASH --actor AUTHOR --note "..."
+
+# canonical inspection/context
 storyos validate PROJECT
 storyos state PROJECT --through 1010100
 storyos canon PROJECT SUBJECT PREDICATE --through 1010100
@@ -271,10 +294,12 @@ storyos context-inspect PROJECT --through 1010100 --participant CHAR_ID --pov CH
 
 ## Verification
 
-The functional v0.9 head before this documentation update passed **74 StoryOS tests** on Ubuntu and Windows with Python 3.11 and 3.13 test steps. The final documentation head is validated again before v0.9 is frozen.
+The first functional v1.0 workspace head passed **81 StoryOS tests** on Ubuntu and Windows with Python 3.11 and 3.13 test steps. The final documentation head is validated again before v1.0 is frozen.
 
-The v0.9 tests include failure injection around the commit boundary, including canonical-write failure after audit creation and a new Canon conflict injected immediately after authorization.
+The v1.0 tests include deterministic workspace output, timeline-boundary projection, entity workflow aggregation, manuscript metadata/content separation, absolute/path-traversal blocking and byte-identical project-tree checks before/after workspace reads.
+
+v0.9's Canon-write fault-injection tests remain in the same suite, so v1.0 continues to verify both the new read-only UI layer and the existing audited Canon mutation boundary.
 
 ## Next layer
 
-After v0.9 is frozen, the data-safety pipeline is strong enough to stop adding more write gates. The next useful layer should be a read-oriented **Authoring Workspace API** that composes manuscript, current Story State, approved Canon, unresolved/review queues and context inspection into stable UI-facing views. Desktop UI should consume those APIs rather than reading StoryOS files directly.
+After v1.0 is frozen, the next useful work is the **desktop bridge and actual C.le. StoryOS authoring UI**: Tauri/TypeScript should call the workspace/context contracts, render manuscript/entity/workflow panels, and keep all mutation buttons routed through the existing explicit review/materialization/commit commands rather than writing project files directly.

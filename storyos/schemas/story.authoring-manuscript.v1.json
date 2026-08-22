@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.authoring-manuscript.v1",
+  "title": "StoryOS Authoring Manuscript View v1",
+  "type": "object",
+  "required": ["schema", "project_id", "path", "title", "season", "episode", "bytes", "characters", "lines", "sha256", "content", "policy"],
+  "properties": {
+    "schema": {"const": "story.authoring-manuscript.v1"},
+    "project_id": {"type": "string"},
+    "path": {"type": "string", "minLength": 1},
+    "title": {"type": "string"},
+    "season": {"type": ["integer", "null"], "minimum": 0},
+    "episode": {"type": ["integer", "null"], "minimum": 0},
+    "bytes": {"type": "integer", "minimum": 0},
+    "characters": {"type": "integer", "minimum": 0},
+    "lines": {"type": "integer", "minimum": 0},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "content": {"type": "string"},
+    "policy": {
+      "type": "object",
+      "required": ["read_only", "canonical_mutation", "staging_mutation"],
+      "properties": {
+        "read_only": {"const": true},
+        "canonical_mutation": {"const": false},
+        "staging_mutation": {"const": false}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
