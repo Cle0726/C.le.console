@@ -51,6 +51,12 @@ def main() -> None:
     p_context.add_argument("--pin", action="append", default=[])
     p_context.add_argument("--max-chars", type=int, default=12000)
     p_context.add_argument("--mode", choices=[mode.value for mode in ContextMode], default=ContextMode.POV.value)
+    p_context.add_argument(
+        "--pov-state-key",
+        action="append",
+        default=None,
+        help="Objective state key allowed into POV context; repeatable. Defaults to location.",
+    )
 
     args = parser.parse_args()
     project = StoryProject.open(args.project)
@@ -153,6 +159,7 @@ def main() -> None:
 
     if args.command == "context":
         mode = ContextMode(args.mode)
+        pov_state_keys = tuple(args.pov_state_key or ("location",))
         request = ContextRequest(
             through_sequence=args.through,
             participants=tuple(args.participant),
@@ -160,6 +167,7 @@ def main() -> None:
             pinned=tuple(args.pin),
             max_chars=args.max_chars,
             mode=mode,
+            pov_state_keys=pov_state_keys,
         )
         manifest = ContextCompiler(project).compile(request)
         print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2, sort_keys=True))
