@@ -29,7 +29,7 @@ type UpdateDownloadEvent =
       };
     }
   | {
-      event: 'DownloadFinished';
+      event: 'Finished';
       data?: null;
     };
 
@@ -222,7 +222,7 @@ export function UpdateNotifier() {
         return;
       }
 
-      if (message.event === 'DownloadFinished') {
+      if (message.event === 'Finished') {
         if (total > 0) setDownloadedBytes(total);
         setInstallStatus('下载完成，正在安装。程序会自动关闭并重新启动…');
       }
