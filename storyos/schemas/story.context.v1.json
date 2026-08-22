@@ -3,12 +3,17 @@
   "$id": "story.context.v1",
   "title": "StoryOS Context Manifest v1",
   "type": "object",
-  "required": ["schema", "through_sequence", "mode", "budget", "included", "excluded"],
+  "required": ["schema", "through_sequence", "mode", "pov_state_keys", "budget", "included", "excluded"],
   "properties": {
     "schema": {"const": "story.context.v1"},
     "through_sequence": {"type": "integer", "minimum": 0},
     "mode": {"type": "string", "enum": ["author", "pov"]},
     "pov": {"type": ["string", "null"]},
+    "pov_state_keys": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
     "budget": {
       "type": "object",
       "required": ["max_chars", "used_chars"],
