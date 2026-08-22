@@ -3,9 +3,10 @@
   "$id": "story.context.v1",
   "title": "StoryOS Context Manifest v1",
   "type": "object",
-  "required": ["schema", "through_sequence", "mode", "pov_state_keys", "budget", "included", "excluded"],
+  "required": ["schema", "compiler_version", "request", "budget", "retrieval_hits", "included", "excluded"],
   "properties": {
     "schema": {"const": "story.context.v1"},
+    "compiler_version": {"type": "string", "minLength": 1},
     "through_sequence": {"type": "integer", "minimum": 0},
     "mode": {"type": "string", "enum": ["author", "pov"]},
     "pov": {"type": ["string", "null"]},
@@ -13,6 +14,33 @@
       "type": "array",
       "items": {"type": "string", "minLength": 1},
       "uniqueItems": true
+    },
+    "request": {
+      "type": "object",
+      "required": ["through_sequence", "mode", "pov", "participants", "pinned", "semantic_query", "semantic_limit", "pov_state_keys"],
+      "properties": {
+        "through_sequence": {"type": "integer", "minimum": 0},
+        "mode": {"type": "string", "enum": ["author", "pov"]},
+        "pov": {"type": ["string", "null"]},
+        "participants": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "pinned": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "semantic_query": {"type": ["string", "null"]},
+        "semantic_limit": {"type": "integer", "minimum": 0},
+        "pov_state_keys": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
     },
     "budget": {
       "type": "object",
@@ -22,6 +50,18 @@
         "used_chars": {"type": "integer", "minimum": 0}
       },
       "additionalProperties": false
+    },
+    "retrieval_hits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref", "score"],
+        "properties": {
+          "ref": {"type": "string"},
+          "score": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "additionalProperties": false
+      }
     },
     "included": {
       "type": "array",
