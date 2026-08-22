@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.canon-commit-result.v1",
+  "title": "StoryOS Canon Commit Result v1",
+  "type": "object",
+  "required": ["schema", "claim_id", "kind", "target_id", "canonical_path", "canonical_payload_sha256", "audit_id", "audit_path", "candidate_sha256", "policy"],
+  "properties": {
+    "schema": {"const": "story.canon-commit-result.v1"},
+    "claim_id": {"type": "string", "pattern": "^clm_[0-9a-f]{32}$"},
+    "kind": {"type": "string", "enum": ["event", "fact"]},
+    "target_id": {"type": "string"},
+    "canonical_path": {"type": "string", "minLength": 1},
+    "canonical_payload_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "audit_id": {"type": "string", "pattern": "^aud_[0-9a-f]{32}$"},
+    "audit_path": {"type": "string", "minLength": 1},
+    "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "policy": {
+      "type": "object",
+      "required": ["canonical_create_only", "canonical_overwrite", "audit_precedes_canonical_mutation"],
+      "properties": {
+        "canonical_create_only": {"const": true},
+        "canonical_overwrite": {"const": false},
+        "audit_precedes_canonical_mutation": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

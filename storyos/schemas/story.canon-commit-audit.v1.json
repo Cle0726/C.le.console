@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.canon-commit-audit.v1",
+  "title": "StoryOS Canon Commit Audit v1",
+  "type": "object",
+  "required": ["schema", "id", "action", "actor", "note", "claim_id", "claim_fingerprint", "kind", "target_id", "candidate_path", "candidate_sha256", "canonical_path", "canonical_payload_sha256", "canonical_payload", "checks", "policy"],
+  "properties": {
+    "schema": {"const": "story.canon-commit-audit.v1"},
+    "id": {"type": "string", "pattern": "^aud_[0-9a-f]{32}$"},
+    "action": {"const": "authorize_canonical_create"},
+    "actor": {"type": "string", "minLength": 1},
+    "note": {"type": "string"},
+    "claim_id": {"type": "string", "pattern": "^clm_[0-9a-f]{32}$"},
+    "claim_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "kind": {"type": "string", "enum": ["event", "fact"]},
+    "target_id": {"type": "string"},
+    "candidate_path": {"type": "string", "minLength": 1},
+    "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "canonical_path": {"type": "string", "minLength": 1},
+    "canonical_payload_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "canonical_payload": {"type": "object"},
+    "checks": {
+      "type": "object",
+      "required": ["materialization_ready_at_authorization", "quarantine_exact_match", "candidate_sha256_confirmed"],
+      "properties": {
+        "materialization_ready_at_authorization": {"const": true},
+        "quarantine_exact_match": {"const": true},
+        "candidate_sha256_confirmed": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": ["immutable", "audit_precedes_canonical_mutation", "canonical_create_only", "canonical_overwrite"],
+      "properties": {
+        "immutable": {"const": true},
+        "audit_precedes_canonical_mutation": {"const": true},
+        "canonical_create_only": {"const": true},
+        "canonical_overwrite": {"const": false}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.canon-commit-command-result.v1",
+  "title": "StoryOS Canon Commit Command Result v1",
+  "type": "object",
+  "required": ["schema", "result", "commit", "policy"],
+  "properties": {
+    "schema": {"const": "story.canon-commit-command-result.v1"},
+    "result": {"type": "string", "enum": ["created", "unchanged"]},
+    "commit": {"type": "object"},
+    "policy": {
+      "type": "object",
+      "required": ["explicit_candidate_sha256_confirmation", "canonical_create_only", "canonical_overwrite", "audit_precedes_canonical_mutation"],
+      "properties": {
+        "explicit_candidate_sha256_confirmation": {"const": true},
+        "canonical_create_only": {"const": true},
+        "canonical_overwrite": {"const": false},
+        "audit_precedes_canonical_mutation": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
