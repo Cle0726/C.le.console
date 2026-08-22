@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.claim.v1",
+  "title": "StoryOS Candidate Claim v1",
+  "type": "object",
+  "required": ["schema", "id", "subject", "predicate", "value", "at"],
+  "properties": {
+    "schema": {"const": "story.claim.v1"},
+    "id": {"type": "string", "pattern": "^clm_[0-9a-f]{32}$"},
+    "subject": {"type": "string", "pattern": "^[a-z]+_[0-9a-f]{32}$"},
+    "predicate": {"type": "string", "minLength": 1},
+    "value": {},
+    "at": {
+      "type": "object",
+      "required": ["sequence"],
+      "properties": {
+        "sequence": {"type": "integer", "minimum": 0},
+        "season": {"type": ["integer", "null"], "minimum": 0},
+        "episode": {"type": ["integer", "null"], "minimum": 0},
+        "scene": {"type": ["integer", "null"], "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "source": {"type": "object"},
+    "proposed_authority": {
+      "type": "string",
+      "enum": ["locked", "current", "draft", "planning", "alternative", "deprecated"]
+    },
+    "status": {"type": "string", "enum": ["pending", "approved", "rejected"]}
+  },
+  "additionalProperties": false
+}
