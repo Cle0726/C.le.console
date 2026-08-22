@@ -52,10 +52,20 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $version = (Get-Content -LiteralPath 'package.json' -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content -LiteralPath 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json).version
+          $cargoVersionMatch = Select-String -LiteralPath 'src-tauri/Cargo.toml' -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+          if (-not $cargoVersionMatch) {
+            throw 'Unable to read package version from src-tauri/Cargo.toml.'
+          }
+          $cargoVersion = $cargoVersionMatch.Matches[0].Groups[1].Value
           $tag = '${{ github.ref_name }}'
 
+          if ($tauriVersion -ne $version -or $cargoVersion -ne $version) {
+            throw "Version mismatch: package.json=$version, tauri.conf.json=$tauriVersion, Cargo.toml=$cargoVersion. Run npm run sync-version before releasing."
+          }
+
           if ('${{ github.event_name }}' -eq 'push' -and $tag -ne "v$version") {
-            throw "Release tag $tag does not match package.json version v$version. Update package.json and run npm run sync-version before tagging."
+            throw "Release tag $tag does not match package version v$version. Run npm run sync-version before tagging."
           }
 
           if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBLIC_KEY)) {
@@ -146,6 +156,7 @@ jobs:
           releaseBody: 'Windows signed release for C.le.控制台. See CHANGELOG.md for details.'
           releaseDraft: false
           prerelease: false
+          retryAttempts: 3
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
