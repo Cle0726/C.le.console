@@ -88,7 +88,8 @@
     "externalBin": [
       "../sidecars/cle-cliproxy/bin/cle-cliproxy",
       "../sidecars/cockpit-cliproxy/bin/cockpit-cliproxy",
-      "../sidecars/jimeng-api/bin/jimeng-api"
+      "../sidecars/jimeng-api/bin/jimeng-api",
+      "../sidecars/storyos-workspace/bin/storyos-workspace"
     ],
     "icon": [
       "icons/48x48.png",
