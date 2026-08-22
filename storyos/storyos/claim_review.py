@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import yaml
 
@@ -38,11 +38,7 @@ class ClaimReviewDecision:
             claim_id=str(raw["claim_id"]),
             claim_fingerprint=str(raw["claim_fingerprint"]),
             decision=ReviewDecision(str(raw["decision"])),
-            normalized=(
-                None
-                if raw.get("normalized") is None
-                else dict(raw.get("normalized") or {})
-            ),
+            normalized=None if raw.get("normalized") is None else dict(raw.get("normalized") or {}),
             note=str(raw.get("note") or ""),
         )
         review.validate()
@@ -51,7 +47,7 @@ class ClaimReviewDecision:
     def validate(self) -> None:
         if not self.claim_id.startswith("clm_") or len(self.claim_id) != 36:
             raise ValueError(f"invalid reviewed claim id: {self.claim_id}")
-        if not re_hex_64(self.claim_fingerprint):
+        if not _hex_64(self.claim_fingerprint):
             raise ValueError("claim_fingerprint must be a 64-character lowercase SHA-256")
         accepts = self.decision in {
             ReviewDecision.ACCEPT_EVENT_CANDIDATE,
@@ -153,7 +149,7 @@ class ClaimReviewWorkbench:
                 }
             )
 
-        extraction_unresolved = _extraction_unresolved_count(project)
+        reviewed = sum(decision_counts.values())
         return {
             "schema": "story.claim-review-queue.v1",
             "filters": {
@@ -164,11 +160,11 @@ class ClaimReviewWorkbench:
             "summary": {
                 "claims": len(rows),
                 "blocked_by_current_canon_or_state": blocked,
-                "reviewed": sum(decision_counts.values()),
-                "unreviewed": len(rows) - sum(decision_counts.values()),
+                "reviewed": reviewed,
+                "unreviewed": len(rows) - reviewed,
                 "stale_reviews": stale,
                 "decisions": dict(sorted(decision_counts.items())),
-                "extraction_unresolved": extraction_unresolved,
+                "extraction_unresolved": _extraction_unresolved_count(project),
             },
             "items": rows,
             "policy": {
@@ -245,7 +241,8 @@ class ClaimReviewWorkbench:
         review.validate()
 
         destination = project.root / "staging" / "reviews" / f"{claim.id}.yaml"
-        if destination.exists():
+        existed_before = destination.exists()
+        if existed_before:
             existing_raw = _load_data(destination)
             existing_data = dict(existing_raw)
             existing_data.pop("schema", None)
@@ -259,7 +256,7 @@ class ClaimReviewWorkbench:
                 )
 
         _write_yaml(destination, review.as_mapping())
-        return review, "replaced" if destination.exists() and replace else "created"
+        return review, "replaced" if existed_before else "created"
 
 
 def claim_fingerprint(claim: CandidateClaim) -> str:
@@ -331,7 +328,7 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def re_hex_64(value: str) -> bool:
+def _hex_64(value: str) -> bool:
     return len(value) == 64 and all(char in "0123456789abcdef" for char in value)
 
 
