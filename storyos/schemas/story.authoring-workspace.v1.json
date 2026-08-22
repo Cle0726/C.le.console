@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.authoring-workspace.v1",
+  "title": "StoryOS Authoring Workspace Snapshot v1",
+  "type": "object",
+  "required": ["schema", "project", "timeline", "summary", "manuscripts", "entities", "canon", "workflow", "diagnostics", "context", "policy"],
+  "properties": {
+    "schema": {"const": "story.authoring-workspace.v1"},
+    "project": {"type": "object"},
+    "timeline": {"type": "object"},
+    "summary": {"type": "object"},
+    "manuscripts": {"type": "array", "items": {"type": "object"}},
+    "entities": {"type": "array", "items": {"type": "object"}},
+    "canon": {"type": "object"},
+    "workflow": {"type": "object"},
+    "diagnostics": {"type": "object"},
+    "context": {"type": "object"},
+    "policy": {
+      "type": "object",
+      "required": ["read_only", "canonical_mutation", "staging_mutation", "mutation_commands_are_separate"],
+      "properties": {
+        "read_only": {"const": true},
+        "canonical_mutation": {"const": false},
+        "staging_mutation": {"const": false},
+        "mutation_commands_are_separate": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
