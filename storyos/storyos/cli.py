@@ -9,9 +9,31 @@ from storyos.authority import CanonResolver
 from storyos.claims import ClaimStager
 from storyos.context import ContextCompiler, ContextMode, ContextRequest
 from storyos.index import StoryIndex
+from storyos.inspector import ContextInspector
 from storyos.knowledge import KnowledgeTimeline
 from storyos.project import StoryProject
+from storyos.retrieval import RetrievalIndexError, SQLiteCanonicalRetriever
 from storyos.state import StoryStateProjector
+
+
+def _add_context_args(parser: argparse.ArgumentParser, *, inspector: bool = False) -> None:
+    parser.add_argument("project")
+    parser.add_argument("--through", type=int, required=True)
+    parser.add_argument("--participant", action="append", default=[])
+    parser.add_argument("--pov", default=None)
+    parser.add_argument("--pin", action="append", default=[])
+    parser.add_argument("--max-chars", type=int, default=12000)
+    parser.add_argument("--mode", choices=[mode.value for mode in ContextMode], default=ContextMode.POV.value)
+    parser.add_argument("--query", default=None, help="Canonical lexical retrieval query")
+    parser.add_argument("--semantic-limit", type=int, default=8)
+    parser.add_argument(
+        "--pov-state-key",
+        action="append",
+        default=None,
+        help="Objective state key allowed into POV context; repeatable. Defaults to location.",
+    )
+    if inspector:
+        parser.add_argument("--ref", default=None, help="Inspect one ref instead of the full trace set")
 
 
 def main() -> None:
@@ -43,20 +65,16 @@ def main() -> None:
     p_claims.add_argument("project")
     p_claims.add_argument("--id", dest="claim_id", default=None)
 
+    p_retrieve = sub.add_parser("retrieve", help="Inspect raw canonical retrieval candidates")
+    p_retrieve.add_argument("project")
+    p_retrieve.add_argument("query")
+    p_retrieve.add_argument("--limit", type=int, default=8)
+
     p_context = sub.add_parser("context", help="Compile explainable deterministic model context")
-    p_context.add_argument("project")
-    p_context.add_argument("--through", type=int, required=True)
-    p_context.add_argument("--participant", action="append", default=[])
-    p_context.add_argument("--pov", default=None)
-    p_context.add_argument("--pin", action="append", default=[])
-    p_context.add_argument("--max-chars", type=int, default=12000)
-    p_context.add_argument("--mode", choices=[mode.value for mode in ContextMode], default=ContextMode.POV.value)
-    p_context.add_argument(
-        "--pov-state-key",
-        action="append",
-        default=None,
-        help="Objective state key allowed into POV context; repeatable. Defaults to location.",
-    )
+    _add_context_args(p_context)
+
+    p_inspect = sub.add_parser("context-inspect", help="Explain why context refs were included or blocked")
+    _add_context_args(p_inspect, inspector=True)
 
     args = parser.parse_args()
     project = StoryProject.open(args.project)
@@ -157,32 +175,85 @@ def main() -> None:
         print(json.dumps({"claims": results}, ensure_ascii=False, indent=2, sort_keys=True))
         return
 
-    if args.command == "context":
-        mode = ContextMode(args.mode)
-        pov_state_keys = tuple(args.pov_state_key or ("location",))
-        request = ContextRequest(
-            through_sequence=args.through,
-            participants=tuple(args.participant),
-            pov=args.pov,
-            pinned=tuple(args.pin),
-            max_chars=args.max_chars,
-            mode=mode,
-            pov_state_keys=pov_state_keys,
+    if args.command == "retrieve":
+        retriever = _ensure_retriever(project)
+        hits = retriever.search(args.query, limit=args.limit)
+        print(
+            json.dumps(
+                {
+                    "schema": "story.retrieval.v1",
+                    "query": args.query,
+                    "limit": args.limit,
+                    "hits": [
+                        {"ref": hit.ref, "score": hit.score}
+                        for hit in hits
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
         )
-        manifest = ContextCompiler(project).compile(request)
-        payload = manifest.as_dict()
-        # Stable compatibility fields remain at the top level while the full
-        # normalized request is retained under payload["request"] for audit/replay.
-        payload.update(
-            {
-                "through_sequence": request.through_sequence,
-                "mode": request.mode.value,
-                "pov": request.pov,
-                "pov_state_keys": list(request.pov_state_keys),
-            }
-        )
+        return
+
+    if args.command in {"context", "context-inspect"}:
+        manifest = _compile_context(project, args)
+        if args.command == "context":
+            print(json.dumps(_manifest_payload(manifest), ensure_ascii=False, indent=2, sort_keys=True))
+            return
+
+        inspection = ContextInspector().inspect(manifest, ref=args.ref)
+        payload = {
+            "schema": "story.context-inspection.v1",
+            "request": manifest.as_dict()["request"],
+            **inspection,
+        }
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return
+
+
+def _compile_context(project: StoryProject, args) -> object:
+    mode = ContextMode(args.mode)
+    pov_state_keys = tuple(args.pov_state_key or ("location",))
+    retriever = _ensure_retriever(project) if args.query else None
+    request = ContextRequest(
+        through_sequence=args.through,
+        participants=tuple(args.participant),
+        pov=args.pov,
+        pinned=tuple(args.pin),
+        semantic_query=args.query,
+        semantic_limit=args.semantic_limit,
+        max_chars=args.max_chars,
+        mode=mode,
+        pov_state_keys=pov_state_keys,
+    )
+    return ContextCompiler(project, retriever=retriever).compile(request)
+
+
+def _ensure_retriever(project: StoryProject) -> SQLiteCanonicalRetriever:
+    db = Path(project.root) / ".storyos" / "index.sqlite"
+    retriever = SQLiteCanonicalRetriever(db)
+    try:
+        retriever.validate()
+    except RetrievalIndexError:
+        StoryIndex(db).rebuild(project)
+        retriever = SQLiteCanonicalRetriever(db)
+        retriever.validate()
+    return retriever
+
+
+def _manifest_payload(manifest) -> dict:
+    payload = manifest.as_dict()
+    request = manifest.request
+    payload.update(
+        {
+            "through_sequence": request.through_sequence,
+            "mode": request.mode.value,
+            "pov": request.pov,
+            "pov_state_keys": list(request.pov_state_keys),
+        }
+    )
+    return payload
 
 
 def _fact_payload(fact):
