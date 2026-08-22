@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from storyos.project import StoryProject
@@ -190,10 +191,9 @@ class StoryIndex:
             conn.close()
 
     def counts(self) -> dict[str, int]:
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             names = ("entities", "events", "canon_facts", "staged_claims")
-            values = {
+            return {
                 name: int(conn.execute(f"SELECT count(*) FROM {name}").fetchone()[0])
                 for name in names
             }
-        return values
