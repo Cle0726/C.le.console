@@ -253,9 +253,14 @@ class AuthoringWorkspace:
 
         rows: list[dict[str, Any]] = []
         for path in sorted(root.rglob("*")):
+            if path.is_symlink():
+                raise AuthoringWorkspaceError(f"manuscript symlinks are not supported: {path}")
             if not path.is_file() or path.suffix.lower() not in {".txt", ".md", ".markdown"}:
                 continue
-            raw = path.read_bytes()
+            resolved = path.resolve()
+            if not resolved.is_relative_to(root):
+                raise AuthoringWorkspaceError(f"manuscript path escapes the configured root: {path}")
+            raw = resolved.read_bytes()
             try:
                 text = raw.decode("utf-8-sig")
             except UnicodeDecodeError as exc:
@@ -289,7 +294,10 @@ class AuthoringWorkspace:
         requested = Path(relative_path)
         if requested.is_absolute():
             raise AuthoringWorkspaceError("manuscript path must be project-relative")
-        path = (project.root / requested).resolve()
+        candidate = project.root / requested
+        if candidate.is_symlink():
+            raise AuthoringWorkspaceError("manuscript symlinks are not supported")
+        path = candidate.resolve()
         if not path.is_relative_to(root):
             raise AuthoringWorkspaceError("manuscript path escapes the configured manuscript root")
         if not path.is_file():
