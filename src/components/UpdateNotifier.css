@@ -68,6 +68,13 @@
   color: #fff;
 }
 
+.update-notifier-icon-button:disabled,
+.update-notifier-secondary:disabled,
+.update-notifier-primary:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .update-notifier-version-row {
   display: flex;
   align-items: center;
@@ -105,6 +112,62 @@
   color: rgba(255, 255, 255, 0.68);
 }
 
+.update-notifier-progress-block {
+  margin-top: 18px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.update-notifier-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.update-notifier-progress-meta span:last-child {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.update-notifier-progress-track {
+  position: relative;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.update-notifier-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.88);
+  transition: width 160ms ease-out;
+}
+
+.update-notifier-progress-fill.is-indeterminate {
+  width: 38%;
+  animation: update-notifier-indeterminate 1.15s ease-in-out infinite;
+}
+
+.update-notifier-error {
+  margin-top: 16px;
+  padding: 11px 13px;
+  border: 1px solid rgba(255, 128, 128, 0.2);
+  border-radius: 12px;
+  background: rgba(255, 96, 96, 0.08);
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(255, 210, 210, 0.86);
+  word-break: break-word;
+}
+
 .update-notifier-actions {
   display: flex;
   justify-content: flex-end;
@@ -135,11 +198,6 @@
   color: #111318;
 }
 
-.update-notifier-primary:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
 .update-notifier-spin {
   animation: update-notifier-spin 0.9s linear infinite;
 }
@@ -162,6 +220,18 @@
   }
 }
 
+@keyframes update-notifier-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  50% {
+    transform: translateX(85%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+
 @media (max-width: 560px) {
   .update-notifier-overlay {
     padding: 16px;
@@ -173,7 +243,8 @@
     border-radius: 18px;
   }
 
-  .update-notifier-version-row {
+  .update-notifier-version-row,
+  .update-notifier-progress-meta {
     flex-wrap: wrap;
   }
 
