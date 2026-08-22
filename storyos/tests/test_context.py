@@ -8,12 +8,15 @@ from storyos.context import (
     ContextRequest,
     RetrievalHit,
 )
+from storyos.entities import StoryEntity
 from storyos.project import StoryProject
 
 
 KADEN = "chr_00000000000000000000000000000001"
+WORKSHOP = "loc_00000000000000000000000000000001"
 FACT = "canon_00000000000000000000000000000001"
 UNKNOWN = "canon_ffffffffffffffffffffffffffffffff"
+HIDDEN = "chr_00000000000000000000000000000099"
 
 
 def demo_root() -> Path:
@@ -26,6 +29,30 @@ class FakeRetriever:
 
     def search(self, query: str, *, limit: int = 8):
         return self.hits[:limit]
+
+
+class ProjectWithHiddenEntity:
+    """Test-only project wrapper containing a known but scene-unbound entity."""
+
+    def __init__(self, base: StoryProject):
+        self.base = base
+
+    def load_entities(self):
+        hidden = StoryEntity.from_mapping({
+            "id": HIDDEN,
+            "kind": "character",
+            "name": "未来角色",
+            "slug": "future-character",
+            "aliases": [],
+            "data": {"author_note": "must never leak through entity identity retrieval"},
+        })
+        return [*self.base.load_entities(), hidden]
+
+    def load_canon_facts(self):
+        return self.base.load_canon_facts()
+
+    def load_events(self):
+        return self.base.load_events()
 
 
 def excluded_reasons(manifest, ref: str) -> set[str]:
@@ -207,3 +234,49 @@ def test_pov_context_requires_explicit_pov_identity():
                 mode=ContextMode.POV,
             )
         )
+
+
+def test_semantic_retrieval_cannot_leak_known_but_scene_unbound_entity_or_state():
+    project = ProjectWithHiddenEntity(StoryProject.open(demo_root()))
+    hidden_state = f"state:{HIDDEN}@200"
+    compiler = ContextCompiler(
+        project,
+        retriever=FakeRetriever([
+            RetrievalHit(HIDDEN, 1.0),
+            RetrievalHit(hidden_state, 1.0),
+        ]),
+    )
+    manifest = compiler.compile(
+        ContextRequest(
+            through_sequence=200,
+            participants=(KADEN,),
+            pov=KADEN,
+            semantic_query="future character",
+            mode=ContextMode.POV,
+        )
+    )
+
+    assert HIDDEN not in included_refs(manifest)
+    assert hidden_state not in included_refs(manifest)
+    assert "pov_entity_unbound" in excluded_reasons(manifest, HIDDEN)
+    assert "pov_state_unbound" in excluded_reasons(manifest, hidden_state)
+    assert "未来角色" not in manifest.render()
+
+
+def test_entity_referenced_by_current_pov_state_is_scene_bound():
+    project = StoryProject.open(demo_root())
+    compiler = ContextCompiler(
+        project,
+        retriever=FakeRetriever([RetrievalHit(WORKSHOP, 0.99)]),
+    )
+    manifest = compiler.compile(
+        ContextRequest(
+            through_sequence=150,
+            participants=(KADEN,),
+            pov=KADEN,
+            semantic_query="where am I",
+            mode=ContextMode.POV,
+        )
+    )
+
+    assert WORKSHOP in included_refs(manifest)
