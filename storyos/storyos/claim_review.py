@@ -10,11 +10,19 @@ from typing import Any
 import yaml
 
 from storyos.claims import CandidateClaim, ClaimStager
+from storyos.ids import validate_id
 from storyos.project import StoryProject
 
 
 class ClaimReviewError(RuntimeError):
     """Raised when a claim review decision cannot be safely created or loaded."""
+
+
+class _Unset:
+    pass
+
+
+_UNSET = _Unset()
 
 
 class ReviewDecision(str, Enum):
@@ -45,7 +53,7 @@ class ClaimReviewDecision:
         return review
 
     def validate(self) -> None:
-        if not self.claim_id.startswith("clm_") or len(self.claim_id) != 36:
+        if not validate_id(self.claim_id, "claim"):
             raise ValueError(f"invalid reviewed claim id: {self.claim_id}")
         if not _hex_64(self.claim_fingerprint):
             raise ValueError("claim_fingerprint must be a 64-character lowercase SHA-256")
@@ -330,10 +338,3 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
 
 def _hex_64(value: str) -> bool:
     return len(value) == 64 and all(char in "0123456789abcdef" for char in value)
-
-
-class _Unset:
-    pass
-
-
-_UNSET = _Unset()
