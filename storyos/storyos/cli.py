@@ -170,7 +170,18 @@ def main() -> None:
             pov_state_keys=pov_state_keys,
         )
         manifest = ContextCompiler(project).compile(request)
-        print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+        payload = manifest.as_dict()
+        # Stable compatibility fields remain at the top level while the full
+        # normalized request is retained under payload["request"] for audit/replay.
+        payload.update(
+            {
+                "through_sequence": request.through_sequence,
+                "mode": request.mode.value,
+                "pov": request.pov,
+                "pov_state_keys": list(request.pov_state_keys),
+            }
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return
 
 
