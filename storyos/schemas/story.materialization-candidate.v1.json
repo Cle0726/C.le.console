@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.materialization-candidate.v1",
+  "title": "StoryOS Quarantine Materialization Candidate v1",
+  "type": "object",
+  "required": ["schema", "kind", "target_id", "claim_id", "claim_fingerprint", "review", "check", "canonical_payload", "assumptions", "policy"],
+  "properties": {
+    "schema": {"const": "story.materialization-candidate.v1"},
+    "kind": {"type": "string", "enum": ["event", "fact"]},
+    "target_id": {"type": "string"},
+    "claim_id": {"type": "string", "pattern": "^clm_[0-9a-f]{32}$"},
+    "claim_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "review": {"type": "object"},
+    "check": {"type": "object"},
+    "canonical_payload": {"type": "object"},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "policy": {
+      "type": "object",
+      "required": ["quarantine_only", "canonical_mutation", "commit_required"],
+      "properties": {
+        "quarantine_only": {"const": true},
+        "canonical_mutation": {"const": false},
+        "commit_required": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
