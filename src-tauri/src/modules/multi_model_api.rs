@@ -1517,7 +1517,14 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
     // two helpers or sidecars never race for the same ports.
     let _lifecycle_guard = lifecycle().lock().await;
     let mut effective_config = config.clone();
-    let mut credential_changed = hydrate_persisted_xai_credentials(&mut effective_config)?;
+    let mut credential_changed = hydrate_managed_antigravity_credentials(&mut effective_config)
+        .unwrap_or_else(|error| {
+            logger::log_warn(&format!(
+                "[MultiModelAPI] 同步 Antigravity 实时凭据失败，继续使用最近快照: {error}"
+            ));
+            false
+        });
+    credential_changed |= hydrate_persisted_xai_credentials(&mut effective_config)?;
     credential_changed |= refresh_xai_credentials(&mut effective_config, false).await;
     if credential_changed {
         save_config_file(&effective_config)?;
@@ -1789,6 +1796,67 @@ fn normalize_oauth_credential(provider: &str, mut credential: Value) -> Value {
     }
 
     credential
+}
+
+/// Refresh the gateway snapshot from the authoritative account-manager store.
+/// Antigravity access tokens are short lived and may be rotated by quota refresh
+/// after the multi-model service was configured. Without this hydration the
+/// account page can be healthy while API model calls still use an old token.
+fn hydrate_managed_antigravity_credentials(
+    config: &mut MultiModelApiConfig,
+) -> Result<bool, String> {
+    let managed = account::list_accounts()?;
+    let by_id = managed
+        .into_iter()
+        .map(|item| (item.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let mut changed = false;
+    for upstream in config.accounts.iter_mut().filter(|item| {
+        item.provider == "antigravity" && item.source.starts_with("cle:antigravity:")
+    }) {
+        let managed_id = upstream
+            .source
+            .strip_prefix("cle:antigravity:")
+            .unwrap_or_default();
+        let Some(current) = by_id.get(managed_id) else {
+            continue;
+        };
+        let fresh = json!({
+            "type": "antigravity",
+            "access_token": current.token.access_token,
+            "refresh_token": current.token.refresh_token,
+            "expires_in": current.token.expires_in,
+            "expired": chrono::DateTime::from_timestamp(current.token.expiry_timestamp, 0)
+                .map(|item| item.to_rfc3339()),
+            "email": current.email,
+            "project_id": current.token.project_id
+        });
+        if upstream.credential_json.as_ref() != Some(&fresh) {
+            upstream.credential_json = Some(fresh);
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+fn write_managed_antigravity_auth_files(config: &MultiModelApiConfig) -> Result<(), String> {
+    let auth_dir = sidecar_dir()?.join("auths");
+    std::fs::create_dir_all(&auth_dir)
+        .map_err(|error| format!("创建多模型 API auth 目录失败: {error}"))?;
+    for account in config.accounts.iter().filter(|item| {
+        item.enabled
+            && item.provider == "antigravity"
+            && item.source.starts_with("cle:antigravity:")
+    }) {
+        let Some(credential) = account.credential_json.as_ref() else {
+            continue;
+        };
+        let path = auth_dir.join(format!("{}.json", safe_file_name(&account.id)));
+        let raw = serde_json::to_string_pretty(credential)
+            .map_err(|error| format!("序列化 Antigravity API 凭据失败: {error}"))?;
+        write_string_atomic(&path, &raw)?;
+    }
+    Ok(())
 }
 
 async fn apply_config(config: &MultiModelApiConfig) -> Result<(), String> {
@@ -2235,6 +2303,35 @@ pub async fn diagnose_and_repair(deep: bool) -> Result<MultiModelRepairReport, S
             "至少有一个启用的下游 Key",
             None,
         ));
+    }
+
+    match hydrate_managed_antigravity_credentials(&mut config) {
+        Ok(true) => {
+            save_config_file(&config)?;
+            write_managed_antigravity_auth_files(&config)?;
+            repaired += 1;
+            checks.push(repair_check(
+                "antigravity-credential",
+                "Antigravity 实时凭据",
+                "repaired",
+                "已从账号管理同步最新 access token 到多模型 API 运行账号",
+                Some("同步实时凭据"),
+            ));
+        }
+        Ok(false) => checks.push(repair_check(
+            "antigravity-credential",
+            "Antigravity 实时凭据",
+            "ok",
+            "多模型 API 凭据已与账号管理保持一致",
+            None,
+        )),
+        Err(error) => checks.push(repair_check(
+            "antigravity-credential",
+            "Antigravity 实时凭据",
+            "warning",
+            format!("读取账号管理凭据失败，暂用最近快照：{error}"),
+            None,
+        )),
     }
 
     match hydrate_persisted_xai_credentials(&mut config) {
@@ -2750,9 +2847,16 @@ pub async fn test_chat(
     requested_model: Option<String>,
     requested_prompt: Option<String>,
 ) -> Result<MultiModelApiTestResult, String> {
-    let state = get_state().await?;
+    let mut state = get_state().await?;
     if !state.running {
         return Err("多模型 API 服务尚未启动".into());
+    }
+    if hydrate_managed_antigravity_credentials(&mut state.config).unwrap_or(false) {
+        save_config_file(&state.config)?;
+        write_managed_antigravity_auth_files(&state.config)?;
+        // The sidecar watches auth files. Give it one short debounce window so
+        // the UI's immediate test cannot race the credential reload.
+        tokio::time::sleep(Duration::from_millis(180)).await;
     }
     let key = state
         .config
@@ -3244,7 +3348,7 @@ pub fn start_runtime_watchdog() {
     tokio::spawn(async {
         loop {
             tokio::time::sleep(Duration::from_secs(WATCHDOG_INTERVAL_SECONDS)).await;
-            let config = match load_config() {
+            let mut config = match load_config() {
                 Ok(config) if config.enabled => config,
                 Ok(_) => continue,
                 Err(error) => {
@@ -3254,6 +3358,25 @@ pub fn start_runtime_watchdog() {
                     continue;
                 }
             };
+            match hydrate_managed_antigravity_credentials(&mut config) {
+                Ok(true) => {
+                    if let Err(error) = save_config_file(&config)
+                        .and_then(|_| write_managed_antigravity_auth_files(&config))
+                    {
+                        logger::log_warn(&format!(
+                            "[MultiModelAPI][watchdog] 更新 Antigravity 运行凭据失败: {error}"
+                        ));
+                    } else {
+                        logger::log_info(
+                            "[MultiModelAPI][watchdog] 已热同步 Antigravity 最新账号凭据",
+                        );
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => logger::log_warn(&format!(
+                    "[MultiModelAPI][watchdog] 读取 Antigravity 最新账号凭据失败: {error}"
+                )),
+            }
             let probe_error = match probe_gateway(&config).await {
                 Ok(_) => {
                     record_health_success(false).await;

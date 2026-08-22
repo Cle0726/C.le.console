@@ -23,13 +23,13 @@ static GENERATING_ACCOUNTS: OnceLock<tokio::sync::Mutex<HashSet<String>>> = Once
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DoubaoWebAccountRecord {
-    id: String,
-    name: String,
+pub(crate) struct DoubaoWebAccountRecord {
+    pub(crate) id: String,
+    pub(crate) name: String,
     #[serde(default = "default_platform_id")]
-    platform_id: String,
+    pub(crate) platform_id: String,
     #[serde(default = "default_true")]
-    enabled: bool,
+    pub(crate) enabled: bool,
     #[serde(default)]
     last_known_logged_in: bool,
     #[serde(default)]
@@ -149,7 +149,7 @@ fn default_platform_id() -> String {
     "doubao".into()
 }
 
-fn platform(id: &str) -> Option<&'static WebCreatorPlatform> {
+pub(crate) fn platform(id: &str) -> Option<&'static WebCreatorPlatform> {
     WEB_CREATOR_PLATFORMS
         .iter()
         .find(|platform| platform.id == id)
@@ -260,7 +260,10 @@ fn update_store<R>(
     Ok(result)
 }
 
-fn find_account(app: &AppHandle, account_id: &str) -> Result<DoubaoWebAccountRecord, String> {
+pub(crate) fn find_account(
+    app: &AppHandle,
+    account_id: &str,
+) -> Result<DoubaoWebAccountRecord, String> {
     load_store(app)?
         .accounts
         .into_iter()
@@ -282,7 +285,10 @@ fn account_window_label(account: &DoubaoWebAccountRecord) -> String {
     }
 }
 
-fn browser_data_dir(app: &AppHandle, account: &DoubaoWebAccountRecord) -> Result<PathBuf, String> {
+pub(crate) fn browser_data_dir(
+    app: &AppHandle,
+    account: &DoubaoWebAccountRecord,
+) -> Result<PathBuf, String> {
     if !valid_account_id(&account.id) || !valid_platform_id(&account.platform_id) {
         return Err("网页创作账号 ID 无效".into());
     }
@@ -343,6 +349,39 @@ async fn inspect_account(
         .lock()
         .await
         .contains(&account.id);
+    let platform =
+        platform(&account.platform_id).ok_or_else(|| "不支持的网页创作平台".to_string())?;
+    if let Some((current_url, logged_in)) =
+        crate::modules::web_creator_workspace::inspect_account_session(
+            app,
+            &account.id,
+            platform.home_url,
+        )
+        .await?
+    {
+        return Ok(DoubaoWebAccountState {
+            id: account.id.clone(),
+            name: account.name.clone(),
+            platform_id: account.platform_id.clone(),
+            enabled: account.enabled,
+            busy,
+            window_open: true,
+            logged_in,
+            status_verified: true,
+            current_url,
+            message: if !account.enabled {
+                "已停用，不参与自动故障切换".into()
+            } else if busy {
+                "正在生成视频".into()
+            } else if logged_in {
+                format!("{}网页登录状态可用", platform.name)
+            } else {
+                format!("请在当前工作台中完成{}登录或扫码确认", platform.name)
+            },
+            last_error: (!account.last_error.is_empty()).then(|| account.last_error.clone()),
+            consecutive_failures: account.consecutive_failures,
+        });
+    }
     let window_label = account_window_label(account);
     let Some(window) = app.get_webview_window(&window_label) else {
         return Ok(DoubaoWebAccountState {
@@ -369,8 +408,6 @@ async fn inspect_account(
         });
     };
     let current_url = window.url().ok().map(|url| url.to_string());
-    let platform =
-        platform(&account.platform_id).ok_or_else(|| "不支持的网页创作平台".to_string())?;
     let cookie_url = Url::parse(platform.home_url).map_err(|error| error.to_string())?;
     let cookies = tokio::task::spawn_blocking(move || window.cookies_for_url(cookie_url))
         .await
@@ -491,14 +528,8 @@ pub async fn add_account(
         store.accounts.push(account.clone());
         Ok(account)
     })?;
-    if let Err(error) = ensure_window(&app, &account, true) {
-        let _ = update_store(&app, |store| {
-            store.accounts.retain(|item| item.id != account.id);
-            Ok(())
-        });
-        return Err(error);
-    }
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    // The unified creator center opens the account inside the main window.
+    // Do not create a top-level browser window as a side effect of adding it.
     build_state(&app, Some(account.id)).await
 }
 
@@ -563,6 +594,7 @@ pub async fn remove_account(app: AppHandle, account_id: String) -> Result<Doubao
         let _ = window.close();
         tokio::time::sleep(Duration::from_millis(350)).await;
     }
+    let _ = crate::modules::web_creator_workspace::close_account_view(&app, &removed.id);
     let profile_dir = browser_data_dir(&app, &removed)?;
     if profile_dir.exists() {
         let _ = std::fs::remove_dir_all(profile_dir);
@@ -580,14 +612,30 @@ pub async fn open_login(app: AppHandle, account_id: String) -> Result<DoubaoWebS
 pub async fn logout(app: AppHandle, account_id: String) -> Result<DoubaoWebState, String> {
     ensure_account_idle(&account_id).await?;
     let account = find_account(&app, &account_id)?;
-    let window = ensure_window(&app, &account, false)?;
-    window
-        .clear_all_browsing_data()
-        .map_err(|error| format!("清理豆包登录状态失败: {error}"))?;
     let home_url = platform(&account.platform_id)
         .ok_or_else(|| "不支持的网页创作平台".to_string())?
         .home_url;
-    let _ = window.navigate(Url::parse(home_url).map_err(|error| error.to_string())?);
+    if !crate::modules::web_creator_workspace::clear_account_browsing_data(
+        &app,
+        &account_id,
+        home_url,
+    )? {
+        // Compatibility cleanup for accounts that were last opened by an older
+        // release in a top-level window. New unified-workspace accounts never
+        // create that extra window.
+        if let Some(window) = app.get_webview_window(&account_window_label(&account)) {
+            window
+                .clear_all_browsing_data()
+                .map_err(|error| format!("清理网页登录状态失败: {error}"))?;
+            let _ = window.navigate(Url::parse(home_url).map_err(|error| error.to_string())?);
+        } else {
+            let profile_dir = browser_data_dir(&app, &account)?;
+            if profile_dir.exists() {
+                std::fs::remove_dir_all(&profile_dir)
+                    .map_err(|error| format!("清理网页登录数据失败: {error}"))?;
+            }
+        }
+    }
     update_last_known_login(&app, &account_id, false)?;
     build_state(&app, Some(account_id)).await
 }

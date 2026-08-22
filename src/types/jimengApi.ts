@@ -114,3 +114,34 @@ export interface DoubaoWebVideoRequest {
   prompt: string;
   ratio: '1:1' | '16:9' | '9:16';
 }
+
+export interface WebCreatorBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  visible?: boolean;
+}
+
+export interface WebCreatorWorkspaceState {
+  activeAccountId?: string | null;
+  currentUrl?: string | null;
+  visible: boolean;
+}
+
+export interface WebCreatorAsset {
+  id: string;
+  url: string;
+  cleanUrl: string;
+  kind: 'image' | 'video' | string;
+  source: string;
+  title: string;
+  platform: string;
+  discoveredAt: number;
+}
+
+export interface WebCreatorDownloadResult {
+  path: string;
+  bytes: number;
+  usedCleanUrl: boolean;
+}

@@ -1,5 +1,8 @@
 use crate::modules::doubao_web::{self, DoubaoWebState, DoubaoWebVideoRequest};
 use crate::modules::jimeng_api::{self, JimengApiConfig, JimengApiState, JimengMediaRequest};
+use crate::modules::web_creator_workspace::{
+    self, WebCreatorAsset, WebCreatorBounds, WebCreatorDownloadResult, WebCreatorWorkspaceState,
+};
 use serde_json::Value;
 use tauri::AppHandle;
 
@@ -130,4 +133,69 @@ pub async fn doubao_web_generate_video(
     request: DoubaoWebVideoRequest,
 ) -> Result<Value, String> {
     doubao_web::generate_video(app, request).await
+}
+
+#[tauri::command]
+pub async fn web_creator_open_account(
+    app: AppHandle,
+    account_id: String,
+    bounds: Option<WebCreatorBounds>,
+) -> Result<WebCreatorWorkspaceState, String> {
+    web_creator_workspace::open_account(app, account_id, bounds).await
+}
+
+#[tauri::command]
+pub fn web_creator_set_bounds(
+    app: AppHandle,
+    bounds: WebCreatorBounds,
+) -> Result<WebCreatorWorkspaceState, String> {
+    web_creator_workspace::set_bounds(&app, bounds)
+}
+
+#[tauri::command]
+pub fn web_creator_hide(app: AppHandle) -> Result<WebCreatorWorkspaceState, String> {
+    web_creator_workspace::hide(&app)
+}
+
+#[tauri::command]
+pub fn web_creator_navigate(
+    app: AppHandle,
+    action: String,
+) -> Result<WebCreatorWorkspaceState, String> {
+    web_creator_workspace::navigate(&app, action)
+}
+
+#[tauri::command]
+pub fn web_creator_navigate_to(
+    app: AppHandle,
+    url: String,
+) -> Result<WebCreatorWorkspaceState, String> {
+    web_creator_workspace::navigate_to(&app, url)
+}
+
+#[tauri::command]
+pub fn web_creator_get_state(app: AppHandle) -> WebCreatorWorkspaceState {
+    web_creator_workspace::workspace_state(&app)
+}
+
+#[tauri::command]
+pub async fn web_creator_collect_assets(
+    app: AppHandle,
+    account_id: Option<String>,
+) -> Result<Vec<WebCreatorAsset>, String> {
+    web_creator_workspace::collect_assets(app, account_id).await
+}
+
+#[tauri::command]
+pub fn web_creator_clear_assets(app: AppHandle, account_id: Option<String>) -> Result<(), String> {
+    web_creator_workspace::clear_assets(&app, account_id)
+}
+
+#[tauri::command]
+pub async fn web_creator_download_asset(
+    app: AppHandle,
+    account_id: Option<String>,
+    asset: WebCreatorAsset,
+) -> Result<WebCreatorDownloadResult, String> {
+    web_creator_workspace::download_asset(app, account_id, asset).await
 }

@@ -1,17 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
+import { openPath } from '@tauri-apps/plugin-opener';
+import { downloadDir, join } from '@tauri-apps/api/path';
 import {
-  Activity, BadgeCheck, CircleAlert, Clipboard, Coins, Copy, Download, Film,
-  Gauge, Globe2, HeartPulse, Image as ImageIcon, KeyRound, Layers3,
+  Activity, ArrowLeft, ArrowRight, BadgeCheck, CircleAlert, Clipboard, Coins, Copy, Download, Film,
+  FolderOpen, Gauge, Globe2, HeartPulse, Image as ImageIcon, KeyRound, Layers3,
   LoaderCircle, PanelsTopLeft, Plus, Power, RefreshCw, Save, ShieldCheck, Sparkles,
-  Trash2, Upload, WandSparkles,
+  Trash2, Upload, WandSparkles, X,
 } from 'lucide-react';
 import { jimengApiService } from '../services/jimengApiService';
 import type {
   JimengAccount, JimengApiConfig, JimengApiState, JimengMediaRequest, JimengRegion,
   JimengDeviceFlow, JimengRepairReport,
-  DoubaoWebState, WebCreatorPlatformId,
+  DoubaoWebState, WebCreatorAsset, WebCreatorPlatformId, WebCreatorWorkspaceState,
 } from '../types/jimengApi';
 import './JimengApiServicePage.unified.css';
 
@@ -46,6 +48,11 @@ function restoreTasks(): TaskRecord[] {
   } catch {
     return [];
   }
+}
+
+async function openWebCreatorDownloads() {
+  const path = await join(await downloadDir(), 'C.le网页创作');
+  await openPath(path);
 }
 
 const REGIONS: Array<{ id: JimengRegion; label: string }> = [
@@ -158,6 +165,12 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
   const [webCreatorPlatformId, setWebCreatorPlatformId] = useState<WebCreatorPlatformId>('doubao');
   const [webCreatorAccountId, setWebCreatorAccountId] = useState('');
   const [webCreatorAccountName, setWebCreatorAccountName] = useState('');
+  const [webCreatorWorkspaceState, setWebCreatorWorkspaceState] = useState<WebCreatorWorkspaceState | null>(null);
+  const [webCreatorAddress, setWebCreatorAddress] = useState('');
+  const [webCreatorAssets, setWebCreatorAssets] = useState<WebCreatorAsset[]>([]);
+  const [webCreatorDownloading, setWebCreatorDownloading] = useState<string | null>(null);
+  const browserHostRef = useRef<HTMLDivElement | null>(null);
+  const lastBrowserBoundsRef = useRef('');
 
   const [imageMode, setImageMode] = useState<'generation' | 'composition'>('generation');
   const [imageAccountId, setImageAccountId] = useState('');
@@ -341,7 +354,72 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
   useEffect(() => {
     if (tab !== 'platforms') return;
     void jimengApiService.getDoubaoWebState(webCreatorAccountId || null).then(setDoubaoWeb).catch(() => undefined);
+    void jimengApiService.getWebCreatorState().then((next) => {
+      setWebCreatorWorkspaceState(next);
+      if (next.currentUrl) setWebCreatorAddress(next.currentUrl);
+    }).catch(() => undefined);
   }, [tab]);
+
+  const syncWebCreatorBounds = useCallback(async () => {
+    const host = browserHostRef.current;
+    if (!host || tab !== 'platforms' || !webCreatorWorkspaceState?.activeAccountId) return;
+    const rect = host.getBoundingClientRect();
+    const bounds = {
+      x: Math.max(0, rect.left),
+      y: Math.max(0, rect.top),
+      width: Math.max(1, rect.width),
+      height: Math.max(1, rect.height),
+      visible: rect.width > 8 && rect.height > 8 && rect.bottom > 0 && rect.top < window.innerHeight,
+    };
+    const signature = [bounds.x, bounds.y, bounds.width, bounds.height, bounds.visible]
+      .map((value) => typeof value === 'number' ? Math.round(value * 2) / 2 : value)
+      .join('|');
+    if (signature === lastBrowserBoundsRef.current) return;
+    lastBrowserBoundsRef.current = signature;
+    try {
+      const next = await jimengApiService.setWebCreatorBounds(bounds);
+      setWebCreatorWorkspaceState(next);
+    } catch {
+      // A resize can race with account switching. The next observer frame retries.
+      lastBrowserBoundsRef.current = '';
+    }
+  }, [tab, webCreatorWorkspaceState?.activeAccountId]);
+
+  useEffect(() => {
+    const host = browserHostRef.current;
+    if (tab !== 'platforms' || !host) {
+      void jimengApiService.hideWebCreator().then(setWebCreatorWorkspaceState).catch(() => undefined);
+      return;
+    }
+    let frame = 0;
+    const schedule = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => void syncWebCreatorBounds());
+    };
+    const observer = new ResizeObserver(schedule);
+    observer.observe(host);
+    window.addEventListener('resize', schedule);
+    window.addEventListener('scroll', schedule, true);
+    schedule();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', schedule);
+      window.removeEventListener('scroll', schedule, true);
+      window.cancelAnimationFrame(frame);
+    };
+  }, [syncWebCreatorBounds, tab]);
+
+  useEffect(() => {
+    if (tab !== 'platforms' || !webCreatorWorkspaceState?.activeAccountId) return;
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      void jimengApiService.getWebCreatorState().then((next) => {
+        setWebCreatorWorkspaceState(next);
+        if (next.currentUrl) setWebCreatorAddress(next.currentUrl);
+      }).catch(() => undefined);
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [tab, webCreatorWorkspaceState?.activeAccountId]);
 
   useEffect(() => {
     const next = webCreatorAccounts.find((account) => account.id === webCreatorAccountId)
@@ -379,10 +457,13 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     if (!doubaoWebAccountId) return;
     setDoubaoWebBusy(true);
     try {
-      const next = await jimengApiService.openDoubaoWebLogin(doubaoWebAccountId);
-      applyDoubaoWebState(next);
-      const account = next.accounts.find((item) => item.id === doubaoWebAccountId);
-      setNotice({ tone: 'info', text: account?.loggedIn ? `${account.name} 已登录` : '请在专用窗口完成豆包登录，完成后本页会自动检测' });
+      setWebCreatorPlatformId('doubao');
+      setWebCreatorAccountId(doubaoWebAccountId);
+      setTab('platforms');
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
+      await openWebCreatorAccount(doubaoWebAccountId);
+      const account = doubaoWeb?.accounts.find((item) => item.id === doubaoWebAccountId);
+      setNotice({ tone: 'info', text: account?.loggedIn ? `${account.name} 已在当前工作台打开` : '请直接在中间网页完成豆包登录，不会再弹出独立窗口。' });
     } catch (error) {
       setNotice({ tone: 'error', text: `无法打开豆包网页版：${String(error)}` });
     } finally {
@@ -395,7 +476,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     try {
       const next = await jimengApiService.addDoubaoWebAccount();
       applyDoubaoWebState(next);
-      setNotice({ tone: 'info', text: '新账号已创建，请在打开的专用窗口完成登录' });
+      setNotice({ tone: 'info', text: '新账号已创建；选择账号后会在统一工作台内登录。' });
     } catch (error) {
       setNotice({ tone: 'error', text: `新增豆包账号失败：${String(error)}` });
     } finally {
@@ -446,6 +527,111 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     }
   };
 
+  const currentWebCreatorBounds = () => {
+    const rect = browserHostRef.current?.getBoundingClientRect();
+    if (!rect) return undefined;
+    return {
+      x: Math.max(0, rect.left),
+      y: Math.max(0, rect.top),
+      width: Math.max(1, rect.width),
+      height: Math.max(1, rect.height),
+      visible: true,
+    };
+  };
+
+  const openWebCreatorAccount = async (accountId: string) => {
+    const next = await jimengApiService.openWebCreatorAccount(accountId, currentWebCreatorBounds());
+    lastBrowserBoundsRef.current = '';
+    setWebCreatorWorkspaceState(next);
+    setWebCreatorAddress(next.currentUrl || selectedWebCreatorPlatform?.homeUrl || '');
+    setWebCreatorAssets([]);
+    void jimengApiService.getDoubaoWebState(accountId).then(applyDoubaoWebState).catch(() => undefined);
+    window.requestAnimationFrame(() => void syncWebCreatorBounds());
+    return next;
+  };
+
+  const navigateWebCreator = async (action: 'back' | 'forward' | 'reload') => {
+    try {
+      const next = await jimengApiService.navigateWebCreator(action);
+      setWebCreatorWorkspaceState(next);
+      if (next.currentUrl) setWebCreatorAddress(next.currentUrl);
+    } catch (error) {
+      setNotice({ tone: 'error', text: `网页导航失败：${String(error)}` });
+    }
+  };
+
+  const submitWebCreatorAddress = async () => {
+    let url = webCreatorAddress.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    try {
+      const next = await jimengApiService.navigateWebCreatorTo(url);
+      setWebCreatorWorkspaceState(next);
+      setWebCreatorAddress(next.currentUrl || url);
+    } catch (error) {
+      setNotice({ tone: 'error', text: `无法打开地址：${String(error)}` });
+    }
+  };
+
+  const collectWebCreatorAssets = async () => {
+    if (!webCreatorWorkspaceState?.activeAccountId) return;
+    setWebCreatorDownloading('collect');
+    try {
+      const assets = await jimengApiService.collectWebCreatorAssets(webCreatorWorkspaceState.activeAccountId);
+      setWebCreatorAssets(assets);
+      setNotice({ tone: 'info', text: assets.length ? `已捕获 ${assets.length} 个图片/视频素材` : '当前页面尚未发现可下载素材，请先生成或打开作品详情。' });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `素材捕获失败：${String(error)}` });
+    } finally {
+      setWebCreatorDownloading(null);
+    }
+  };
+
+  const downloadWebCreatorAsset = async (asset: WebCreatorAsset) => {
+    const accountId = webCreatorWorkspaceState?.activeAccountId;
+    if (!accountId) return;
+    setWebCreatorDownloading(asset.id);
+    try {
+      const result = await jimengApiService.downloadWebCreatorAsset(asset, accountId);
+      setNotice({ tone: 'success', text: `${result.usedCleanUrl ? '无水印地址' : '原始地址'}下载完成：${result.path}` });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `下载失败：${String(error)}` });
+    } finally {
+      setWebCreatorDownloading(null);
+    }
+  };
+
+  const downloadAllWebCreatorAssets = async () => {
+    if (!webCreatorAssets.length || !webCreatorWorkspaceState?.activeAccountId) return;
+    setWebCreatorDownloading('all');
+    let success = 0;
+    const failures: string[] = [];
+    for (const asset of webCreatorAssets) {
+      try {
+        await jimengApiService.downloadWebCreatorAsset(asset, webCreatorWorkspaceState.activeAccountId);
+        success += 1;
+      } catch (error) {
+        failures.push(`${asset.title || asset.kind}: ${String(error)}`);
+      }
+    }
+    setWebCreatorDownloading(null);
+    setNotice({
+      tone: failures.length ? 'error' : 'success',
+      text: failures.length
+        ? `批量下载完成 ${success}/${webCreatorAssets.length}，失败 ${failures.length} 个：${failures[0]}`
+        : `已批量下载 ${success} 个素材`,
+    });
+  };
+
+  const clearWebCreatorAssets = async () => {
+    try {
+      await jimengApiService.clearWebCreatorAssets(webCreatorWorkspaceState?.activeAccountId);
+      setWebCreatorAssets([]);
+    } catch (error) {
+      setNotice({ tone: 'error', text: `清空素材失败：${String(error)}` });
+    }
+  };
+
   const runWebCreatorAccountAction = async (
     action: 'add' | 'open' | 'rename' | 'toggle' | 'logout' | 'remove',
   ) => {
@@ -458,7 +644,9 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       if (action === 'add') {
         next = await jimengApiService.addDoubaoWebAccount(webCreatorPlatformId);
       } else if (action === 'open') {
-        next = await jimengApiService.openDoubaoWebLogin(account!.id);
+        await openWebCreatorAccount(account!.id);
+        setNotice({ tone: 'info', text: `${account!.name} 已在当前工作台打开；未登录时请直接在中间网页完成登录。` });
+        return;
       } else if (action === 'rename') {
         next = await jimengApiService.renameDoubaoWebAccount(account!.id, webCreatorAccountName);
       } else if (action === 'toggle') {
@@ -472,16 +660,14 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       setNotice({
         tone: 'success',
         text: action === 'add'
-          ? `已创建${selectedWebCreatorPlatform?.name || ''}独立账号窗口，请完成登录`
-          : action === 'open'
-            ? '网页账号窗口已打开'
-            : action === 'rename'
-              ? '账号名称已保存'
-              : action === 'toggle'
-                ? account!.enabled ? '账号已停用' : '账号已启用'
-                : action === 'logout'
-                  ? '网页登录数据已清除'
-                  : '账号及独立网页登录数据已删除',
+          ? `已创建${selectedWebCreatorPlatform?.name || ''}账号，可在当前工作台中打开并登录`
+          : action === 'rename'
+            ? '账号名称已保存'
+            : action === 'toggle'
+              ? account!.enabled ? '账号已停用' : '账号已启用'
+              : action === 'logout'
+                ? '网页登录数据已清除'
+                : '账号及独立网页登录数据已删除',
       });
     } catch (error) {
       setNotice({ tone: 'error', text: `网页账号操作失败：${String(error)}` });
@@ -826,37 +1012,29 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       <main className="jimeng-content">
         {tab === 'platforms' && (
           <div className="web-creator-workspace">
-            <section className="web-creator-platform-grid" aria-label="网页创作平台">
-              {doubaoWeb?.platforms.map((platform) => {
-                const accounts = doubaoWeb.accounts.filter((account) => account.platformId === platform.id);
-                const online = accounts.filter((account) => account.loggedIn).length;
-                return (
-                  <button
-                    key={platform.id}
-                    type="button"
-                    className={`web-creator-platform-card${webCreatorPlatformId === platform.id ? ' active' : ''}`}
-                    onClick={() => setWebCreatorPlatformId(platform.id)}
-                  >
-                    <i>{platform.shortName}</i>
-                    <span><strong>{platform.name}</strong><small>{platform.description}</small></span>
-                    <em>{accounts.length} 个账号 · {online} 个已检测登录</em>
-                  </button>
-                );
-              })}
-            </section>
-
-            <section className="jimeng-panel web-creator-account-panel">
-              <div className="jimeng-panel-title">
-                <Globe2 size={19} />
-                <div>
-                  <h2>{selectedWebCreatorPlatform?.name || '网页平台'}账号</h2>
-                  <p>每个账号拥有独立浏览器数据目录；关闭窗口不会退出登录。</p>
-                </div>
-                <button className="btn btn-primary jimeng-button" disabled={doubaoWebBusy} onClick={() => void runWebCreatorAccountAction('add')}>
-                  <Plus size={16} />新增账号
-                </button>
+            <aside className="web-creator-sidebar">
+              <div className="web-creator-platform-list" aria-label="网页创作平台">
+                {doubaoWeb?.platforms.map((platform) => {
+                  const accounts = doubaoWeb.accounts.filter((account) => account.platformId === platform.id);
+                  const online = accounts.filter((account) => account.loggedIn).length;
+                  return (
+                    <button
+                      key={platform.id}
+                      type="button"
+                      className={webCreatorPlatformId === platform.id ? 'active' : ''}
+                      onClick={() => setWebCreatorPlatformId(platform.id)}
+                    >
+                      <i>{platform.shortName}</i>
+                      <span><strong>{platform.name}</strong><small>{accounts.length} 个账号 · {online} 已登录</small></span>
+                    </button>
+                  );
+                })}
               </div>
 
+              <div className="web-creator-sidebar-head">
+                <span>{selectedWebCreatorPlatform?.name || '网页平台'}账号</span>
+                <button type="button" title="新增账号" disabled={doubaoWebBusy} onClick={() => void runWebCreatorAccountAction('add')}><Plus size={16} /></button>
+              </div>
               <div className="web-creator-account-list">
                 {webCreatorAccounts.map((account) => (
                   <button
@@ -867,35 +1045,68 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
                       setWebCreatorAccountId(account.id);
                       setWebCreatorAccountName(account.name);
                     }}
+                    onDoubleClick={() => void openWebCreatorAccount(account.id)}
                   >
                     <span><strong>{account.name}</strong><small>{account.message}</small></span>
                     <em className={account.busy ? 'busy' : account.loggedIn ? 'online' : ''}>
-                      {account.busy ? '生成中' : account.loggedIn ? '已登录' : account.statusVerified ? '未登录' : '待检测'}
+                      {account.busy ? '生成中' : account.loggedIn ? '在线' : account.statusVerified ? '未登录' : '待检测'}
                     </em>
-                    {!!account.lastError && <small className="web-creator-account-error">上次错误：{account.lastError}</small>}
                   </button>
                 ))}
-                {!webCreatorAccounts.length && (
-                  <div className="jimeng-empty">还没有{selectedWebCreatorPlatform?.name}账号，点击“新增账号”创建独立登录环境。</div>
-                )}
+                {!webCreatorAccounts.length && <div className="jimeng-empty">暂无账号</div>}
               </div>
 
               {selectedWebCreatorAccount && (
                 <div className="web-creator-account-controls">
-                  <input
-                    value={webCreatorAccountName}
-                    maxLength={40}
-                    aria-label="网页账号名称"
-                    onChange={(event) => setWebCreatorAccountName(event.target.value)}
-                    onKeyDown={(event) => { if (event.key === 'Enter') void runWebCreatorAccountAction('rename'); }}
-                  />
-                  <button className="btn btn-primary jimeng-button" disabled={doubaoWebBusy} onClick={() => void runWebCreatorAccountAction('open')}><Globe2 size={16} />打开网页</button>
-                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy || !webCreatorAccountName.trim() || webCreatorAccountName.trim() === selectedWebCreatorAccount.name} onClick={() => void runWebCreatorAccountAction('rename')}><Save size={15} />保存名称</button>
-                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy || selectedWebCreatorAccount.busy} onClick={() => void runWebCreatorAccountAction('toggle')}><Power size={15} />{selectedWebCreatorAccount.enabled ? '停用' : '启用'}</button>
-                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy || selectedWebCreatorAccount.busy} onClick={() => void runWebCreatorAccountAction('logout')}>退出登录</button>
-                  <button className="btn btn-secondary jimeng-button danger" disabled={doubaoWebBusy || selectedWebCreatorAccount.busy} onClick={() => void runWebCreatorAccountAction('remove')}><Trash2 size={15} />删除</button>
+                  <input value={webCreatorAccountName} maxLength={40} aria-label="网页账号名称" onChange={(event) => setWebCreatorAccountName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void runWebCreatorAccountAction('rename'); }} />
+                  <button className="btn btn-primary jimeng-button span-2" disabled={doubaoWebBusy || !selectedWebCreatorAccount.enabled} onClick={() => void runWebCreatorAccountAction('open')}><Globe2 size={16} />在工作台打开</button>
+                  <button className="btn btn-secondary icon-only" title="保存名称" disabled={doubaoWebBusy || !webCreatorAccountName.trim() || webCreatorAccountName.trim() === selectedWebCreatorAccount.name} onClick={() => void runWebCreatorAccountAction('rename')}><Save size={15} /></button>
+                  <button className="btn btn-secondary icon-only" title={selectedWebCreatorAccount.enabled ? '停用账号' : '启用账号'} disabled={doubaoWebBusy || selectedWebCreatorAccount.busy} onClick={() => void runWebCreatorAccountAction('toggle')}><Power size={15} /></button>
+                  <button className="btn btn-secondary" disabled={doubaoWebBusy || selectedWebCreatorAccount.busy} onClick={() => void runWebCreatorAccountAction('logout')}>退出</button>
+                  <button className="btn btn-secondary danger" disabled={doubaoWebBusy || selectedWebCreatorAccount.busy} onClick={() => void runWebCreatorAccountAction('remove')}><Trash2 size={15} />删除</button>
                 </div>
               )}
+            </aside>
+
+            <section className="web-creator-main">
+              <div className="web-creator-toolbar">
+                <button type="button" title="后退" disabled={!webCreatorWorkspaceState?.activeAccountId} onClick={() => void navigateWebCreator('back')}><ArrowLeft size={17} /></button>
+                <button type="button" title="前进" disabled={!webCreatorWorkspaceState?.activeAccountId} onClick={() => void navigateWebCreator('forward')}><ArrowRight size={17} /></button>
+                <button type="button" title="刷新" disabled={!webCreatorWorkspaceState?.activeAccountId} onClick={() => void navigateWebCreator('reload')}><RefreshCw size={17} /></button>
+                <form onSubmit={(event) => { event.preventDefault(); void submitWebCreatorAddress(); }}>
+                  <Globe2 size={15} />
+                  <input value={webCreatorAddress} aria-label="网页地址" placeholder={selectedWebCreatorPlatform?.homeUrl || 'https://'} onChange={(event) => setWebCreatorAddress(event.target.value)} disabled={!webCreatorWorkspaceState?.activeAccountId} />
+                </form>
+                <button type="button" title="打开下载目录" onClick={() => void openWebCreatorDownloads().catch((error) => setNotice({ tone: 'error', text: `打开下载目录失败：${String(error)}` }))}><FolderOpen size={17} /></button>
+                <button type="button" className="with-label" disabled={!webCreatorAssets.length || !!webCreatorDownloading} onClick={() => void downloadAllWebCreatorAssets()}><Download size={17} />批量下载</button>
+              </div>
+
+              <div className="web-creator-browser-shell">
+                <div ref={browserHostRef} className="web-creator-browser-host" />
+                {!webCreatorWorkspaceState?.activeAccountId && (
+                  <div className="web-creator-browser-empty">
+                    <Globe2 size={36} />
+                    <strong>单窗口网页创作工作台</strong>
+                    <span>从左侧选择账号并打开，登录、创作、素材捕获和下载都在这里完成。</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="web-creator-assets-head">
+                <span><strong>素材与无水印导出</strong><small>仅扫描当前网页新增节点，不做全页面高频轮询</small></span>
+                <button className="btn btn-primary jimeng-button" disabled={!webCreatorWorkspaceState?.activeAccountId || !!webCreatorDownloading} onClick={() => void collectWebCreatorAssets()}>{webCreatorDownloading === 'collect' ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}捕获素材</button>
+                <button className="btn btn-secondary icon-only" title="清空捕获列表" disabled={!webCreatorAssets.length} onClick={() => void clearWebCreatorAssets()}><X size={16} /></button>
+              </div>
+              <div className="web-creator-assets">
+                {webCreatorAssets.map((asset) => (
+                  <article key={asset.id}>
+                    <span className={`web-creator-asset-kind ${asset.kind}`}>{asset.kind === 'video' ? <Film size={17} /> : <ImageIcon size={17} />}</span>
+                    <div><strong>{asset.title || (asset.kind === 'video' ? '视频素材' : '图片素材')}</strong><small title={asset.cleanUrl}>{asset.cleanUrl !== asset.url ? '已识别无水印地址' : '原始媒体地址'}</small></div>
+                    <button className="btn btn-secondary jimeng-button" disabled={!!webCreatorDownloading} onClick={() => void downloadWebCreatorAsset(asset)}>{webCreatorDownloading === asset.id ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}下载</button>
+                  </article>
+                ))}
+                {!webCreatorAssets.length && <div className="jimeng-empty">生成作品后点击“捕获素材”，图片和视频会显示在这里。</div>}
+              </div>
             </section>
           </div>
         )}

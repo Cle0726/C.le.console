@@ -7,6 +7,10 @@ import type {
   JimengRepairReport,
   DoubaoWebState,
   DoubaoWebVideoRequest,
+  WebCreatorAsset,
+  WebCreatorBounds,
+  WebCreatorDownloadResult,
+  WebCreatorWorkspaceState,
 } from '../types/jimengApi';
 
 const isJimengVisualReview =
@@ -88,4 +92,22 @@ export const jimengApiService = {
     invoke<DoubaoWebState>('doubao_web_logout', { accountId }),
   generateDoubaoWebVideo: (request: DoubaoWebVideoRequest) =>
     invoke<Record<string, unknown>>('doubao_web_generate_video', { request }),
+  openWebCreatorAccount: (accountId: string, bounds?: WebCreatorBounds) =>
+    invoke<WebCreatorWorkspaceState>('web_creator_open_account', { accountId, bounds: bounds ?? null }),
+  setWebCreatorBounds: (bounds: WebCreatorBounds) =>
+    invoke<WebCreatorWorkspaceState>('web_creator_set_bounds', { bounds }),
+  hideWebCreator: () =>
+    invoke<WebCreatorWorkspaceState>('web_creator_hide'),
+  navigateWebCreator: (action: 'back' | 'forward' | 'reload') =>
+    invoke<WebCreatorWorkspaceState>('web_creator_navigate', { action }),
+  navigateWebCreatorTo: (url: string) =>
+    invoke<WebCreatorWorkspaceState>('web_creator_navigate_to', { url }),
+  getWebCreatorState: () =>
+    invoke<WebCreatorWorkspaceState>('web_creator_get_state'),
+  collectWebCreatorAssets: (accountId?: string | null) =>
+    invoke<WebCreatorAsset[]>('web_creator_collect_assets', { accountId: accountId ?? null }),
+  clearWebCreatorAssets: (accountId?: string | null) =>
+    invoke<void>('web_creator_clear_assets', { accountId: accountId ?? null }),
+  downloadWebCreatorAsset: (asset: WebCreatorAsset, accountId?: string | null) =>
+    invoke<WebCreatorDownloadResult>('web_creator_download_asset', { asset, accountId: accountId ?? null }),
 };
