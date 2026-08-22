@@ -19,12 +19,13 @@ use std::{
 };
 use tauri::{
     webview::{DownloadEvent, NewWindowResponse, WebviewBuilder},
-    AppHandle, Manager, Webview, WebviewUrl,
+    AppHandle, Manager, Webview, WebviewUrl, WebviewWindowBuilder,
 };
 use tokio::io::AsyncWriteExt;
 use url::Url;
 
 const CREATOR_WEBVIEW_PREFIX: &str = "cle-creator-account-";
+pub const CREATOR_WORKSPACE_WINDOW_LABEL: &str = "web-creator-workspace";
 const CREATOR_BRIDGE: &str = include_str!("../../resources/web_creator_bridge.js");
 static ACTIVE_ACCOUNT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static CREATOR_VISIBLE: AtomicBool = AtomicBool::new(false);
@@ -114,6 +115,31 @@ fn bounds_or_default(bounds: Option<WebCreatorBounds>) -> WebCreatorBounds {
         height: 560.0,
         visible: true,
     })
+}
+
+/// Open one dedicated creator workbench window. Accounts are still switched
+/// inside this single window; this deliberately does not recreate the old
+/// one-window-per-account behavior.
+pub fn show_workspace_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(CREATOR_WORKSPACE_WINDOW_LABEL) {
+        window.show().map_err(|error| error.to_string())?;
+        window.unminimize().map_err(|error| error.to_string())?;
+        return window.set_focus().map_err(|error| error.to_string());
+    }
+
+    WebviewWindowBuilder::new(
+        app,
+        CREATOR_WORKSPACE_WINDOW_LABEL,
+        WebviewUrl::App("index.html?web-creator-workspace=1".into()),
+    )
+    .title("C.le. 网页创作工作台")
+    .inner_size(1480.0, 920.0)
+    .min_inner_size(1050.0, 700.0)
+    .center()
+    .resizable(true)
+    .build()
+    .map_err(|error| format!("打开网页创作工作台失败: {error}"))?;
+    Ok(())
 }
 
 fn apply_bounds(view: &Webview, bounds: &WebCreatorBounds) -> Result<(), String> {
@@ -315,9 +341,10 @@ pub async fn open_account(
 ) -> Result<WebCreatorWorkspaceState, String> {
     let account = doubao_web::find_account(&app, &account_id)?;
     let bounds = bounds_or_default(bounds);
-    let main = app
-        .get_webview_window("main")
-        .ok_or_else(|| "主窗口尚未就绪".to_string())?;
+    let parent = app
+        .get_webview_window(CREATOR_WORKSPACE_WINDOW_LABEL)
+        .or_else(|| app.get_webview_window("main"))
+        .ok_or_else(|| "网页创作工作台尚未就绪".to_string())?;
     let label = webview_label(&account.id);
     for view in creator_webviews(&app) {
         if view.label() != label {
@@ -327,7 +354,13 @@ pub async fn open_account(
     let view = if let Some(view) = app.get_webview(&label) {
         view
     } else {
-        create_embedded_view(app.clone(), main.as_ref().window(), account, bounds.clone()).await?
+        create_embedded_view(
+            app.clone(),
+            parent.as_ref().window(),
+            account,
+            bounds.clone(),
+        )
+        .await?
     };
     apply_bounds(&view, &bounds)?;
     set_active_account_id(Some(account_id));

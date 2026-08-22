@@ -136,6 +136,11 @@ pub async fn doubao_web_generate_video(
 }
 
 #[tauri::command]
+pub fn web_creator_open_window(app: AppHandle) -> Result<(), String> {
+    web_creator_workspace::show_workspace_window(&app)
+}
+
+#[tauri::command]
 pub async fn web_creator_open_account(
     app: AppHandle,
     account_id: String,

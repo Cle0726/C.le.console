@@ -149,6 +149,17 @@ if (visualReviewTarget === "jimeng") {
     );
   });
 } else if (
+  "__TAURI_INTERNALS__" in window
+  && getCurrentWindow().label === "web-creator-workspace"
+) {
+  void import("./pages/WebCreatorWorkspaceWindow").then(({ WebCreatorWorkspaceWindow }) => {
+    root.render(
+      <React.StrictMode>
+        <WebCreatorWorkspaceWindow />
+      </React.StrictMode>,
+    );
+  });
+} else if (
   !("__TAURI_INTERNALS__" in window)
   || ![
     "floating-card",

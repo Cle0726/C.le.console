@@ -147,7 +147,15 @@ function generationErrorText(error: unknown) {
   return message;
 }
 
-export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => void } = {}) {
+type JimengApiServicePageProps = {
+  onOpenCanvas?: () => void;
+  standaloneWebCreator?: boolean;
+};
+
+export function JimengApiServicePage({
+  onOpenCanvas,
+  standaloneWebCreator = false,
+}: JimengApiServicePageProps = {}) {
   const [state, setState] = useState<JimengApiState | null>(null);
   const [draft, setDraft] = useState<JimengApiConfig | null>(null);
   const [tab, setTab] = useState<Tab>('platforms');
@@ -171,6 +179,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
   const [webCreatorDownloading, setWebCreatorDownloading] = useState<string | null>(null);
   const browserHostRef = useRef<HTMLDivElement | null>(null);
   const lastBrowserBoundsRef = useRef('');
+  const standaloneLaunchAttemptedRef = useRef(false);
 
   const [imageMode, setImageMode] = useState<'generation' | 'composition'>('generation');
   const [imageAccountId, setImageAccountId] = useState('');
@@ -223,6 +232,24 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     }, 10_000);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  const openStandaloneWebCreator = useCallback(async () => {
+    try {
+      await jimengApiService.openWebCreatorWindow();
+    } catch (error) {
+      setNotice({ tone: 'error', text: `无法打开独立网页创作工作台：${String(error)}` });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (standaloneWebCreator || tab !== 'platforms') {
+      if (tab !== 'platforms') standaloneLaunchAttemptedRef.current = false;
+      return;
+    }
+    if (standaloneLaunchAttemptedRef.current) return;
+    standaloneLaunchAttemptedRef.current = true;
+    void openStandaloneWebCreator();
+  }, [openStandaloneWebCreator, standaloneWebCreator, tab]);
 
   useEffect(() => {
     localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(tasks.slice(0, 40)));
@@ -352,17 +379,17 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
   }, [isDoubaoWebVideo]); // Account selection is intentionally refreshed separately.
 
   useEffect(() => {
-    if (tab !== 'platforms') return;
+    if (!standaloneWebCreator || tab !== 'platforms') return;
     void jimengApiService.getDoubaoWebState(webCreatorAccountId || null).then(setDoubaoWeb).catch(() => undefined);
     void jimengApiService.getWebCreatorState().then((next) => {
       setWebCreatorWorkspaceState(next);
       if (next.currentUrl) setWebCreatorAddress(next.currentUrl);
     }).catch(() => undefined);
-  }, [tab]);
+  }, [standaloneWebCreator, tab]);
 
   const syncWebCreatorBounds = useCallback(async () => {
     const host = browserHostRef.current;
-    if (!host || tab !== 'platforms' || !webCreatorWorkspaceState?.activeAccountId) return;
+    if (!standaloneWebCreator || !host || tab !== 'platforms' || !webCreatorWorkspaceState?.activeAccountId) return;
     const rect = host.getBoundingClientRect();
     const bounds = {
       x: Math.max(0, rect.left),
@@ -383,10 +410,11 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       // A resize can race with account switching. The next observer frame retries.
       lastBrowserBoundsRef.current = '';
     }
-  }, [tab, webCreatorWorkspaceState?.activeAccountId]);
+  }, [standaloneWebCreator, tab, webCreatorWorkspaceState?.activeAccountId]);
 
   useEffect(() => {
     const host = browserHostRef.current;
+    if (!standaloneWebCreator) return;
     if (tab !== 'platforms' || !host) {
       void jimengApiService.hideWebCreator().then(setWebCreatorWorkspaceState).catch(() => undefined);
       return;
@@ -407,10 +435,10 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       window.removeEventListener('scroll', schedule, true);
       window.cancelAnimationFrame(frame);
     };
-  }, [syncWebCreatorBounds, tab]);
+  }, [standaloneWebCreator, syncWebCreatorBounds, tab]);
 
   useEffect(() => {
-    if (tab !== 'platforms' || !webCreatorWorkspaceState?.activeAccountId) return;
+    if (!standaloneWebCreator || tab !== 'platforms' || !webCreatorWorkspaceState?.activeAccountId) return;
     const timer = window.setInterval(() => {
       if (document.hidden) return;
       void jimengApiService.getWebCreatorState().then((next) => {
@@ -419,7 +447,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       }).catch(() => undefined);
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [tab, webCreatorWorkspaceState?.activeAccountId]);
+  }, [standaloneWebCreator, tab, webCreatorWorkspaceState?.activeAccountId]);
 
   useEffect(() => {
     const next = webCreatorAccounts.find((account) => account.id === webCreatorAccountId)
@@ -457,13 +485,9 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
     if (!doubaoWebAccountId) return;
     setDoubaoWebBusy(true);
     try {
-      setWebCreatorPlatformId('doubao');
-      setWebCreatorAccountId(doubaoWebAccountId);
-      setTab('platforms');
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
-      await openWebCreatorAccount(doubaoWebAccountId);
       const account = doubaoWeb?.accounts.find((item) => item.id === doubaoWebAccountId);
-      setNotice({ tone: 'info', text: account?.loggedIn ? `${account.name} 已在当前工作台打开` : '请直接在中间网页完成豆包登录，不会再弹出独立窗口。' });
+      await jimengApiService.openWebCreatorWindow();
+      setNotice({ tone: 'info', text: `独立网页创作工作台已打开，请在左侧选择“${account?.name || '豆包账号'}”。` });
     } catch (error) {
       setNotice({ tone: 'error', text: `无法打开豆包网页版：${String(error)}` });
     } finally {
@@ -916,7 +940,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
 
   if (!draft || !state) {
     return (
-      <div className="jimeng-page jimeng-loading">
+      <div className={`jimeng-page jimeng-loading${standaloneWebCreator ? ' web-creator-standalone-page' : ''}`}>
         <LoaderCircle className="spin" size={28} />
         <span>正在装载网页创作中心…</span>
       </div>
@@ -931,7 +955,8 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
   }).join(',');
 
   return (
-    <div className="jimeng-page">
+    <div className={`jimeng-page${standaloneWebCreator ? ' web-creator-standalone-page' : ''}`}>
+      {!standaloneWebCreator && (<>
       <div className="page-top-strip jimeng-page-strip">
         <div className="page-top-strip-left">
           <span className="page-top-strip-label">网页创作中心</span>
@@ -960,7 +985,10 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
               key={id}
               type="button"
               className={`filter-tab${tab === id ? ' active' : ''}`}
-              onClick={() => setTab(id)}
+              onClick={() => {
+                setTab(id);
+                if (id === 'platforms') void openStandaloneWebCreator();
+              }}
             >
               {icon}<span>{label}</span>
               {id === 'tasks' && tasks.some((task) => task.status === 'running') && <i className="jimeng-task-dot" />}
@@ -1001,6 +1029,7 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
           </button>
         )}
       </section>
+      </>)}
 
       {notice && (
         <div className={`jimeng-notice ${notice.tone}`}>
@@ -1010,7 +1039,21 @@ export function JimengApiServicePage({ onOpenCanvas }: { onOpenCanvas?: () => vo
       )}
 
       <main className="jimeng-content">
-        {tab === 'platforms' && (
+        {tab === 'platforms' && !standaloneWebCreator && (
+          <section className="web-creator-launcher">
+            <div className="web-creator-launcher-icon"><PanelsTopLeft size={34} /></div>
+            <div>
+              <span>C.LE. / WEB CREATOR WORKBENCH</span>
+              <h2>网页创作工作台已改为独立窗口</h2>
+              <p>豆包、即梦、通义千问、小云雀和抖音仍集中在一个工作台中，不会为每个账号分别弹窗。</p>
+            </div>
+            <button className="btn btn-primary jimeng-button" type="button" onClick={() => void openStandaloneWebCreator()}>
+              <PanelsTopLeft size={18} />打开 / 切换到工作台
+            </button>
+          </section>
+        )}
+
+        {tab === 'platforms' && standaloneWebCreator && (
           <div className="web-creator-workspace">
             <aside className="web-creator-sidebar">
               <div className="web-creator-platform-list" aria-label="网页创作平台">

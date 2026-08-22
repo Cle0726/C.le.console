@@ -92,6 +92,8 @@ export const jimengApiService = {
     invoke<DoubaoWebState>('doubao_web_logout', { accountId }),
   generateDoubaoWebVideo: (request: DoubaoWebVideoRequest) =>
     invoke<Record<string, unknown>>('doubao_web_generate_video', { request }),
+  openWebCreatorWindow: () =>
+    isJimengVisualReview ? Promise.resolve() : invoke<void>('web_creator_open_window'),
   openWebCreatorAccount: (accountId: string, bounds?: WebCreatorBounds) =>
     invoke<WebCreatorWorkspaceState>('web_creator_open_account', { accountId, bounds: bounds ?? null }),
   setWebCreatorBounds: (bounds: WebCreatorBounds) =>

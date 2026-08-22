@@ -902,6 +902,7 @@ pub fn run() {
             commands::jimeng_api::doubao_web_remove_account,
             commands::jimeng_api::doubao_web_logout,
             commands::jimeng_api::doubao_web_generate_video,
+            commands::jimeng_api::web_creator_open_window,
             commands::jimeng_api::web_creator_open_account,
             commands::jimeng_api::web_creator_set_bounds,
             commands::jimeng_api::web_creator_hide,
