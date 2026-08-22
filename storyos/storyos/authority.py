@@ -92,7 +92,11 @@ class CanonFact:
         return True
 
     def revealed_at(self, sequence: int | None) -> bool:
-        return self.reveal_at is None or sequence is None or sequence >= self.reveal_at
+        if self.reveal_at is None:
+            return True
+        if sequence is None:
+            return False
+        return sequence >= self.reveal_at
 
 
 @dataclass(frozen=True)
