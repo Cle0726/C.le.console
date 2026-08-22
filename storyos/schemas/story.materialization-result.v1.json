@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.materialization-result.v1",
+  "title": "StoryOS Quarantine Materialization Staging Result v1",
+  "type": "object",
+  "required": ["schema", "result", "candidate", "policy"],
+  "properties": {
+    "schema": {"const": "story.materialization-result.v1"},
+    "result": {"type": "string", "enum": ["created", "unchanged"]},
+    "candidate": {"type": "object"},
+    "policy": {
+      "type": "object",
+      "required": ["quarantine_only", "canonical_mutation", "commit_required"],
+      "properties": {
+        "quarantine_only": {"const": true},
+        "canonical_mutation": {"const": false},
+        "commit_required": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
