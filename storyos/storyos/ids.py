@@ -13,6 +13,7 @@ _KIND_PREFIX = {
     "event": "evt",
     "scene": "scn",
     "relationship": "rel",
+    "claim": "clm",
 }
 
 _ID_RE = re.compile(r"^(?P<prefix>[a-z]+)_(?P<body>[0-9a-f]{32})$")
