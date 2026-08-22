@@ -1,0 +1,62 @@
+name: Windows CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Prepare compile-only sidecar placeholders
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $paths = @(
+            'sidecars/cle-cliproxy/bin/cle-cliproxy-x86_64-pc-windows-msvc.exe',
+            'sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe',
+            'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe'
+          )
+
+          foreach ($path in $paths) {
+            $directory = Split-Path -Parent $path
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+            New-Item -ItemType File -Force -Path $path | Out-Null
+          }
+
+          Write-Host 'Created compile-only placeholders. Release builds still build/restore real sidecars.'
+
+      - name: Rust compile check
+        env:
+          CLE_SKIP_CLIPROXY_BUILD: '1'
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml

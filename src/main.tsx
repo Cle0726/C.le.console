@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles/startup-shell.css";
 import { StartupGreeting } from "./components/StartupGreeting";
+import { UpdateNotifier } from "./components/UpdateNotifier";
 import { initI18n } from "./i18n";
 import {
   captureError,
@@ -98,6 +99,7 @@ function MainWindowBootstrap() {
           <LoadedApp startupReady={startupComplete} />
         </Guard>
       )}
+      {startupComplete && <UpdateNotifier />}
       {!startupComplete && (
         <StartupGreeting
           readyGate={appPaintReady}

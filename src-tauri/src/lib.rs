@@ -1,4 +1,5 @@
 mod commands;
+mod app_updates;
 pub mod error;
 mod models;
 mod modules;
@@ -279,6 +280,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             logger::log_info(&format!(
@@ -603,6 +605,7 @@ pub fn run() {
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
+            app_updates::install_app_update,
             // Account Commands
             commands::account::list_accounts,
             commands::account::add_account,
