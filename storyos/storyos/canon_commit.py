@@ -26,9 +26,9 @@ class CanonCommitError(RuntimeError):
 class CanonCommitWorkbench:
     """Explicit create-only gate from quarantine files into canonical files.
 
-    The gate writes an immutable authorization audit *before* any canonical create.
-    It never overwrites an existing canonical file and requires the caller to confirm
-    the exact SHA-256 of the quarantine file being committed.
+    An immutable authorization audit is written before any canonical create. The
+    canonical target is never overwritten, and the caller must confirm the exact
+    SHA-256 of the quarantine file being committed.
     """
 
     audit_namespace = "canon-commit-v1"
@@ -96,16 +96,16 @@ class CanonCommitWorkbench:
             raise CanonCommitError("actor cannot be empty")
         confirm_sha256 = confirm_sha256.strip().lower()
         if not _is_sha256(confirm_sha256):
-            raise CanonCommitError("confirm_sha256 must be a 64-character lowercase SHA-256")
+            raise CanonCommitError("confirm_sha256 must be a 64-character SHA-256")
 
         item = self._single_plan_item(project, claim_id)
-        candidate_sha = item.get("candidate_sha256")
-        if candidate_sha is None:
-            raise CanonCommitError("claim has no staged quarantine candidate to confirm")
-        if confirm_sha256 != candidate_sha:
-            raise CanonCommitError("confirmation SHA-256 does not match the current quarantine file")
 
         if item.get("state") == "committed":
+            candidate_sha = item.get("candidate_sha256")
+            if candidate_sha is None or confirm_sha256 != candidate_sha:
+                raise CanonCommitError(
+                    "confirmation SHA-256 does not match the committed quarantine file"
+                )
             audit = item.get("audit")
             if not isinstance(audit, dict):
                 raise CanonCommitError("committed target is missing its audit record")
@@ -114,6 +114,14 @@ class CanonCommitWorkbench:
         if not item["ready"]:
             reasons = ", ".join(item["reasons"]) or "not_ready"
             raise CanonCommitError(f"claim is not ready for canonical commit: {reasons}")
+
+        candidate_sha = item.get("candidate_sha256")
+        if candidate_sha is None:
+            raise CanonCommitError("ready claim is missing quarantine SHA-256")
+        if confirm_sha256 != candidate_sha:
+            raise CanonCommitError(
+                "confirmation SHA-256 does not match the current quarantine file"
+            )
 
         audit = self._authorization_mapping(item, actor=actor, note=note)
         audit_path = project.root / str(item["audit_path"])
@@ -126,9 +134,9 @@ class CanonCommitWorkbench:
         else:
             _exclusive_write_yaml(audit_path, audit)
 
-        # Re-run the entire commit plan after authorization and immediately before
-        # the canonical create. If the world changed in between, the audit remains
-        # as an unused authorization but no Canon mutation occurs.
+        # Revalidate everything immediately after the immutable authorization and
+        # before creating Canon. If the world changed, the unused authorization is
+        # retained but no canonical mutation occurs.
         rechecked = self._single_plan_item(project, claim_id)
         if rechecked.get("candidate_sha256") != confirm_sha256:
             raise CanonCommitError("quarantine file changed after authorization")
@@ -156,13 +164,16 @@ class CanonCommitWorkbench:
         try:
             _exclusive_write_yaml(canonical_path, payload)
         except FileExistsError:
-            # A concurrent create is acceptable only if it produced exactly the
-            # payload authorized by the same immutable audit.
             existing = _load_data(canonical_path)
             if existing != payload:
-                raise CanonCommitError("canonical target was concurrently created with different content")
+                raise CanonCommitError(
+                    "canonical target was concurrently created with different content"
+                )
 
-        written = _load_data(canonical_path)
+        try:
+            written = _load_data(canonical_path)
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            raise CanonCommitError(f"canonical file verification failed: {exc}") from exc
         if written != payload:
             raise CanonCommitError("canonical file verification failed after create")
 
@@ -189,15 +200,23 @@ class CanonCommitWorkbench:
                 f"materialization_{reason}"
                 for reason in materialization_item.get("reasons", [])
             ] or ["materialization_not_ready"]
-            return self._blocked_without_candidate(claim_id, reasons, materialization_item)
+            return self._item(
+                claim_id=claim_id,
+                ready=False,
+                state="blocked",
+                reasons=reasons,
+                materialization=materialization_item,
+            )
 
         kind = str(materialization_item.get("kind") or "")
         target_id = str(materialization_item.get("target_id") or "")
         if kind not in {"event", "fact"} or not target_id:
-            return self._blocked_without_candidate(
-                claim_id,
-                ["materialization_candidate_invalid"],
-                materialization_item,
+            return self._item(
+                claim_id=claim_id,
+                ready=False,
+                state="blocked",
+                reasons=["materialization_candidate_invalid"],
+                materialization=materialization_item,
             )
 
         directory = "events" if kind == "event" else "facts"
@@ -218,23 +237,20 @@ class CanonCommitWorkbench:
 
         prior_commit = committed_claims.get(claim_id)
         if prior_commit is not None and str(prior_commit.get("target_id")) != target_id:
-            return {
-                "claim_id": claim_id,
-                "ready": False,
-                "state": "blocked",
-                "reasons": ["claim_already_committed"],
-                "kind": kind,
-                "target_id": target_id,
-                "candidate_path": candidate_rel,
-                "candidate_sha256": None,
-                "canonical_path": canonical_rel,
-                "canonical_payload": None,
-                "canonical_payload_sha256": None,
-                "audit_id": prior_commit.get("id"),
-                "audit_path": prior_commit.get("_path"),
-                "audit": prior_commit,
-                "materialization": materialization_item,
-            }
+            return self._item(
+                claim_id=claim_id,
+                ready=False,
+                state="blocked",
+                reasons=["claim_already_committed"],
+                kind=kind,
+                target_id=target_id,
+                candidate_path=candidate_rel,
+                canonical_path=canonical_rel,
+                audit_id=str(prior_commit.get("id") or "") or None,
+                audit_path=self._audit_rel(str(prior_commit.get("id") or "")),
+                audit=prior_commit,
+                materialization=materialization_item,
+            )
 
         if not candidate_path.is_file():
             reasons = ["candidate_not_staged"]
@@ -242,23 +258,18 @@ class CanonCommitWorkbench:
                 f"materialization_{reason}"
                 for reason in materialization_item.get("reasons", [])
             )
-            return {
-                "claim_id": claim_id,
-                "ready": False,
-                "state": "blocked",
-                "reasons": _unique(reasons),
-                "kind": kind,
-                "target_id": target_id,
-                "candidate_path": candidate_rel,
-                "candidate_sha256": None,
-                "canonical_path": canonical_rel,
-                "canonical_payload": candidate_raw.get("canonical_payload"),
-                "canonical_payload_sha256": None,
-                "audit_id": None,
-                "audit_path": None,
-                "audit": None,
-                "materialization": materialization_item,
-            }
+            return self._item(
+                claim_id=claim_id,
+                ready=False,
+                state="blocked",
+                reasons=reasons,
+                kind=kind,
+                target_id=target_id,
+                candidate_path=candidate_rel,
+                canonical_path=canonical_rel,
+                canonical_payload=candidate_raw.get("canonical_payload"),
+                materialization=materialization_item,
+            )
 
         try:
             staged = _load_data(candidate_path)
@@ -268,27 +279,24 @@ class CanonCommitWorkbench:
                 target_id=target_id,
                 claim_id=claim_id,
             )
+            candidate_sha = _sha256_file(candidate_path)
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
-            return {
-                "claim_id": claim_id,
-                "ready": False,
-                "state": "blocked",
-                "reasons": ["candidate_invalid"],
-                "kind": kind,
-                "target_id": target_id,
-                "candidate_path": candidate_rel,
-                "candidate_sha256": _sha256_file(candidate_path),
-                "canonical_path": canonical_rel,
-                "canonical_payload": None,
-                "canonical_payload_sha256": None,
-                "audit_id": None,
-                "audit_path": None,
-                "audit": None,
-                "materialization": materialization_item,
-                "detail": str(exc),
-            }
+            return self._item(
+                claim_id=claim_id,
+                ready=False,
+                state="blocked",
+                reasons=["candidate_invalid"],
+                kind=kind,
+                target_id=target_id,
+                candidate_path=candidate_rel,
+                candidate_sha256=(
+                    _sha256_file(candidate_path) if candidate_path.is_file() else None
+                ),
+                canonical_path=canonical_rel,
+                materialization=materialization_item,
+                detail=str(exc),
+            )
 
-        candidate_sha = _sha256_file(candidate_path)
         payload = dict(staged["canonical_payload"])
         payload_sha = _stable_sha256(payload)
         audit_id = stable_id(
@@ -304,11 +312,15 @@ class CanonCommitWorkbench:
                 separators=(",", ":"),
             ),
         )
-        audit_rel = (Path("audit") / "canon_commits" / f"{audit_id}.yaml").as_posix()
-        matching_audit = next((audit for audit in audits if audit.get("id") == audit_id), None)
+        audit_rel = self._audit_rel(audit_id)
+        matching_audit = next(
+            (audit for audit in audits if audit.get("id") == audit_id),
+            None,
+        )
         if matching_audit is not None and not self._audit_matches_candidate(
             matching_audit,
             claim_id=claim_id,
+            claim_fingerprint=str(staged["claim_fingerprint"]),
             kind=kind,
             target_id=target_id,
             candidate_path=candidate_rel,
@@ -317,102 +329,119 @@ class CanonCommitWorkbench:
             canonical_payload_sha256=payload_sha,
             canonical_payload=payload,
         ):
-            return {
-                "claim_id": claim_id,
-                "ready": False,
-                "state": "blocked",
-                "reasons": ["audit_conflict"],
-                "kind": kind,
-                "target_id": target_id,
-                "candidate_path": candidate_rel,
-                "candidate_sha256": candidate_sha,
-                "canonical_path": canonical_rel,
-                "canonical_payload": payload,
-                "canonical_payload_sha256": payload_sha,
-                "audit_id": audit_id,
-                "audit_path": audit_rel,
-                "audit": matching_audit,
-                "materialization": materialization_item,
-            }
+            return self._item(
+                claim_id=claim_id,
+                ready=False,
+                state="blocked",
+                reasons=["audit_conflict"],
+                kind=kind,
+                target_id=target_id,
+                candidate_path=candidate_rel,
+                candidate_sha256=candidate_sha,
+                canonical_path=canonical_rel,
+                canonical_payload=payload,
+                canonical_payload_sha256=payload_sha,
+                audit_id=audit_id,
+                audit_path=audit_rel,
+                audit=matching_audit,
+                materialization=materialization_item,
+            )
 
-        # If Canon already exists, only an exact payload paired with the matching
-        # immutable authorization is considered a previously completed commit.
+        # A canonical file paired with the exact immutable audit is a completed
+        # earlier commit even if current Canon now makes materialization non-ready.
         if canonical_path.is_file():
-            existing = _load_data(canonical_path)
+            try:
+                existing = _load_data(canonical_path)
+            except (OSError, ValueError, yaml.YAMLError) as exc:
+                return self._item(
+                    claim_id=claim_id,
+                    ready=False,
+                    state="blocked",
+                    reasons=["canonical_target_invalid"],
+                    kind=kind,
+                    target_id=target_id,
+                    candidate_path=candidate_rel,
+                    candidate_sha256=candidate_sha,
+                    canonical_path=canonical_rel,
+                    canonical_payload=payload,
+                    canonical_payload_sha256=payload_sha,
+                    audit_id=audit_id,
+                    audit_path=audit_rel,
+                    audit=matching_audit,
+                    materialization=materialization_item,
+                    detail=str(exc),
+                )
             if existing != payload:
-                return {
-                    "claim_id": claim_id,
-                    "ready": False,
-                    "state": "blocked",
-                    "reasons": ["canonical_target_conflict"],
-                    "kind": kind,
-                    "target_id": target_id,
-                    "candidate_path": candidate_rel,
-                    "candidate_sha256": candidate_sha,
-                    "canonical_path": canonical_rel,
-                    "canonical_payload": payload,
-                    "canonical_payload_sha256": payload_sha,
-                    "audit_id": audit_id,
-                    "audit_path": audit_rel,
-                    "audit": matching_audit,
-                    "materialization": materialization_item,
-                }
+                return self._item(
+                    claim_id=claim_id,
+                    ready=False,
+                    state="blocked",
+                    reasons=["canonical_target_conflict"],
+                    kind=kind,
+                    target_id=target_id,
+                    candidate_path=candidate_rel,
+                    candidate_sha256=candidate_sha,
+                    canonical_path=canonical_rel,
+                    canonical_payload=payload,
+                    canonical_payload_sha256=payload_sha,
+                    audit_id=audit_id,
+                    audit_path=audit_rel,
+                    audit=matching_audit,
+                    materialization=materialization_item,
+                )
             if matching_audit is None:
-                return {
-                    "claim_id": claim_id,
-                    "ready": False,
-                    "state": "blocked",
-                    "reasons": ["canonical_target_untracked"],
-                    "kind": kind,
-                    "target_id": target_id,
-                    "candidate_path": candidate_rel,
-                    "candidate_sha256": candidate_sha,
-                    "canonical_path": canonical_rel,
-                    "canonical_payload": payload,
-                    "canonical_payload_sha256": payload_sha,
-                    "audit_id": audit_id,
-                    "audit_path": audit_rel,
-                    "audit": None,
-                    "materialization": materialization_item,
-                }
-            return {
-                "claim_id": claim_id,
-                "ready": False,
-                "state": "committed",
-                "reasons": ["already_committed"],
-                "kind": kind,
-                "target_id": target_id,
-                "candidate_path": candidate_rel,
-                "candidate_sha256": candidate_sha,
-                "canonical_path": canonical_rel,
-                "canonical_payload": payload,
-                "canonical_payload_sha256": payload_sha,
-                "audit_id": audit_id,
-                "audit_path": audit_rel,
-                "audit": matching_audit,
-                "materialization": materialization_item,
-            }
+                return self._item(
+                    claim_id=claim_id,
+                    ready=False,
+                    state="blocked",
+                    reasons=["canonical_target_untracked"],
+                    kind=kind,
+                    target_id=target_id,
+                    candidate_path=candidate_rel,
+                    candidate_sha256=candidate_sha,
+                    canonical_path=canonical_rel,
+                    canonical_payload=payload,
+                    canonical_payload_sha256=payload_sha,
+                    audit_id=audit_id,
+                    audit_path=audit_rel,
+                    materialization=materialization_item,
+                )
+            return self._item(
+                claim_id=claim_id,
+                ready=False,
+                state="committed",
+                reasons=["already_committed"],
+                kind=kind,
+                target_id=target_id,
+                candidate_path=candidate_rel,
+                candidate_sha256=candidate_sha,
+                canonical_path=canonical_rel,
+                canonical_payload=payload,
+                canonical_payload_sha256=payload_sha,
+                audit_id=audit_id,
+                audit_path=audit_rel,
+                audit=matching_audit,
+                materialization=materialization_item,
+            )
 
-        # An existing target ID outside the create-only canonical path is not
-        # adopted or moved automatically.
         if self._target_id_exists_elsewhere(project, kind=kind, target_id=target_id):
-            return {
-                "claim_id": claim_id,
-                "ready": False,
-                "state": "blocked",
-                "reasons": ["canonical_id_exists_elsewhere"],
-                "kind": kind,
-                "target_id": target_id,
-                "candidate_path": candidate_rel,
-                "candidate_sha256": candidate_sha,
-                "canonical_path": canonical_rel,
-                "canonical_payload": payload,
-                "canonical_payload_sha256": payload_sha,
-                "audit_id": audit_id,
-                "audit_path": audit_rel,
-                "audit": matching_audit,
-                "materialization": materialization_item,
-            }
+            return self._item(
+                claim_id=claim_id,
+                ready=False,
+                state="blocked",
+                reasons=["canonical_id_exists_elsewhere"],
+                kind=kind,
+                target_id=target_id,
+                candidate_path=candidate_rel,
+                candidate_sha256=candidate_sha,
+                canonical_path=canonical_rel,
+                canonical_payload=payload,
+                canonical_payload_sha256=payload_sha,
+                audit_id=audit_id,
+                audit_path=audit_rel,
+                audit=matching_audit,
+                materialization=materialization_item,
+            )
 
         reasons: list[str] = []
         if not materialization_item.get("ready"):
@@ -429,47 +458,68 @@ class CanonCommitWorkbench:
                 if staged != expected:
                     reasons.append("candidate_drift")
 
-        return {
+        return self._item(
+            claim_id=claim_id,
+            ready=not reasons,
+            state=(
+                "authorized"
+                if matching_audit is not None and not reasons
+                else ("ready" if not reasons else "blocked")
+            ),
+            reasons=reasons,
+            kind=kind,
+            target_id=target_id,
+            candidate_path=candidate_rel,
+            candidate_sha256=candidate_sha,
+            canonical_path=canonical_rel,
+            canonical_payload=payload,
+            canonical_payload_sha256=payload_sha,
+            audit_id=audit_id,
+            audit_path=audit_rel,
+            audit=matching_audit,
+            materialization=materialization_item,
+        )
+
+    def _item(
+        self,
+        *,
+        claim_id: str,
+        ready: bool,
+        state: str,
+        reasons: list[str],
+        materialization: dict[str, Any],
+        kind: str | None = None,
+        target_id: str | None = None,
+        candidate_path: str | None = None,
+        candidate_sha256: str | None = None,
+        canonical_path: str | None = None,
+        canonical_payload: Any = None,
+        canonical_payload_sha256: str | None = None,
+        audit_id: str | None = None,
+        audit_path: str | None = None,
+        audit: dict[str, Any] | None = None,
+        detail: str | None = None,
+    ) -> dict[str, Any]:
+        item = {
             "claim_id": claim_id,
-            "ready": not reasons,
-            "state": "authorized" if matching_audit is not None and not reasons else ("ready" if not reasons else "blocked"),
+            "ready": ready,
+            "state": state,
             "reasons": _unique(reasons),
             "kind": kind,
             "target_id": target_id,
-            "candidate_path": candidate_rel,
-            "candidate_sha256": candidate_sha,
-            "canonical_path": canonical_rel,
-            "canonical_payload": payload,
-            "canonical_payload_sha256": payload_sha,
+            "candidate_path": candidate_path,
+            "candidate_sha256": candidate_sha256,
+            "canonical_path": canonical_path,
+            "canonical_payload": canonical_payload,
+            "canonical_payload_sha256": canonical_payload_sha256,
             "audit_id": audit_id,
-            "audit_path": audit_rel,
-            "audit": matching_audit,
-            "materialization": materialization_item,
+            "audit_path": audit_path,
+            "audit": audit,
+            "materialization": materialization,
         }
-
-    def _blocked_without_candidate(
-        self,
-        claim_id: str,
-        reasons: list[str],
-        materialization_item: dict[str, Any],
-    ) -> dict[str, Any]:
-        return {
-            "claim_id": claim_id,
-            "ready": False,
-            "state": "blocked",
-            "reasons": _unique(reasons),
-            "kind": materialization_item.get("kind"),
-            "target_id": materialization_item.get("target_id"),
-            "candidate_path": None,
-            "candidate_sha256": None,
-            "canonical_path": None,
-            "canonical_payload": None,
-            "canonical_payload_sha256": None,
-            "audit_id": None,
-            "audit_path": None,
-            "audit": None,
-            "materialization": materialization_item,
-        }
+        if detail is not None:
+            item["detail"] = detail
+        return item
 
     def _authorization_mapping(
         self,
@@ -509,7 +559,11 @@ class CanonCommitWorkbench:
             },
         }
 
-    def _result_payload(self, item: dict[str, Any], audit: dict[str, Any]) -> dict[str, Any]:
+    def _result_payload(
+        self,
+        item: dict[str, Any],
+        audit: dict[str, Any],
+    ) -> dict[str, Any]:
         return {
             "schema": "story.canon-commit-result.v1",
             "claim_id": item["claim_id"],
@@ -545,9 +599,7 @@ class CanonCommitWorkbench:
             if audit_id in seen_ids:
                 raise CanonCommitError(f"duplicate canon commit audit id: {audit_id}")
             seen_ids.add(audit_id)
-            item = dict(raw)
-            item["_path"] = path.relative_to(project.root).as_posix()
-            audits.append(item)
+            audits.append(dict(raw))
         return audits
 
     def _committed_claims(
@@ -565,9 +617,11 @@ class CanonCommitWorkbench:
                 continue
             try:
                 payload = _load_data(path)
-            except (OSError, yaml.YAMLError):
+            except (OSError, ValueError, yaml.YAMLError):
                 continue
             if _stable_sha256(payload) != audit.get("canonical_payload_sha256"):
+                continue
+            if payload != audit.get("canonical_payload"):
                 continue
             claim_id = str(audit.get("claim_id") or "")
             if not claim_id:
@@ -585,6 +639,7 @@ class CanonCommitWorkbench:
         audit: dict[str, Any],
         *,
         claim_id: str,
+        claim_fingerprint: str,
         kind: str,
         target_id: str,
         candidate_path: str,
@@ -593,10 +648,12 @@ class CanonCommitWorkbench:
         canonical_payload_sha256: str,
         canonical_payload: dict[str, Any],
     ) -> bool:
+        policy = audit.get("policy") or {}
         return (
             audit.get("schema") == "story.canon-commit-audit.v1"
             and audit.get("action") == "authorize_canonical_create"
             and audit.get("claim_id") == claim_id
+            and audit.get("claim_fingerprint") == claim_fingerprint
             and audit.get("kind") == kind
             and audit.get("target_id") == target_id
             and audit.get("candidate_path") == candidate_path
@@ -604,10 +661,10 @@ class CanonCommitWorkbench:
             and audit.get("canonical_path") == canonical_path
             and audit.get("canonical_payload_sha256") == canonical_payload_sha256
             and audit.get("canonical_payload") == canonical_payload
-            and (audit.get("policy") or {}).get("immutable") is True
-            and (audit.get("policy") or {}).get("audit_precedes_canonical_mutation") is True
-            and (audit.get("policy") or {}).get("canonical_create_only") is True
-            and (audit.get("policy") or {}).get("canonical_overwrite") is False
+            and policy.get("immutable") is True
+            and policy.get("audit_precedes_canonical_mutation") is True
+            and policy.get("canonical_create_only") is True
+            and policy.get("canonical_overwrite") is False
         )
 
     def _validate_staged_candidate(
@@ -628,6 +685,9 @@ class CanonCommitWorkbench:
             raise ValueError("quarantine candidate target id mismatch")
         if raw.get("claim_id") != claim_id:
             raise ValueError("quarantine candidate claim id mismatch")
+        fingerprint = str(raw.get("claim_fingerprint") or "")
+        if not _is_sha256(fingerprint):
+            raise ValueError("quarantine claim fingerprint must be SHA-256")
         policy = raw.get("policy") or {}
         if policy.get("quarantine_only") is not True:
             raise ValueError("quarantine_only policy must be true")
@@ -661,6 +721,11 @@ class CanonCommitWorkbench:
             return any(event.id == target_id for event in project.load_events())
         return any(fact.id == target_id for fact in project.load_canon_facts())
 
+    def _audit_rel(self, audit_id: str) -> str | None:
+        if not validate_id(audit_id, "audit"):
+            return None
+        return (Path("audit") / "canon_commits" / f"{audit_id}.yaml").as_posix()
+
 
 def _stable_sha256(value: Any) -> str:
     raw = json.dumps(
@@ -690,13 +755,10 @@ def _load_data(path: Path) -> Any:
 def _exclusive_write_yaml(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=120)
-    try:
-        with path.open("x", encoding="utf-8", newline="\n") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-    except FileExistsError:
-        raise
+    with path.open("x", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
 
 
 def _unique(values: list[str]) -> list[str]:
