@@ -14,7 +14,7 @@ pub enum DownloadEvent {
     Started { content_length: Option<u64> },
     #[serde(rename_all = "camelCase")]
     Progress { chunk_length: usize },
-    DownloadFinished,
+    Finished,
 }
 
 fn updater_public_key() -> Result<&'static str, String> {
@@ -64,13 +64,13 @@ pub async fn install_app_update(
                 let _ = on_event.send(DownloadEvent::Progress { chunk_length });
             },
             || {
-                let _ = on_event.send(DownloadEvent::DownloadFinished);
+                let _ = on_event.send(DownloadEvent::Finished);
             },
         )
         .await
         .map_err(|error| format!("下载或安装更新失败: {error}"))?;
 
-    // Windows updater installers normally terminate the current process during install.
-    // On platforms where control returns here, restart so the newly installed version runs.
+    // Windows exits the application automatically while installing. If control
+    // returns on another desktop platform, restart into the newly installed build.
     app.restart();
 }
