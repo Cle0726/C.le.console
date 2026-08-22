@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.event.v1",
+  "title": "StoryOS Event v1",
+  "type": "object",
+  "required": ["schema", "id", "subject", "type", "at"],
+  "properties": {
+    "schema": {"const": "story.event.v1"},
+    "id": {"type": "string", "pattern": "^evt_[0-9a-f]{32}$"},
+    "subject": {"type": "string", "pattern": "^[a-z]+_[0-9a-f]{32}$"},
+    "type": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_.-]*$"},
+    "at": {
+      "type": "object",
+      "required": ["sequence"],
+      "properties": {
+        "sequence": {"type": "integer", "minimum": 0},
+        "season": {"type": "integer", "minimum": 0},
+        "episode": {"type": "integer", "minimum": 0},
+        "scene": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "payload": {"type": "object"},
+    "source": {"type": "object"}
+  },
+  "additionalProperties": true
+}
