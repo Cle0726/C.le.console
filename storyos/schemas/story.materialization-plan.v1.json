@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story.materialization-plan.v1",
+  "title": "StoryOS Reviewed Claim Materialization Plan v1",
+  "type": "object",
+  "required": ["schema", "filters", "summary", "items", "policy"],
+  "properties": {
+    "schema": {"const": "story.materialization-plan.v1"},
+    "filters": {"type": "object"},
+    "summary": {
+      "type": "object",
+      "required": ["claims", "ready", "blocked", "reasons"],
+      "properties": {
+        "claims": {"type": "integer", "minimum": 0},
+        "ready": {"type": "integer", "minimum": 0},
+        "blocked": {"type": "integer", "minimum": 0},
+        "reasons": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+      },
+      "additionalProperties": false
+    },
+    "items": {"type": "array", "items": {"type": "object"}},
+    "policy": {
+      "type": "object",
+      "required": ["quarantine_only", "canonical_mutation", "commit_required", "stale_reviews_rejected", "conflicts_rechecked_at_plan_time"],
+      "properties": {
+        "quarantine_only": {"const": true},
+        "canonical_mutation": {"const": false},
+        "commit_required": {"const": true},
+        "stale_reviews_rejected": {"const": true},
+        "conflicts_rechecked_at_plan_time": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
