@@ -1,0 +1,16 @@
+schema: story.claim.v1
+id: clm_00000000000000000000000000000001
+subject: chr_00000000000000000000000000000001
+predicate: identity.role
+value: antagonist
+at:
+  sequence: 150
+  season: 1
+  episode: 1
+  scene: 2
+confidence: 0.93
+proposed_authority: draft
+status: approved
+source:
+  kind: ai_extraction
+  note: intentionally conflicting demo claim; status alone must not make it canonical
