@@ -113,27 +113,11 @@ class MaterializationWorkbench:
             reasons = ", ".join(item["reasons"]) or "not_ready"
             raise MaterializationError(f"claim is not ready for materialization staging: {reasons}")
 
-        candidate = dict(item["candidate"])
+        mapping = quarantine_mapping_from_plan_item(item)
         kind = str(item["kind"])
         target_id = str(item["target_id"])
         directory = "events" if kind == "event" else "facts"
         destination = project.root / "staging" / "materialization" / directory / f"{target_id}.yaml"
-        mapping = {
-            "schema": "story.materialization-candidate.v1",
-            "kind": kind,
-            "target_id": target_id,
-            "claim_id": claim_id,
-            "claim_fingerprint": candidate["claim_fingerprint"],
-            "review": candidate["review"],
-            "check": candidate["check"],
-            "canonical_payload": candidate["canonical_payload"],
-            "assumptions": candidate["assumptions"],
-            "policy": {
-                "quarantine_only": True,
-                "canonical_mutation": False,
-                "commit_required": True,
-            },
-        }
 
         if destination.exists():
             existing = _load_data(destination)
@@ -335,6 +319,45 @@ class MaterializationWorkbench:
             candidate=candidate,
             check=check,
         )
+
+
+def quarantine_mapping_from_plan_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Return the exact quarantine file mapping expected for one ready plan item.
+
+    This pure function is shared by quarantine staging and the later canonical commit
+    gate so the commit gate can compare the staged file against the current protocol
+    without duplicating assembly logic.
+    """
+    if not item.get("ready"):
+        raise MaterializationError("cannot build quarantine mapping from a blocked plan item")
+    candidate_raw = item.get("candidate")
+    if not isinstance(candidate_raw, dict):
+        raise MaterializationError("ready materialization item is missing candidate data")
+    candidate = dict(candidate_raw)
+    kind = str(item.get("kind") or "")
+    target_id = str(item.get("target_id") or "")
+    claim_id = str(item.get("claim_id") or "")
+    if kind not in {"event", "fact"}:
+        raise MaterializationError(f"unsupported materialization kind: {kind}")
+    if not target_id or not claim_id:
+        raise MaterializationError("ready materialization item is missing target/claim identity")
+
+    return {
+        "schema": "story.materialization-candidate.v1",
+        "kind": kind,
+        "target_id": target_id,
+        "claim_id": claim_id,
+        "claim_fingerprint": candidate["claim_fingerprint"],
+        "review": candidate["review"],
+        "check": candidate["check"],
+        "canonical_payload": candidate["canonical_payload"],
+        "assumptions": candidate["assumptions"],
+        "policy": {
+            "quarantine_only": True,
+            "canonical_mutation": False,
+            "commit_required": True,
+        },
+    }
 
 
 def _load_data(path: Path) -> Any:
