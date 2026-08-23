@@ -45,14 +45,20 @@ jobs:
       - name: Audit StoryOS desktop read-only boundary
         run: node scripts/check-storyos-desktop-bridge.mjs
 
+      - name: Audit StoryOS manuscript writer boundary
+        run: node scripts/check-storyos-manuscript-writer.mjs
+
       - name: TypeScript typecheck
         run: npm run typecheck
 
       - name: Install StoryOS desktop packager
         run: python -m pip install -e "storyos[desktop]"
 
-      - name: Build StoryOS Windows sidecar
+      - name: Build StoryOS Windows read-only sidecar
         run: python scripts/build-storyos-sidecar.py --target x86_64-pc-windows-msvc
+
+      - name: Build StoryOS Windows manuscript sidecar
+        run: python scripts/build-storyos-manuscript-sidecar.py --target x86_64-pc-windows-msvc
 
       - name: Prepare compile-only sidecar placeholders
         shell: pwsh
@@ -70,7 +76,7 @@ jobs:
             New-Item -ItemType File -Force -Path $path | Out-Null
           }
 
-          Write-Host 'Created compile-only placeholders for non-StoryOS sidecars. StoryOS is built and smoke-tested for real in PR CI.'
+          Write-Host 'Created compile-only placeholders for non-StoryOS sidecars. Both StoryOS sidecars are built and smoke-tested for real in PR CI.'
 
       - name: Rust compile check
         env:
