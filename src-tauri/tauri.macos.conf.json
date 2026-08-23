@@ -8,7 +8,8 @@
     "externalBin": [
       "../sidecars/cle-cliproxy/bin/cle-cliproxy",
       "../sidecars/jimeng-api/bin/jimeng-api",
-      "../sidecars/storyos-workspace/bin/storyos-workspace"
+      "../sidecars/storyos-workspace/bin/storyos-workspace",
+      "../sidecars/storyos-manuscript/bin/storyos-manuscript"
     ],
     "macOS": {
       "minimumSystemVersion": "12.0",
