@@ -106,4 +106,14 @@ for (const architecture of architectures) {
   fs.chmodSync(output, 0o755);
 }
 
+// StoryOS is built from the same read-only workspace entry point used by the CLI.
+// The Python environment must already contain the `storyos[desktop]` extra so the
+// pinned PyInstaller version is available. The builder smoke-tests and ad-hoc
+// signs the resulting Mach-O before Tauri bundles it.
+run('python3', [
+  'scripts/build-storyos-sidecar.py',
+  '--target',
+  requestedTarget,
+]);
+
 console.log(`macOS sidecars ready for ${requestedTarget}`);

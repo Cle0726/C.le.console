@@ -25,6 +25,16 @@ jobs:
             package-lock.json
             third_party/jimeng-api/package-lock.json
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: storyos/pyproject.toml
+
+      - name: Install StoryOS desktop packager
+        run: python -m pip install -e "storyos[desktop]"
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -43,6 +53,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Audit StoryOS desktop read-only boundary
+        run: node scripts/check-storyos-desktop-bridge.mjs
 
       - name: Check macOS source readiness
         run: npm run macos:check
