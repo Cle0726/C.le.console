@@ -99,7 +99,7 @@ export function StoryOSWorkspacePage({ onExit }: StoryOSWorkspacePageProps) {
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
 
   const workflow = useMemo(() => workflowSummary(workspace), [workspace]);
-  const activeThrough = workspace?.timeline.requested_through_sequence ?? null;
+  const activeThrough = workspace?.timeline.effective_through_sequence ?? null;
 
   const characters = useMemo(
     () => (workspace?.entities ?? []).filter((entity) => entity.kind === 'character'),
