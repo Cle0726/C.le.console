@@ -93,6 +93,9 @@ jobs:
       - name: Audit StoryOS desktop read-only boundary
         run: node scripts/check-storyos-desktop-bridge.mjs
 
+      - name: Audit StoryOS manuscript writer boundary
+        run: node scripts/check-storyos-manuscript-writer.mjs
+
       - name: Build cle-cliproxy Windows sidecar
         shell: pwsh
         working-directory: sidecars/cle-cliproxy
@@ -108,8 +111,11 @@ jobs:
         shell: pwsh
         run: ./scripts/build-jimeng-sidecar.ps1
 
-      - name: Build StoryOS Windows sidecar
+      - name: Build StoryOS Windows read-only sidecar
         run: python scripts/build-storyos-sidecar.py --target x86_64-pc-windows-msvc
+
+      - name: Build StoryOS Windows manuscript sidecar
+        run: python scripts/build-storyos-manuscript-sidecar.py --target x86_64-pc-windows-msvc
 
       - name: Restore cockpit sidecar from current portable baseline
         shell: pwsh
@@ -147,7 +153,8 @@ jobs:
             'sidecars/cle-cliproxy/bin/cle-cliproxy-x86_64-pc-windows-msvc.exe',
             'sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe',
             'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe',
-            'sidecars/storyos-workspace/bin/storyos-workspace-x86_64-pc-windows-msvc.exe'
+            'sidecars/storyos-workspace/bin/storyos-workspace-x86_64-pc-windows-msvc.exe',
+            'sidecars/storyos-manuscript/bin/storyos-manuscript-x86_64-pc-windows-msvc.exe'
           )
           foreach ($path in $required) {
             if (-not (Test-Path -LiteralPath $path)) {
