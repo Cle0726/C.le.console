@@ -1,0 +1,60 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "storyos-readonly",
+  "description": "Read-only StoryOS authoring workspace sidecar access for the main window only",
+  "windows": ["main"],
+  "permissions": [
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "../sidecars/storyos-workspace/bin/storyos-workspace",
+          "sidecar": true,
+          "args": [
+            "snapshot",
+            { "validator": "[^\\r\\n\\u0000]+" }
+          ]
+        },
+        {
+          "name": "../sidecars/storyos-workspace/bin/storyos-workspace",
+          "sidecar": true,
+          "args": [
+            "snapshot",
+            { "validator": "[^\\r\\n\\u0000]+" },
+            "--through",
+            { "validator": "[0-9]{1,15}" }
+          ]
+        },
+        {
+          "name": "../sidecars/storyos-workspace/bin/storyos-workspace",
+          "sidecar": true,
+          "args": [
+            "entity",
+            { "validator": "[^\\r\\n\\u0000]+" },
+            { "validator": "[a-z]+_[0-9a-f]{32}" }
+          ]
+        },
+        {
+          "name": "../sidecars/storyos-workspace/bin/storyos-workspace",
+          "sidecar": true,
+          "args": [
+            "entity",
+            { "validator": "[^\\r\\n\\u0000]+" },
+            { "validator": "[a-z]+_[0-9a-f]{32}" },
+            "--through",
+            { "validator": "[0-9]{1,15}" }
+          ]
+        },
+        {
+          "name": "../sidecars/storyos-workspace/bin/storyos-workspace",
+          "sidecar": true,
+          "args": [
+            "manuscript",
+            { "validator": "[^\\r\\n\\u0000]+" },
+            { "validator": "[^\\r\\n\\u0000]+" }
+          ]
+        }
+      ]
+    }
+  ]
+}
