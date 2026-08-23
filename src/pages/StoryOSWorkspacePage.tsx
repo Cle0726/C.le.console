@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   BookOpenText,
@@ -99,6 +99,7 @@ export function StoryOSWorkspacePage({ onExit }: StoryOSWorkspacePageProps) {
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
 
   const workflow = useMemo(() => workflowSummary(workspace), [workspace]);
+  const activeThrough = workspace?.timeline.requested_through_sequence ?? null;
 
   const characters = useMemo(
     () => (workspace?.entities ?? []).filter((entity) => entity.kind === 'character'),
@@ -184,8 +185,7 @@ export function StoryOSWorkspacePage({ onExit }: StoryOSWorkspacePageProps) {
     setError('');
     setSelectedEntityId(item.id);
     try {
-      const through = parseThrough(throughDraft);
-      const next = await loadStoryOsEntity(projectPath, item.id, through);
+      const next = await loadStoryOsEntity(projectPath, item.id, activeThrough);
       setEntityView(next);
     } catch (cause) {
       setSelectedEntityId(null);
@@ -193,7 +193,7 @@ export function StoryOSWorkspacePage({ onExit }: StoryOSWorkspacePageProps) {
     } finally {
       setDetailBusy(false);
     }
-  }, [projectPath, throughDraft]);
+  }, [activeThrough, projectPath]);
 
   const summary = workspace?.summary ?? {};
   const effectiveSequence = workspace?.timeline.effective_through_sequence;
@@ -519,7 +519,7 @@ function WorkflowInspector({
   );
 }
 
-function InspectorSection({ title, children }: { title: string; children: React.ReactNode }) {
+function InspectorSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="storyos-inspector-section">
       <h4>{title}</h4>
