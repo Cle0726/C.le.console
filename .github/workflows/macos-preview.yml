@@ -57,6 +57,9 @@ jobs:
       - name: Audit StoryOS desktop read-only boundary
         run: node scripts/check-storyos-desktop-bridge.mjs
 
+      - name: Audit StoryOS manuscript writer boundary
+        run: node scripts/check-storyos-manuscript-writer.mjs
+
       - name: Check macOS source readiness
         run: npm run macos:check
 
