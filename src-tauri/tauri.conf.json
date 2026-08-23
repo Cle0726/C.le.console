@@ -89,7 +89,8 @@
       "../sidecars/cle-cliproxy/bin/cle-cliproxy",
       "../sidecars/cockpit-cliproxy/bin/cockpit-cliproxy",
       "../sidecars/jimeng-api/bin/jimeng-api",
-      "../sidecars/storyos-workspace/bin/storyos-workspace"
+      "../sidecars/storyos-workspace/bin/storyos-workspace",
+      "../sidecars/storyos-manuscript/bin/storyos-manuscript"
     ],
     "icon": [
       "icons/48x48.png",
