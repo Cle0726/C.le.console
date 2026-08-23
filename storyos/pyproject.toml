@@ -15,6 +15,9 @@ dependencies = [
 dev = [
   "pytest>=8.3",
 ]
+desktop = [
+  "pyinstaller==6.22.0",
+]
 
 [project.scripts]
 storyos = "storyos.cli:main"
