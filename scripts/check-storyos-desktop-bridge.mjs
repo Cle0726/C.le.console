@@ -74,21 +74,12 @@ for (const forbidden of ['shell:allow-spawn', 'shell:allow-stdin-write', 'shell:
 }
 
 const entry = readText('storyos/sidecar_main.py');
-if (!entry.includes('from storyos.workspace_cli import main')) {
-  fail('desktop sidecar entry point must route only to storyos.workspace_cli');
-}
-for (const forbidden of [
-  'storyos.cli',
-  'claim_review',
-  'materialization',
-  'canon_commit',
-  'review_cli',
-  'materialization_cli',
-  'canon_commit_cli',
-]) {
-  if (entry.includes(forbidden)) {
-    fail(`desktop sidecar entry point references mutation surface: ${forbidden}`);
-  }
+const storyosImports = entry
+  .split(/\r?\n/)
+  .map((line) => line.trim())
+  .filter((line) => /^from\s+storyos\.|^import\s+storyos(?:\.|\s|$)/.test(line));
+if (JSON.stringify(storyosImports) !== JSON.stringify(['from storyos.workspace_cli import main'])) {
+  fail(`desktop sidecar entry point must import only storyos.workspace_cli; got ${JSON.stringify(storyosImports)}`);
 }
 
 const bridge = readText('src/services/storyosBridge.ts');
