@@ -19,10 +19,12 @@ function readText(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
-const tauri = readJson('src-tauri/tauri.conf.json');
-const externalBin = tauri?.bundle?.externalBin;
-if (!Array.isArray(externalBin) || !externalBin.includes(sidecarName)) {
-  fail(`tauri.conf.json must declare ${sidecarName} as an externalBin`);
+for (const configPath of ['src-tauri/tauri.conf.json', 'src-tauri/tauri.macos.conf.json']) {
+  const tauri = readJson(configPath);
+  const externalBin = tauri?.bundle?.externalBin;
+  if (!Array.isArray(externalBin) || !externalBin.includes(sidecarName)) {
+    fail(`${configPath} must declare ${sidecarName} as an externalBin`);
+  }
 }
 
 const capability = readJson('src-tauri/capabilities/storyos.json');
