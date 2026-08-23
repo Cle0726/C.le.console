@@ -35,6 +35,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Audit StoryOS desktop read-only boundary
+        run: node scripts/check-storyos-desktop-bridge.mjs
+
       - name: TypeScript typecheck
         run: npm run typecheck
 
@@ -45,7 +48,8 @@ jobs:
           $paths = @(
             'sidecars/cle-cliproxy/bin/cle-cliproxy-x86_64-pc-windows-msvc.exe',
             'sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe',
-            'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe'
+            'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe',
+            'sidecars/storyos-workspace/bin/storyos-workspace-x86_64-pc-windows-msvc.exe'
           )
 
           foreach ($path in $paths) {
