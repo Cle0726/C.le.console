@@ -5,11 +5,15 @@ on:
     paths:
       - 'storyos/**'
       - 'src/services/storyosBridge.ts'
+      - 'src/services/storyosManuscriptBridge.ts'
       - 'src-tauri/capabilities/storyos.json'
+      - 'src-tauri/capabilities/storyos-manuscript.json'
       - 'src-tauri/tauri.conf.json'
       - 'src-tauri/tauri.macos.conf.json'
       - 'scripts/build-storyos-sidecar.py'
+      - 'scripts/build-storyos-manuscript-sidecar.py'
       - 'scripts/check-storyos-desktop-bridge.mjs'
+      - 'scripts/check-storyos-manuscript-writer.mjs'
       - '.github/workflows/storyos-desktop-macos-ci.yml'
   workflow_dispatch:
 
@@ -17,9 +21,9 @@ permissions:
   contents: read
 
 jobs:
-  validate-storyos-sidecar:
+  validate-storyos-sidecars:
     runs-on: macos-14
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Check out source
@@ -40,18 +44,28 @@ jobs:
       - name: Audit StoryOS desktop read-only boundary
         run: node scripts/check-storyos-desktop-bridge.mjs
 
+      - name: Audit StoryOS manuscript writer boundary
+        run: node scripts/check-storyos-manuscript-writer.mjs
+
       - name: Install StoryOS desktop packager
         run: python -m pip install -e "storyos[desktop]"
 
-      - name: Build and smoke-test Apple Silicon StoryOS sidecar
+      - name: Build and smoke-test Apple Silicon StoryOS read-only sidecar
         run: python scripts/build-storyos-sidecar.py --target aarch64-apple-darwin
 
-      - name: Verify StoryOS sidecar signature and architecture
+      - name: Build and smoke-test Apple Silicon StoryOS manuscript sidecar
+        run: python scripts/build-storyos-manuscript-sidecar.py --target aarch64-apple-darwin
+
+      - name: Verify StoryOS sidecar signatures and architectures
         shell: bash
         run: |
           set -euo pipefail
-          SIDECAR='sidecars/storyos-workspace/bin/storyos-workspace-aarch64-apple-darwin'
-          test -x "$SIDECAR"
-          codesign --verify --strict --verbose=2 "$SIDECAR"
-          file "$SIDECAR"
-          shasum -a 256 "$SIDECAR"
+          for SIDECAR in \
+            'sidecars/storyos-workspace/bin/storyos-workspace-aarch64-apple-darwin' \
+            'sidecars/storyos-manuscript/bin/storyos-manuscript-aarch64-apple-darwin'
+          do
+            test -x "$SIDECAR"
+            codesign --verify --strict --verbose=2 "$SIDECAR"
+            file "$SIDECAR"
+            shasum -a 256 "$SIDECAR"
+          done
