@@ -10,9 +10,14 @@ const requiredFiles = [
   'src-tauri/Info.plist',
   'src-tauri/icons/icon.icns',
   'src-tauri/native/macos-native-menu/Package.swift',
+  'src-tauri/capabilities/storyos.json',
   'sidecars/cle-cliproxy/go.mod',
+  'storyos/sidecar_main.py',
+  'storyos/pyproject.toml',
   'third_party/jimeng-api/package.json',
   'third_party/jimeng-api/package-lock.json',
+  'scripts/build-storyos-sidecar.py',
+  'scripts/check-storyos-desktop-bridge.mjs',
   'scripts/build-macos-sidecars.mjs',
   'scripts/build-macos.mjs',
   '.github/workflows/macos-preview.yml',
@@ -40,7 +45,7 @@ for (const target of ['app', 'dmg']) {
   if (!targets.includes(target)) failures.push(`macOS bundle target is missing: ${target}`);
 }
 
-for (const sidecar of ['cle-cliproxy', 'jimeng-api']) {
+for (const sidecar of ['cle-cliproxy', 'jimeng-api', 'storyos-workspace']) {
   if (!externalBin.some((entry) => entry.endsWith(`/bin/${sidecar}`))) {
     failures.push(`macOS externalBin is missing: ${sidecar}`);
   }
@@ -64,7 +69,7 @@ for (const script of ['macos:check', 'macos:sidecars', 'macos:build']) {
 }
 
 if (process.platform === 'darwin') {
-  for (const command of ['xcodebuild', 'go', 'rustup', 'node', 'npm']) {
+  for (const command of ['xcodebuild', 'go', 'rustup', 'node', 'npm', 'python3', 'codesign']) {
     try {
       execFileSync('/usr/bin/which', [command], { stdio: 'ignore' });
     } catch {
@@ -83,7 +88,8 @@ console.log('macOS source readiness: OK');
 console.log('- targets: app, dmg');
 console.log('- architectures: Apple Silicon by default; Intel can be built separately');
 console.log('- minimum system: macOS 12.0');
-console.log('- bundled sidecars: cle-cliproxy, jimeng-api');
+console.log('- bundled sidecars: cle-cliproxy, jimeng-api, storyos-workspace');
+console.log('- StoryOS sidecar policy: read-only workspace entry point, ad-hoc signed before bundling');
 console.log('- deferred on macOS: cockpit-cliproxy (Claude Web helper)');
 if (process.platform !== 'darwin') {
   console.log('- host note: configuration was checked, but native compilation requires macOS');
