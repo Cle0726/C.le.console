@@ -173,6 +173,7 @@ export function StoryOSWorkspacePage({ onExit }: StoryOSWorkspacePageProps) {
       setManuscript(next);
     } catch (cause) {
       setSelectedManuscriptPath(null);
+      setManuscript(null);
       setError(String(cause instanceof Error ? cause.message : cause));
     } finally {
       setDetailBusy(false);
@@ -189,6 +190,7 @@ export function StoryOSWorkspacePage({ onExit }: StoryOSWorkspacePageProps) {
       setEntityView(next);
     } catch (cause) {
       setSelectedEntityId(null);
+      setEntityView(null);
       setError(String(cause instanceof Error ? cause.message : cause));
     } finally {
       setDetailBusy(false);
