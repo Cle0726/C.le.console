@@ -11,13 +11,17 @@ const requiredFiles = [
   'src-tauri/icons/icon.icns',
   'src-tauri/native/macos-native-menu/Package.swift',
   'src-tauri/capabilities/storyos.json',
+  'src-tauri/capabilities/storyos-manuscript.json',
   'sidecars/cle-cliproxy/go.mod',
   'storyos/sidecar_main.py',
+  'storyos/manuscript_sidecar_main.py',
   'storyos/pyproject.toml',
   'third_party/jimeng-api/package.json',
   'third_party/jimeng-api/package-lock.json',
   'scripts/build-storyos-sidecar.py',
+  'scripts/build-storyos-manuscript-sidecar.py',
   'scripts/check-storyos-desktop-bridge.mjs',
+  'scripts/check-storyos-manuscript-writer.mjs',
   'scripts/build-macos-sidecars.mjs',
   'scripts/build-macos.mjs',
   '.github/workflows/macos-preview.yml',
@@ -45,7 +49,7 @@ for (const target of ['app', 'dmg']) {
   if (!targets.includes(target)) failures.push(`macOS bundle target is missing: ${target}`);
 }
 
-for (const sidecar of ['cle-cliproxy', 'jimeng-api', 'storyos-workspace']) {
+for (const sidecar of ['cle-cliproxy', 'jimeng-api', 'storyos-workspace', 'storyos-manuscript']) {
   if (!externalBin.some((entry) => entry.endsWith(`/bin/${sidecar}`))) {
     failures.push(`macOS externalBin is missing: ${sidecar}`);
   }
@@ -58,11 +62,9 @@ if (externalBin.some((entry) => entry.includes('cockpit-cliproxy'))) {
 if (macBundle.macOS?.minimumSystemVersion !== '12.0') {
   failures.push('macOS minimumSystemVersion must match the Swift bridge target (12.0)');
 }
-
 if (macBundle.macOS?.signingIdentity !== '-') {
   failures.push('preview builds must use ad-hoc signingIdentity "-"');
 }
-
 if (!baseConfig.bundle?.macOS?.infoPlist) failures.push('base config has no macOS Info.plist');
 for (const script of ['macos:check', 'macos:sidecars', 'macos:build']) {
   if (!packageJson.scripts?.[script]) failures.push(`package.json script is missing: ${script}`);
@@ -88,8 +90,8 @@ console.log('macOS source readiness: OK');
 console.log('- targets: app, dmg');
 console.log('- architectures: Apple Silicon by default; Intel can be built separately');
 console.log('- minimum system: macOS 12.0');
-console.log('- bundled sidecars: cle-cliproxy, jimeng-api, storyos-workspace');
-console.log('- StoryOS sidecar policy: read-only workspace entry point, ad-hoc signed before bundling');
+console.log('- bundled sidecars: cle-cliproxy, jimeng-api, storyos-workspace, storyos-manuscript');
+console.log('- StoryOS sidecar policy: read-only workspace plus isolated SHA-guarded manuscript writer; both ad-hoc signed before bundling');
 console.log('- deferred on macOS: cockpit-cliproxy (Claude Web helper)');
 if (process.platform !== 'darwin') {
   console.log('- host note: configuration was checked, but native compilation requires macOS');
