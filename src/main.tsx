@@ -2,6 +2,7 @@ import React, { useEffect, useState, type ComponentType, type ReactNode } from "
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles/startup-shell.css";
+import "./styles/storyos-host.css";
 import { StartupGreeting } from "./components/StartupGreeting";
 import { UpdateNotifier } from "./components/UpdateNotifier";
 import { initI18n } from "./i18n";
@@ -15,6 +16,12 @@ import { initializeVisualTheme } from "./utils/visualTheme";
 import { initializePerformanceMode } from "./utils/performanceMode";
 import { initializeLiquidGlassInteractions } from "./utils/liquidGlassInteractions";
 import { initializeFrameGovernor } from "./utils/frameGovernor";
+
+const StoryOSWorkspacePage = React.lazy(() =>
+  import("./pages/StoryOSWorkspacePage").then((module) => ({
+    default: module.StoryOSWorkspacePage,
+  })),
+);
 
 const visualReviewParams = new URLSearchParams(window.location.search);
 const visualReviewTarget = ["127.0.0.1", "localhost"].includes(window.location.hostname)
@@ -61,6 +68,8 @@ function MainWindowBootstrap() {
   const [loaded, setLoaded] = useState<{ App: DeferredApp; Guard: DeferredGuard } | null>(null);
   const [appPaintReady, setAppPaintReady] = useState(false);
   const [startupComplete, setStartupComplete] = useState(false);
+  const [storyOsOpen, setStoryOsOpen] = useState(false);
+  const storyOsAvailable = "__TAURI_INTERNALS__" in window;
 
   useEffect(() => {
     let cancelled = false;
@@ -96,7 +105,27 @@ function MainWindowBootstrap() {
     <>
       {LoadedApp && Guard && (
         <Guard>
-          <LoadedApp startupReady={startupComplete} />
+          <>
+            <LoadedApp startupReady={startupComplete} />
+            {startupComplete && storyOsAvailable && !storyOsOpen && (
+              <button
+                type="button"
+                className="storyos-workspace-launcher"
+                onClick={() => setStoryOsOpen(true)}
+                aria-label="打开 C.le. StoryOS 创作工作台"
+                title="打开 C.le. StoryOS 只读创作工作台"
+              >
+                <span className="storyos-workspace-launcher-dot" aria-hidden="true" />
+                <span>C.le. StoryOS</span>
+                <small>创作工作台 · READ ONLY</small>
+              </button>
+            )}
+            {startupComplete && storyOsOpen && (
+              <React.Suspense fallback={<div className="storyos-workspace-host-loading">正在启动 StoryOS 工作台…</div>}>
+                <StoryOSWorkspacePage onExit={() => setStoryOsOpen(false)} />
+              </React.Suspense>
+            )}
+          </>
         </Guard>
       )}
       {startupComplete && <UpdateNotifier />}
