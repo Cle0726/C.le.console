@@ -33,6 +33,16 @@ jobs:
             package-lock.json
             third_party/jimeng-api/package-lock.json
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: storyos/pyproject.toml
+
+      - name: Install StoryOS desktop packager
+        run: python -m pip install -e "storyos[desktop]"
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -80,6 +90,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Audit StoryOS desktop read-only boundary
+        run: node scripts/check-storyos-desktop-bridge.mjs
+
       - name: Build cle-cliproxy Windows sidecar
         shell: pwsh
         working-directory: sidecars/cle-cliproxy
@@ -94,6 +107,9 @@ jobs:
       - name: Build Jimeng Windows sidecar
         shell: pwsh
         run: ./scripts/build-jimeng-sidecar.ps1
+
+      - name: Build StoryOS Windows sidecar
+        run: python scripts/build-storyos-sidecar.py --target x86_64-pc-windows-msvc
 
       - name: Restore cockpit sidecar from current portable baseline
         shell: pwsh
@@ -130,7 +146,8 @@ jobs:
           $required = @(
             'sidecars/cle-cliproxy/bin/cle-cliproxy-x86_64-pc-windows-msvc.exe',
             'sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe',
-            'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe'
+            'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe',
+            'sidecars/storyos-workspace/bin/storyos-workspace-x86_64-pc-windows-msvc.exe'
           )
           foreach ($path in $required) {
             if (-not (Test-Path -LiteralPath $path)) {
