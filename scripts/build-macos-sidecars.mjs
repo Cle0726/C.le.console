@@ -100,18 +100,21 @@ for (const architecture of architectures) {
     '--sea',
     '--no-signature',
   ]);
-  // SEA keeps the payload inside a regular Mach-O section. Sign it now so a
-  // malformed sidecar fails before the expensive Rust release compilation.
   signAndVerifyMacExecutable(output);
   fs.chmodSync(output, 0o755);
 }
 
-// StoryOS is built from the same read-only workspace entry point used by the CLI.
-// The Python environment must already contain the `storyos[desktop]` extra so the
-// pinned PyInstaller version is available. The builder smoke-tests and ad-hoc
-// signs the resulting Mach-O before Tauri bundles it.
+// StoryOS desktop binaries are intentionally split: the workspace sidecar is
+// strictly read-only, while the manuscript sidecar may only replace an existing
+// working-copy file behind a SHA precondition. Both builders smoke-test and
+// ad-hoc sign their Mach-O outputs before Tauri bundles them.
 run('python3', [
   'scripts/build-storyos-sidecar.py',
+  '--target',
+  requestedTarget,
+]);
+run('python3', [
+  'scripts/build-storyos-manuscript-sidecar.py',
   '--target',
   requestedTarget,
 ]);
