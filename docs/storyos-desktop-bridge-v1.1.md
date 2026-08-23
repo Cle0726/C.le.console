@@ -11,6 +11,7 @@ This layer connects the existing Tauri desktop application to the StoryOS v1.0 r
 - `spawn`, stdin write and kill permissions are not granted.
 - Allowed argument shapes are enumerated for `snapshot`, `entity` and `manuscript` reads.
 - Project and manuscript paths are validated again inside StoryOS before any file is read.
+- The security audit requires both base and macOS Tauri bundle configs to register the same fixed StoryOS sidecar.
 
 ## Desktop API
 
@@ -33,6 +34,6 @@ The read-only Python entry point is packaged as a one-file executable using the 
 
 ## CI / release policy
 
-`node scripts/check-storyos-desktop-bridge.mjs` fails if the desktop permission boundary is broadened, the fixed sidecar changes, arbitrary argument mode is introduced, or mutation modules become reachable from the desktop sidecar entry point.
+`node scripts/check-storyos-desktop-bridge.mjs` fails if the desktop permission boundary is broadened, the fixed sidecar changes, arbitrary argument mode is introduced, the macOS bundle stops carrying StoryOS, or mutation modules become reachable from the desktop sidecar entry point.
 
-Windows pull-request CI uses a compile-only StoryOS placeholder after running the security audit and TypeScript checks. Windows release and macOS preview workflows build the real StoryOS executable before Tauri packaging.
+Windows pull-request CI builds and smoke-tests the real StoryOS executable. Compile-only placeholders remain only for the existing non-StoryOS sidecars needed by the Rust compile check. A lightweight macOS pull-request job builds, smoke-tests and codesign-verifies the real Apple Silicon StoryOS sidecar when StoryOS bridge inputs change. Windows release and the full macOS preview workflow also build real StoryOS executables before Tauri packaging.
