@@ -16,6 +16,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Mutex, OnceLock,
     },
+    time::Duration,
 };
 use tauri::{
     webview::{DownloadEvent, NewWindowResponse, WebviewBuilder},
@@ -341,6 +342,7 @@ pub async fn open_account(
     bounds: Option<WebCreatorBounds>,
 ) -> Result<WebCreatorWorkspaceState, String> {
     let account = doubao_web::find_account(&app, &account_id)?;
+    let account_for_cookie_sync = account.clone();
     let bounds = bounds_or_default(bounds);
     let parent = app
         .get_webview_window(CREATOR_WORKSPACE_WINDOW_LABEL)
@@ -363,6 +365,14 @@ pub async fn open_account(
         )
         .await?
     };
+    if doubao_web::sync_desktop_cookies_to_view(&app, &account_for_cookie_sync, &view)?.is_some() {
+        let home_url = doubao_web::platform(&account_for_cookie_sync.platform_id)
+            .ok_or_else(|| "不支持的网页创作平台".to_string())?
+            .home_url;
+        view.navigate(Url::parse(home_url).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("Cookie 已导入，但刷新豆包页面失败: {error}"))?;
+        tokio::time::sleep(Duration::from_millis(450)).await;
+    }
     apply_bounds(&view, &bounds)?;
     set_active_account_id(Some(account_id));
     Ok(workspace_state(&app))

@@ -8,13 +8,29 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
-    path::PathBuf,
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use url::Url;
+
+#[cfg(target_os = "windows")]
+use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+#[cfg(target_os = "windows")]
+use base64::{engine::general_purpose, Engine as _};
+#[cfg(target_os = "windows")]
+use rusqlite::{Connection, OpenFlags};
+#[cfg(target_os = "windows")]
+use sha2::{Digest, Sha256};
+#[cfg(target_os = "windows")]
+use tauri::webview::cookie::{time::OffsetDateTime, SameSite};
+#[cfg(target_os = "windows")]
+use windows::Win32::{
+    Foundation::{LocalFree, HLOCAL},
+    Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB},
+};
 
 const DEFAULT_ACCOUNT_ID: &str = "default";
 const GENERATION_TIMEOUT: Duration = Duration::from_secs(390);
@@ -38,6 +54,12 @@ pub(crate) struct DoubaoWebAccountRecord {
     consecutive_failures: u32,
     #[serde(default)]
     last_used_at: u64,
+    #[serde(default)]
+    desktop_profile_dir: Option<String>,
+    #[serde(default)]
+    desktop_cookie_sync_pending: bool,
+    #[serde(default)]
+    last_cookie_sync_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +84,39 @@ pub struct DoubaoWebAccountState {
     pub message: String,
     pub last_error: Option<String>,
     pub consecutive_failures: u32,
+    pub desktop_profile_dir: Option<String>,
+    pub desktop_cookie_sync_pending: bool,
+    pub last_cookie_sync_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoubaoDesktopProfile {
+    pub profile_dir: String,
+    pub display_name: String,
+    pub cookie_count: usize,
+    pub ready: bool,
+    pub message: String,
+    pub already_imported: bool,
+    pub account_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoubaoDesktopScan {
+    pub install_path: Option<String>,
+    pub user_data_dir: Option<String>,
+    pub running: bool,
+    pub profiles: Vec<DoubaoDesktopProfile>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoubaoDesktopImportResult {
+    pub state: DoubaoWebState,
+    pub imported_account_ids: Vec<String>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +237,9 @@ fn default_account() -> DoubaoWebAccountRecord {
         last_error: String::new(),
         consecutive_failures: 0,
         last_used_at: 0,
+        desktop_profile_dir: None,
+        desktop_cookie_sync_pending: false,
+        last_cookie_sync_at: 0,
     }
 }
 
@@ -303,6 +361,499 @@ pub(crate) fn browser_data_dir(
     }
 }
 
+fn valid_desktop_profile_dir(value: &str) -> bool {
+    value == "Default"
+        || value.strip_prefix("Profile ").is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn doubao_desktop_user_data_dir() -> Result<PathBuf, String> {
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| "无法定位 LOCALAPPDATA，不能读取豆包桌面版账号".to_string())?;
+    Ok(local_app_data.join("Doubao").join("User Data"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn doubao_desktop_user_data_dir() -> Result<PathBuf, String> {
+    Err("从豆包桌面版导入 Cookie 当前仅支持 Windows".into())
+}
+
+#[cfg(target_os = "windows")]
+fn doubao_install_path() -> Option<PathBuf> {
+    [
+        PathBuf::from(r"F:\Doubao\app\Doubao.exe"),
+        PathBuf::from(r"F:\Doubao\Doubao.exe"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn doubao_is_running() -> bool {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_all();
+    system.processes().values().any(|process| {
+        process
+            .name()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("doubao.exe")
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn profile_display_names(root: &Path) -> HashMap<String, String> {
+    let Ok(raw) = std::fs::read_to_string(root.join("Local State")) else {
+        return HashMap::new();
+    };
+    let Ok(json) = serde_json::from_str::<Value>(&raw) else {
+        return HashMap::new();
+    };
+    json.pointer("/profile/info_cache")
+        .and_then(Value::as_object)
+        .map(|cache| {
+            cache
+                .iter()
+                .filter_map(|(profile_dir, value)| {
+                    valid_desktop_profile_dir(profile_dir).then(|| {
+                        let name = value
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or(profile_dir);
+                        (profile_dir.clone(), normalized_name(name, profile_dir))
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "windows")]
+fn open_desktop_cookie_db(path: &Path) -> Result<Connection, String> {
+    Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|error| format!("Cookie 数据库正被豆包占用或无法读取: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn desktop_cookie_count(root: &Path, profile_dir: &str) -> Result<usize, String> {
+    let path = root.join(profile_dir).join("Network").join("Cookies");
+    if !path.is_file() {
+        return Err("未找到 Cookie 数据库".into());
+    }
+    let connection = open_desktop_cookie_db(&path)?;
+    connection
+        .query_row(
+            "select count(*) from cookies where host_key = 'doubao.com' or host_key like '%.doubao.com'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count.max(0) as usize)
+        .map_err(|error| format!("读取豆包 Cookie 数量失败: {error}"))
+}
+
+pub fn scan_desktop_profiles(app: &AppHandle) -> Result<DoubaoDesktopScan, String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        return Err("从豆包桌面版导入 Cookie 当前仅支持 Windows".into());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let root = doubao_desktop_user_data_dir()?;
+        if !root.is_dir() {
+            return Ok(DoubaoDesktopScan {
+                install_path: doubao_install_path().map(|path| path.to_string_lossy().into_owned()),
+                user_data_dir: Some(root.to_string_lossy().into_owned()),
+                running: doubao_is_running(),
+                profiles: Vec::new(),
+                message: "未发现豆包桌面版用户数据".into(),
+            });
+        }
+        let names = profile_display_names(&root);
+        let mut profile_dirs: HashSet<String> = names.keys().cloned().collect();
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if valid_desktop_profile_dir(&name)
+                    && entry.path().join("Network").join("Cookies").is_file()
+                {
+                    profile_dirs.insert(name);
+                }
+            }
+        }
+        let imported: HashMap<String, String> = load_store(app)?
+            .accounts
+            .into_iter()
+            .filter_map(|account| {
+                account
+                    .desktop_profile_dir
+                    .map(|profile_dir| (profile_dir, account.id))
+            })
+            .collect();
+        let mut profile_dirs: Vec<String> = profile_dirs.into_iter().collect();
+        profile_dirs.sort_by_key(|name| {
+            if name == "Default" {
+                0
+            } else {
+                name.strip_prefix("Profile ")
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .unwrap_or(u32::MAX - 1)
+                    .saturating_add(1)
+            }
+        });
+        let profiles = profile_dirs
+            .into_iter()
+            .map(|profile_dir| {
+                let result = desktop_cookie_count(&root, &profile_dir);
+                let cookie_count = result.as_ref().copied().unwrap_or(0);
+                let ready = cookie_count > 0;
+                let account_id = imported.get(&profile_dir).cloned();
+                let message = match result {
+                    Ok(0) => "未检测到 doubao.com 登录 Cookie".into(),
+                    Ok(count) => format!("检测到 {count} 条豆包 Cookie，可直接导入"),
+                    Err(error) => error,
+                };
+                DoubaoDesktopProfile {
+                    display_name: names
+                        .get(&profile_dir)
+                        .cloned()
+                        .unwrap_or_else(|| profile_dir.clone()),
+                    profile_dir,
+                    cookie_count,
+                    ready,
+                    message,
+                    already_imported: account_id.is_some(),
+                    account_id,
+                }
+            })
+            .collect::<Vec<_>>();
+        let ready_count = profiles.iter().filter(|profile| profile.ready).count();
+        Ok(DoubaoDesktopScan {
+            install_path: doubao_install_path().map(|path| path.to_string_lossy().into_owned()),
+            user_data_dir: Some(root.to_string_lossy().into_owned()),
+            running: doubao_is_running(),
+            message: format!(
+                "发现 {} 个桌面 Profile，{} 个当前可导入",
+                profiles.len(),
+                ready_count
+            ),
+            profiles,
+        })
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn dpapi_decrypt(encrypted: &[u8]) -> Result<Vec<u8>, String> {
+    unsafe {
+        let mut input = CRYPT_INTEGER_BLOB {
+            cbData: encrypted.len() as u32,
+            pbData: encrypted.as_ptr() as *mut u8,
+        };
+        let mut output = CRYPT_INTEGER_BLOB {
+            cbData: 0,
+            pbData: std::ptr::null_mut(),
+        };
+        CryptUnprotectData(&mut input, None, None, None, None, 0, &mut output)
+            .map_err(|error| format!("Windows DPAPI 解密豆包 Cookie 密钥失败: {error}"))?;
+        let result = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        let _ = LocalFree(HLOCAL(output.pbData.cast()));
+        Ok(result)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn desktop_cookie_key(root: &Path) -> Result<Vec<u8>, String> {
+    let raw = std::fs::read_to_string(root.join("Local State"))
+        .map_err(|error| format!("读取豆包 Local State 失败: {error}"))?;
+    let json: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("解析豆包 Local State 失败: {error}"))?;
+    let encoded = json
+        .pointer("/os_crypt/encrypted_key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "豆包 Local State 缺少 Cookie 加密密钥".to_string())?;
+    let encrypted = general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| format!("解析豆包 Cookie 加密密钥失败: {error}"))?;
+    let payload = encrypted
+        .strip_prefix(b"DPAPI")
+        .ok_or_else(|| "豆包 Cookie 密钥不是当前支持的 Windows DPAPI 格式".to_string())?;
+    let key = dpapi_decrypt(payload)?;
+    if key.len() != 32 {
+        return Err(format!("豆包 Cookie AES 密钥长度异常: {}", key.len()));
+    }
+    Ok(key)
+}
+
+#[cfg(target_os = "windows")]
+fn decrypt_desktop_cookie(
+    key: &[u8],
+    domain: &str,
+    encrypted: &[u8],
+    database_version: i64,
+) -> Result<String, String> {
+    if encrypted.len() < 31 || !encrypted.starts_with(b"v10") {
+        return Err("Cookie 不是当前支持的 Chromium v10 格式".into());
+    }
+    let cipher = Aes256Gcm::new_from_slice(key)
+        .map_err(|error| format!("初始化 Cookie 解密器失败: {error}"))?;
+    let plaintext = cipher
+        .decrypt(Nonce::from_slice(&encrypted[3..15]), &encrypted[15..])
+        .map_err(|_| "Cookie AES-GCM 解密失败".to_string())?;
+    let plaintext = if database_version >= 24 {
+        let digest = Sha256::digest(domain.as_bytes());
+        plaintext
+            .strip_prefix(digest.as_slice())
+            .ok_or_else(|| format!("Cookie 域校验失败，拒绝导入 {domain} 的异常数据"))?
+    } else {
+        plaintext.as_slice()
+    };
+    String::from_utf8(plaintext.to_vec()).map_err(|_| "Cookie 内容不是有效 UTF-8".into())
+}
+
+#[cfg(target_os = "windows")]
+struct DesktopCookie {
+    domain: String,
+    path: String,
+    name: String,
+    value: String,
+    expires_unix: Option<i64>,
+    secure: bool,
+    http_only: bool,
+    same_site: i64,
+}
+
+#[cfg(target_os = "windows")]
+fn read_desktop_cookies(root: &Path, profile_dir: &str) -> Result<Vec<DesktopCookie>, String> {
+    if !valid_desktop_profile_dir(profile_dir) {
+        return Err("豆包桌面 Profile 名称无效".into());
+    }
+    let key = desktop_cookie_key(root)?;
+    let connection =
+        open_desktop_cookie_db(&root.join(profile_dir).join("Network").join("Cookies"))?;
+    let database_version = connection
+        .query_row("select value from meta where key = 'version'", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_default();
+    let mut statement = connection
+        .prepare(
+            "select host_key, path, name, value, encrypted_value, expires_utc, is_secure, is_httponly, samesite \
+             from cookies where host_key = 'doubao.com' or host_key like '%.doubao.com'",
+        )
+        .map_err(|error| format!("读取豆包 Cookie 表失败: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+            ))
+        })
+        .map_err(|error| format!("查询豆包 Cookie 失败: {error}"))?;
+    let now = unix_timestamp() as i64;
+    let mut cookies = Vec::new();
+    for row in rows {
+        let (domain, path, name, plain, encrypted, expires_utc, secure, http_only, same_site) =
+            row.map_err(|error| format!("解析豆包 Cookie 行失败: {error}"))?;
+        let expires_unix = (expires_utc > 0).then(|| expires_utc / 1_000_000 - 11_644_473_600);
+        if expires_unix.is_some_and(|expires| expires <= now) {
+            continue;
+        }
+        let value = if !plain.is_empty() {
+            plain
+        } else if !encrypted.is_empty() {
+            decrypt_desktop_cookie(&key, &domain, &encrypted, database_version)?
+        } else {
+            continue;
+        };
+        if value.is_empty() || name.is_empty() {
+            continue;
+        }
+        cookies.push(DesktopCookie {
+            domain,
+            path: if path.is_empty() { "/".into() } else { path },
+            name,
+            value,
+            expires_unix,
+            secure: secure != 0,
+            http_only: http_only != 0,
+            same_site,
+        });
+    }
+    if cookies.is_empty() {
+        return Err(format!("{profile_dir} 没有可导入的有效豆包 Cookie"));
+    }
+    Ok(cookies)
+}
+
+pub(crate) fn sync_desktop_cookies_to_view(
+    app: &AppHandle,
+    account: &DoubaoWebAccountRecord,
+    view: &Webview,
+) -> Result<Option<usize>, String> {
+    let Some(profile_dir) = account.desktop_profile_dir.as_deref() else {
+        return Ok(None);
+    };
+    if !account.desktop_cookie_sync_pending {
+        return Ok(None);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, profile_dir, view);
+        return Err("从豆包桌面版导入 Cookie 当前仅支持 Windows".into());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let cookies = read_desktop_cookies(&doubao_desktop_user_data_dir()?, profile_dir)?;
+        let count = cookies.len();
+        for item in cookies {
+            let mut builder = tauri::webview::Cookie::build((item.name, item.value))
+                .domain(item.domain)
+                .path(item.path)
+                .secure(item.secure)
+                .http_only(item.http_only);
+            builder = match item.same_site {
+                0 => builder.same_site(SameSite::None),
+                1 => builder.same_site(SameSite::Lax),
+                2 => builder.same_site(SameSite::Strict),
+                _ => builder,
+            };
+            if let Some(expires) = item
+                .expires_unix
+                .and_then(|value| OffsetDateTime::from_unix_timestamp(value).ok())
+            {
+                builder = builder.expires(expires);
+            }
+            view.set_cookie(builder.build())
+                .map_err(|error| format!("写入豆包 Cookie 失败: {error}"))?;
+        }
+        update_store(app, |store| {
+            let record = store
+                .accounts
+                .iter_mut()
+                .find(|record| record.id == account.id)
+                .ok_or_else(|| "导入目标账号不存在".to_string())?;
+            record.desktop_cookie_sync_pending = false;
+            record.last_cookie_sync_at = unix_timestamp();
+            record.last_known_logged_in = true;
+            record.last_error.clear();
+            Ok(())
+        })?;
+        Ok(Some(count))
+    }
+}
+
+pub async fn import_desktop_profiles(
+    app: AppHandle,
+    profile_dirs: Vec<String>,
+) -> Result<DoubaoDesktopImportResult, String> {
+    if profile_dirs.is_empty() {
+        return Err("请至少选择一个豆包桌面账号".into());
+    }
+    let mut unique = HashSet::new();
+    let profile_dirs: Vec<String> = profile_dirs
+        .into_iter()
+        .filter(|profile| unique.insert(profile.clone()))
+        .collect();
+    if profile_dirs.len() > 20
+        || profile_dirs
+            .iter()
+            .any(|profile| !valid_desktop_profile_dir(profile))
+    {
+        return Err("豆包桌面 Profile 列表无效".into());
+    }
+    let scan = scan_desktop_profiles(&app)?;
+    let selected: Vec<DoubaoDesktopProfile> = profile_dirs
+        .iter()
+        .map(|profile_dir| {
+            scan.profiles
+                .iter()
+                .find(|profile| profile.profile_dir == *profile_dir)
+                .cloned()
+                .ok_or_else(|| format!("没有发现豆包桌面 Profile：{profile_dir}"))
+        })
+        .collect::<Result<_, _>>()?;
+    for profile in &selected {
+        if !profile.ready {
+            return Err(format!(
+                "{} 当前不能导入：{}",
+                profile.display_name, profile.message
+            ));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let root = doubao_desktop_user_data_dir()?;
+        for profile in &selected {
+            read_desktop_cookies(&root, &profile.profile_dir)?;
+        }
+    }
+
+    let imported_account_ids = update_store(&app, |store| {
+        if store.accounts.len()
+            + selected
+                .iter()
+                .filter(|profile| !profile.already_imported)
+                .count()
+            > 50
+        {
+            return Err("导入后网页创作账号将超过 50 个".into());
+        }
+        let mut account_ids = Vec::new();
+        for profile in &selected {
+            if let Some(account) = store.accounts.iter_mut().find(|account| {
+                account.desktop_profile_dir.as_deref() == Some(profile.profile_dir.as_str())
+            }) {
+                account.desktop_cookie_sync_pending = true;
+                account.enabled = true;
+                account.last_error.clear();
+                account_ids.push(account.id.clone());
+                continue;
+            }
+            let account = DoubaoWebAccountRecord {
+                id: uuid::Uuid::new_v4().simple().to_string(),
+                name: normalized_name(&profile.display_name, &profile.profile_dir),
+                platform_id: "doubao".into(),
+                enabled: true,
+                last_known_logged_in: false,
+                last_error: String::new(),
+                consecutive_failures: 0,
+                last_used_at: 0,
+                desktop_profile_dir: Some(profile.profile_dir.clone()),
+                desktop_cookie_sync_pending: true,
+                last_cookie_sync_at: 0,
+            };
+            account_ids.push(account.id.clone());
+            store.accounts.push(account);
+        }
+        Ok(account_ids)
+    })?;
+    let selected_account_id = imported_account_ids.first().cloned();
+    let state = build_state(&app, selected_account_id).await?;
+    Ok(DoubaoDesktopImportResult {
+        message: format!(
+            "已登记 {} 个豆包桌面账号；首次打开时会将 Cookie 写入各自的隔离浏览器",
+            imported_account_ids.len()
+        ),
+        state,
+        imported_account_ids,
+    })
+}
+
 fn ensure_window(
     app: &AppHandle,
     account: &DoubaoWebAccountRecord,
@@ -380,6 +931,10 @@ async fn inspect_account(
             },
             last_error: (!account.last_error.is_empty()).then(|| account.last_error.clone()),
             consecutive_failures: account.consecutive_failures,
+            desktop_profile_dir: account.desktop_profile_dir.clone(),
+            desktop_cookie_sync_pending: account.desktop_cookie_sync_pending,
+            last_cookie_sync_at: (account.last_cookie_sync_at > 0)
+                .then_some(account.last_cookie_sync_at),
         });
     }
     let window_label = account_window_label(account);
@@ -398,6 +953,8 @@ async fn inspect_account(
                 "已停用，不参与自动故障切换".into()
             } else if busy {
                 "正在生成视频".into()
+            } else if account.desktop_cookie_sync_pending {
+                "桌面 Cookie 已就绪，打开账号后完成导入".into()
             } else if account.last_known_logged_in {
                 "上次检测已登录，生成前会再次验证".into()
             } else {
@@ -405,6 +962,10 @@ async fn inspect_account(
             },
             last_error: (!account.last_error.is_empty()).then(|| account.last_error.clone()),
             consecutive_failures: account.consecutive_failures,
+            desktop_profile_dir: account.desktop_profile_dir.clone(),
+            desktop_cookie_sync_pending: account.desktop_cookie_sync_pending,
+            last_cookie_sync_at: (account.last_cookie_sync_at > 0)
+                .then_some(account.last_cookie_sync_at),
         });
     };
     let current_url = window.url().ok().map(|url| url.to_string());
@@ -443,6 +1004,10 @@ async fn inspect_account(
         },
         last_error: (!account.last_error.is_empty()).then(|| account.last_error.clone()),
         consecutive_failures: account.consecutive_failures,
+        desktop_profile_dir: account.desktop_profile_dir.clone(),
+        desktop_cookie_sync_pending: account.desktop_cookie_sync_pending,
+        last_cookie_sync_at: (account.last_cookie_sync_at > 0)
+            .then_some(account.last_cookie_sync_at),
     })
 }
 
@@ -524,6 +1089,9 @@ pub async fn add_account(
             last_error: String::new(),
             consecutive_failures: 0,
             last_used_at: 0,
+            desktop_profile_dir: None,
+            desktop_cookie_sync_pending: false,
+            last_cookie_sync_at: 0,
         };
         store.accounts.push(account.clone());
         Ok(account)
@@ -1136,6 +1704,16 @@ mod tests {
         assert!(!valid_account_id("../other-profile"));
         assert!(!valid_account_id("account-with-dash"));
         assert!(!valid_account_id(""));
+    }
+
+    #[test]
+    fn desktop_profile_names_cannot_escape_doubao_user_data() {
+        assert!(valid_desktop_profile_dir("Default"));
+        assert!(valid_desktop_profile_dir("Profile 3"));
+        assert!(valid_desktop_profile_dir("Profile 14"));
+        assert!(!valid_desktop_profile_dir("Profile "));
+        assert!(!valid_desktop_profile_dir("Profile ../Default"));
+        assert!(!valid_desktop_profile_dir("../Default"));
     }
 
     #[test]

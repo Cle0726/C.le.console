@@ -86,6 +86,19 @@ pub async fn doubao_web_add_account(
 }
 
 #[tauri::command]
+pub fn doubao_desktop_scan(app: AppHandle) -> Result<doubao_web::DoubaoDesktopScan, String> {
+    doubao_web::scan_desktop_profiles(&app)
+}
+
+#[tauri::command]
+pub async fn doubao_desktop_import(
+    app: AppHandle,
+    profile_dirs: Vec<String>,
+) -> Result<doubao_web::DoubaoDesktopImportResult, String> {
+    doubao_web::import_desktop_profiles(app, profile_dirs).await
+}
+
+#[tauri::command]
 pub async fn doubao_web_set_account_enabled(
     app: AppHandle,
     account_id: String,

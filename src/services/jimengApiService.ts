@@ -7,6 +7,8 @@ import type {
   JimengRepairReport,
   DoubaoWebState,
   DoubaoWebVideoRequest,
+  DoubaoDesktopImportResult,
+  DoubaoDesktopScan,
   WebCreatorAsset,
   WebCreatorBounds,
   WebCreatorDownloadResult,
@@ -80,6 +82,10 @@ export const jimengApiService = {
     invoke<DoubaoWebState>('doubao_web_get_state', { selectedAccountId: selectedAccountId ?? null }),
   addDoubaoWebAccount: (platformId = 'doubao', name?: string) =>
     invoke<DoubaoWebState>('doubao_web_add_account', { platformId, name: name || null }),
+  scanDoubaoDesktopProfiles: () =>
+    invoke<DoubaoDesktopScan>('doubao_desktop_scan'),
+  importDoubaoDesktopProfiles: (profileDirs: string[]) =>
+    invoke<DoubaoDesktopImportResult>('doubao_desktop_import', { profileDirs }),
   setDoubaoWebAccountEnabled: (accountId: string, enabled: boolean) =>
     invoke<DoubaoWebState>('doubao_web_set_account_enabled', { accountId, enabled }),
   renameDoubaoWebAccount: (accountId: string, name: string) =>

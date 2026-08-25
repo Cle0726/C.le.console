@@ -89,6 +89,33 @@ export interface DoubaoWebAccountState {
   message: string;
   lastError?: string | null;
   consecutiveFailures: number;
+  desktopProfileDir?: string | null;
+  desktopCookieSyncPending: boolean;
+  lastCookieSyncAt?: number | null;
+}
+
+export interface DoubaoDesktopProfile {
+  profileDir: string;
+  displayName: string;
+  cookieCount: number;
+  ready: boolean;
+  message: string;
+  alreadyImported: boolean;
+  accountId?: string | null;
+}
+
+export interface DoubaoDesktopScan {
+  installPath?: string | null;
+  userDataDir?: string | null;
+  running: boolean;
+  profiles: DoubaoDesktopProfile[];
+  message: string;
+}
+
+export interface DoubaoDesktopImportResult {
+  state: DoubaoWebState;
+  importedAccountIds: string[];
+  message: string;
 }
 
 export type WebCreatorPlatformId = 'doubao' | 'jimeng' | 'qianwen' | 'xiaoyunque' | 'douyin';

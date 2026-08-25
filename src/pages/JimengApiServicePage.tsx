@@ -13,7 +13,7 @@ import { jimengApiService } from '../services/jimengApiService';
 import type {
   JimengAccount, JimengApiConfig, JimengApiState, JimengMediaRequest, JimengRegion,
   JimengDeviceFlow, JimengRepairReport,
-  DoubaoWebState, WebCreatorAsset, WebCreatorPlatformId, WebCreatorWorkspaceState,
+  DoubaoDesktopScan, DoubaoWebState, WebCreatorAsset, WebCreatorPlatformId, WebCreatorWorkspaceState,
 } from '../types/jimengApi';
 import './JimengApiServicePage.unified.css';
 
@@ -170,6 +170,9 @@ export function JimengApiServicePage({
   const [doubaoWebAccountId, setDoubaoWebAccountId] = useState('');
   const [doubaoWebAccountName, setDoubaoWebAccountName] = useState('');
   const [doubaoWebBusy, setDoubaoWebBusy] = useState(false);
+  const [doubaoDesktopScan, setDoubaoDesktopScan] = useState<DoubaoDesktopScan | null>(null);
+  const [doubaoDesktopSelected, setDoubaoDesktopSelected] = useState<string[]>([]);
+  const [doubaoDesktopBusy, setDoubaoDesktopBusy] = useState(false);
   const [webCreatorPlatformId, setWebCreatorPlatformId] = useState<WebCreatorPlatformId>('doubao');
   const [webCreatorAccountId, setWebCreatorAccountId] = useState('');
   const [webCreatorAccountName, setWebCreatorAccountName] = useState('');
@@ -572,6 +575,54 @@ export function JimengApiServicePage({
     void jimengApiService.getDoubaoWebState(accountId).then(applyDoubaoWebState).catch(() => undefined);
     window.requestAnimationFrame(() => void syncWebCreatorBounds());
     return next;
+  };
+
+  const scanDoubaoDesktopProfiles = async () => {
+    setDoubaoDesktopBusy(true);
+    try {
+      const scan = await jimengApiService.scanDoubaoDesktopProfiles();
+      setDoubaoDesktopScan(scan);
+      setDoubaoDesktopSelected((current) => {
+        const ready = scan.profiles.filter((profile) => profile.ready).map((profile) => profile.profileDir);
+        const newProfiles = scan.profiles
+          .filter((profile) => profile.ready && !profile.alreadyImported)
+          .map((profile) => profile.profileDir);
+        const retained = current.filter((profile) => ready.includes(profile));
+        return retained.length ? retained : newProfiles.length ? newProfiles : ready;
+      });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `扫描豆包桌面账号失败：${String(error)}` });
+    } finally {
+      setDoubaoDesktopBusy(false);
+    }
+  };
+
+  const importDoubaoDesktopProfiles = async () => {
+    if (!doubaoDesktopSelected.length) return;
+    setDoubaoDesktopBusy(true);
+    try {
+      const result = await jimengApiService.importDoubaoDesktopProfiles(doubaoDesktopSelected);
+      applyDoubaoWebState(result.state);
+      const firstAccountId = result.importedAccountIds[0];
+      if (firstAccountId) {
+        setWebCreatorPlatformId('doubao');
+        setWebCreatorAccountId(firstAccountId);
+      }
+      setDoubaoDesktopScan(null);
+      setDoubaoDesktopSelected([]);
+      if (firstAccountId) await openWebCreatorAccount(firstAccountId);
+      setNotice({ tone: 'success', text: `${result.message}；没有修改任何代理设置。` });
+    } catch (error) {
+      const message = String(error);
+      setNotice({
+        tone: 'error',
+        text: /占用|locked|database/i.test(message)
+          ? `导入失败：豆包正在占用所选 Profile。请先退出豆包桌面版，再重新扫描导入。${message}`
+          : `导入豆包桌面账号失败：${message}`,
+      });
+    } finally {
+      setDoubaoDesktopBusy(false);
+    }
   };
 
   const navigateWebCreator = async (action: 'back' | 'forward' | 'reload') => {
@@ -1076,7 +1127,12 @@ export function JimengApiServicePage({
 
               <div className="web-creator-sidebar-head">
                 <span>{selectedWebCreatorPlatform?.name || '网页平台'}账号</span>
-                <button type="button" title="新增账号" disabled={doubaoWebBusy} onClick={() => void runWebCreatorAccountAction('add')}><Plus size={16} /></button>
+                <div>
+                  {webCreatorPlatformId === 'doubao' && (
+                    <button type="button" title="从豆包桌面版导入账号 Cookie" disabled={doubaoWebBusy || doubaoDesktopBusy} onClick={() => void scanDoubaoDesktopProfiles()}><Download size={16} /></button>
+                  )}
+                  <button type="button" title="新增账号" disabled={doubaoWebBusy} onClick={() => void runWebCreatorAccountAction('add')}><Plus size={16} /></button>
+                </div>
               </div>
               <div className="web-creator-account-list">
                 {webCreatorAccounts.map((account) => (
@@ -1090,9 +1146,9 @@ export function JimengApiServicePage({
                     }}
                     onDoubleClick={() => void openWebCreatorAccount(account.id)}
                   >
-                    <span><strong>{account.name}</strong><small>{account.message}</small></span>
+                    <span><strong>{account.name}{account.desktopProfileDir && <b className="web-creator-desktop-badge">桌面</b>}</strong><small>{account.message}</small></span>
                     <em className={account.busy ? 'busy' : account.loggedIn ? 'online' : ''}>
-                      {account.busy ? '生成中' : account.loggedIn ? '在线' : account.statusVerified ? '未登录' : '待检测'}
+                      {account.busy ? '生成中' : account.desktopCookieSyncPending ? '待导入' : account.loggedIn ? '在线' : account.statusVerified ? '未登录' : '待检测'}
                     </em>
                   </button>
                 ))}
@@ -1350,6 +1406,59 @@ export function JimengApiServicePage({
           </div>
         )}
       </main>
+
+      {doubaoDesktopScan && createPortal((
+        <div className="jimeng-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !doubaoDesktopBusy && setDoubaoDesktopScan(null)}>
+          <div className="jimeng-modal doubao-desktop-import-modal">
+            <div className="jimeng-panel-title">
+              <Download size={21} />
+              <div><h2>从豆包桌面版导入账号</h2><p>读取各 Chromium Profile 的 doubao.com Cookie，写入 C.le. 独立账号目录。</p></div>
+            </div>
+            <div className="doubao-desktop-import-summary">
+              <ShieldCheck size={21} />
+              <div>
+                <strong>{doubaoDesktopScan.message}</strong>
+                <span>只读取 Cookie，不修改豆包文件，不改系统代理或 C.le. 网络出口。</span>
+                {doubaoDesktopScan.userDataDir && <code title={doubaoDesktopScan.userDataDir}>{doubaoDesktopScan.userDataDir}</code>}
+              </div>
+            </div>
+            {doubaoDesktopScan.running && doubaoDesktopScan.profiles.some((profile) => !profile.ready) && (
+              <div className="doubao-desktop-import-warning"><CircleAlert size={17} />豆包桌面版正在运行，部分 Profile 可能被锁定；退出豆包后点击“重新扫描”即可。</div>
+            )}
+            <div className="doubao-desktop-profile-list">
+              {doubaoDesktopScan.profiles.map((profile) => {
+                const checked = doubaoDesktopSelected.includes(profile.profileDir);
+                return (
+                  <label key={profile.profileDir} className={!profile.ready ? 'disabled' : ''}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={!profile.ready || doubaoDesktopBusy}
+                      onChange={() => setDoubaoDesktopSelected((current) => checked
+                        ? current.filter((item) => item !== profile.profileDir)
+                        : [...current, profile.profileDir])}
+                    />
+                    <span>
+                      <strong>{profile.displayName}{profile.alreadyImported && <em>已导入</em>}</strong>
+                      <small>{profile.profileDir} · {profile.message}</small>
+                    </span>
+                    <b>{profile.cookieCount || '—'}</b>
+                  </label>
+                );
+              })}
+              {!doubaoDesktopScan.profiles.length && <div className="jimeng-empty">没有发现可导入的豆包桌面 Profile。</div>}
+            </div>
+            <div className="jimeng-modal-actions doubao-desktop-import-actions">
+              <button className="btn btn-secondary jimeng-button" disabled={doubaoDesktopBusy} onClick={() => void scanDoubaoDesktopProfiles()}><RefreshCw size={16} />重新扫描</button>
+              <span>{doubaoDesktopSelected.length ? `已选择 ${doubaoDesktopSelected.length} 个账号` : '请选择可用账号'}</span>
+              <button className="btn btn-secondary jimeng-button" disabled={doubaoDesktopBusy} onClick={() => setDoubaoDesktopScan(null)}>取消</button>
+              <button className="btn btn-primary jimeng-button" disabled={doubaoDesktopBusy || !doubaoDesktopSelected.length} onClick={() => void importDoubaoDesktopProfiles()}>
+                {doubaoDesktopBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}导入 Cookie
+              </button>
+            </div>
+          </div>
+        </div>
+      ), window.document.body)}
 
       {editing && createPortal((
         <div className="jimeng-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && void closeAccountModal()}>
