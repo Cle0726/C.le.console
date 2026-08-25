@@ -31,6 +31,7 @@ const CREATOR_BRIDGE: &str = include_str!("../../resources/web_creator_bridge.js
 static ACTIVE_ACCOUNT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static CREATOR_VISIBLE: AtomicBool = AtomicBool::new(false);
 static ASSET_RESPONSES: OnceLock<Mutex<HashMap<String, AssetTitleResponse>>> = OnceLock::new();
+static WORKSPACE_WINDOW_CREATION: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Debug, Default)]
 struct AssetTitleResponse {
@@ -90,6 +91,10 @@ fn asset_responses() -> &'static Mutex<HashMap<String, AssetTitleResponse>> {
     ASSET_RESPONSES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn workspace_window_creation_lock() -> &'static Mutex<()> {
+    WORKSPACE_WINDOW_CREATION.get_or_init(|| Mutex::new(()))
+}
+
 fn webview_label(account_id: &str) -> String {
     format!("{CREATOR_WEBVIEW_PREFIX}{account_id}")
 }
@@ -118,16 +123,13 @@ fn bounds_or_default(bounds: Option<WebCreatorBounds>) -> WebCreatorBounds {
     })
 }
 
-/// Open one dedicated creator workbench window. Accounts are still switched
-/// inside this single window; this deliberately does not recreate the old
-/// one-window-per-account behavior.
-pub fn show_workspace_window(app: &AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(CREATOR_WORKSPACE_WINDOW_LABEL) {
-        window.show().map_err(|error| error.to_string())?;
-        window.unminimize().map_err(|error| error.to_string())?;
-        return window.set_focus().map_err(|error| error.to_string());
+/// Build the hidden workbench once during Tauri setup. Creating a top-level
+/// WebView from an IPC command can block WebView2 initialization and also race
+/// labels reserved by configured windows, so window creation belongs here.
+pub fn initialize_workspace_window(app: &AppHandle) -> Result<(), String> {
+    if app.get_webview(CREATOR_WORKSPACE_WINDOW_LABEL).is_some() {
+        return Ok(());
     }
-
     let config = app
         .config()
         .app
@@ -138,8 +140,40 @@ pub fn show_workspace_window(app: &AppHandle) -> Result<(), String> {
     let window = WebviewWindowBuilder::from_config(app, config)
         .map_err(|error| format!("读取网页创作工作台窗口配置失败: {error}"))?
         .build()
-        .map_err(|error| format!("打开网页创作工作台失败: {error}"))?;
+        .map_err(|error| format!("初始化网页创作工作台失败: {error}"))?;
+    window.hide().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Open one dedicated creator workbench window. Accounts are still switched
+/// inside this single window; this deliberately does not recreate the old
+/// one-window-per-account behavior.
+pub fn show_workspace_window(app: &AppHandle) -> Result<(), String> {
+    // The main page can request the workbench while Tauri is still registering
+    // startup webviews. Serialize creation so rapid clicks/effect re-runs can
+    // never attempt to build two windows with the same label.
+    let _creation_guard = workspace_window_creation_lock()
+        .lock()
+        .map_err(|_| "网页创作工作台窗口锁异常".to_string())?;
+    // The hidden window is initialized once during Tauri setup. Building it
+    // again here races WebView2 and caused the intermittent "already exists"
+    // error reported by the UI.
+    let window = (0..40)
+        .find_map(|_| {
+            // Config-created windows are registered as a Window plus its
+            // managed Webview. On Tauri 2.10 `get_webview_window` can return
+            // None for that shape even though the label already exists.
+            let window = app
+                .get_webview(CREATOR_WORKSPACE_WINDOW_LABEL)
+                .map(|webview| webview.window());
+            if window.is_none() {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            window
+        })
+        .ok_or_else(|| "网页创作工作台仍在初始化，请稍后重试".to_string())?;
     window.show().map_err(|error| error.to_string())?;
+    window.unminimize().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())?;
     Ok(())
 }

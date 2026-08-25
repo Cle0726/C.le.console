@@ -64,7 +64,7 @@
         "label": "web-creator-workspace",
         "title": "C.le. 网页创作工作台",
         "url": "index.html",
-        "create": true,
+        "create": false,
         "width": 1480,
         "height": 920,
         "minWidth": 1050,

@@ -323,6 +323,12 @@ pub fn run() {
             // 存储全局 AppHandle
             let _ = APP_HANDLE.set(app.handle().clone());
 
+            if let Err(err) =
+                modules::web_creator_workspace::initialize_workspace_window(&app.handle())
+            {
+                logger::log_warn(&format!("[WebCreator] 初始化独立工作台失败: {}", err));
+            }
+
             // 启动时清理 WebKit LocalStorage WAL，防止无限膨胀
             std::thread::spawn(|| {
                 modules::webkit_cache_maintenance::checkpoint_webkit_localstorage();
