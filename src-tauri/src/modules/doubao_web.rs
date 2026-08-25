@@ -941,6 +941,19 @@ pub(crate) async fn validate_doubao_cookie_header(cookie_header: String) -> Doub
     }
 }
 
+pub(crate) fn cached_doubao_session_check(
+    app: &AppHandle,
+    account_id: &str,
+) -> Result<DoubaoSessionCheck, String> {
+    let account = find_account(app, account_id)?;
+    let verified = account.login_validation_version >= DOUBAO_LOGIN_VALIDATION_VERSION;
+    Ok(DoubaoSessionCheck {
+        logged_in: verified && account.last_known_logged_in,
+        verified,
+        detail: (!verified).then(|| "该账号尚未完成安全的服务端登录验证".into()),
+    })
+}
+
 pub async fn import_desktop_profiles(
     app: AppHandle,
     profile_dirs: Vec<String>,
@@ -1425,15 +1438,22 @@ pub async fn logout(app: AppHandle, account_id: String) -> Result<DoubaoWebState
         &app,
         &account_id,
         home_url,
-    )? {
+    )
+    .await?
+    {
         // Compatibility cleanup for accounts that were last opened by an older
         // release in a top-level window. New unified-workspace accounts never
         // create that extra window.
         if let Some(window) = app.get_webview_window(&account_window_label(&account)) {
-            window
-                .clear_all_browsing_data()
-                .map_err(|error| format!("清理网页登录状态失败: {error}"))?;
-            let _ = window.navigate(Url::parse(home_url).map_err(|error| error.to_string())?);
+            let url = Url::parse(home_url).map_err(|error| error.to_string())?;
+            tokio::task::spawn_blocking(move || {
+                window
+                    .clear_all_browsing_data()
+                    .map_err(|error| format!("清理网页登录状态失败: {error}"))?;
+                window.navigate(url).map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| format!("清理网页登录状态任务失败: {error}"))??;
         } else {
             let profile_dir = browser_data_dir(&app, &account)?;
             if profile_dir.exists() {

@@ -149,7 +149,7 @@ pub async fn doubao_web_generate_video(
 }
 
 #[tauri::command]
-pub fn web_creator_open_window(app: AppHandle) -> Result<(), String> {
+pub async fn web_creator_open_window(app: AppHandle) -> Result<(), String> {
     web_creator_workspace::show_workspace_window(&app)
 }
 
@@ -163,7 +163,7 @@ pub async fn web_creator_open_account(
 }
 
 #[tauri::command]
-pub fn web_creator_set_bounds(
+pub async fn web_creator_set_bounds(
     app: AppHandle,
     bounds: WebCreatorBounds,
 ) -> Result<WebCreatorWorkspaceState, String> {
@@ -171,12 +171,12 @@ pub fn web_creator_set_bounds(
 }
 
 #[tauri::command]
-pub fn web_creator_hide(app: AppHandle) -> Result<WebCreatorWorkspaceState, String> {
+pub async fn web_creator_hide(app: AppHandle) -> Result<WebCreatorWorkspaceState, String> {
     web_creator_workspace::hide(&app)
 }
 
 #[tauri::command]
-pub fn web_creator_navigate(
+pub async fn web_creator_navigate(
     app: AppHandle,
     action: String,
 ) -> Result<WebCreatorWorkspaceState, String> {
@@ -184,7 +184,7 @@ pub fn web_creator_navigate(
 }
 
 #[tauri::command]
-pub fn web_creator_navigate_to(
+pub async fn web_creator_navigate_to(
     app: AppHandle,
     url: String,
 ) -> Result<WebCreatorWorkspaceState, String> {
@@ -192,7 +192,7 @@ pub fn web_creator_navigate_to(
 }
 
 #[tauri::command]
-pub fn web_creator_get_state(app: AppHandle) -> WebCreatorWorkspaceState {
+pub async fn web_creator_get_state(app: AppHandle) -> WebCreatorWorkspaceState {
     web_creator_workspace::workspace_state(&app)
 }
 
@@ -205,7 +205,10 @@ pub async fn web_creator_collect_assets(
 }
 
 #[tauri::command]
-pub fn web_creator_clear_assets(app: AppHandle, account_id: Option<String>) -> Result<(), String> {
+pub async fn web_creator_clear_assets(
+    app: AppHandle,
+    account_id: Option<String>,
+) -> Result<(), String> {
     web_creator_workspace::clear_assets(&app, account_id)
 }
 

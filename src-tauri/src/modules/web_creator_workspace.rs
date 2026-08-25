@@ -291,6 +291,15 @@ fn cookie_header(view: &Webview, url: &Url) -> Option<String> {
     })
 }
 
+async fn cookie_header_async(view: Webview, url: Url) -> Result<Option<String>, String> {
+    // WebView2 cookie reads can deadlock the window message loop when they are
+    // executed directly from an IPC command future. Keep the dispatcher wait
+    // on a dedicated blocking worker, matching Tauri's Windows guidance.
+    tokio::task::spawn_blocking(move || cookie_header(&view, &url))
+        .await
+        .map_err(|error| format!("读取网页 Cookie 任务失败: {error}"))
+}
+
 fn active_account_id() -> Option<String> {
     active_lock().lock().ok().and_then(|value| value.clone())
 }
@@ -399,7 +408,19 @@ pub async fn open_account(
         )
         .await?
     };
-    if doubao_web::sync_desktop_cookies_to_view(&app, &account_for_cookie_sync, &view)?.is_some() {
+    let cookie_sync_app = app.clone();
+    let cookie_sync_account = account_for_cookie_sync.clone();
+    let cookie_sync_view = view.clone();
+    let cookie_sync_result = tokio::task::spawn_blocking(move || {
+        doubao_web::sync_desktop_cookies_to_view(
+            &cookie_sync_app,
+            &cookie_sync_account,
+            &cookie_sync_view,
+        )
+    })
+    .await
+    .map_err(|error| format!("导入豆包 Cookie 任务失败: {error}"))??;
+    if cookie_sync_result.is_some() {
         let home_url = doubao_web::platform(&account_for_cookie_sync.platform_id)
             .ok_or_else(|| "不支持的网页创作平台".to_string())?
             .home_url;
@@ -407,21 +428,10 @@ pub async fn open_account(
             .map_err(|error| format!("Cookie 已导入，但刷新豆包页面失败: {error}"))?;
         tokio::time::sleep(Duration::from_millis(450)).await;
     }
-    if account_for_cookie_sync.platform_id == "doubao" {
-        let cookie_url =
-            Url::parse("https://www.doubao.com/").map_err(|error| error.to_string())?;
-        let check = doubao_web::validate_doubao_cookie_header(
-            cookie_header(&view, &cookie_url).unwrap_or_default(),
-        )
-        .await;
-        if check.verified {
-            doubao_web::update_last_known_login(
-                &app,
-                &account_for_cookie_sync.id,
-                check.logged_in,
-            )?;
-        }
-    }
+    // Do not read WebView2 cookies while the account view is being created.
+    // On Windows that dispatcher call can deadlock the UI message loop before
+    // the first navigation completes. Login verification is kept separately
+    // from opening/resizing the workbench.
     apply_bounds(&view, &bounds)?;
     set_active_account_id(Some(account_id));
     Ok(workspace_state(&app))
@@ -601,7 +611,11 @@ pub async fn download_asset(
         .user_agent("C.le.网页创作中心/1.1")
         .build()
         .map_err(|error| format!("创建下载客户端失败: {error}"))?;
-    let cookie = cookie_header(&view, clean.as_ref().unwrap_or(&original));
+    let cookie = cookie_header_async(
+        view.clone(),
+        clean.clone().unwrap_or_else(|| original.clone()),
+    )
+    .await?;
     let mut candidates = clean
         .into_iter()
         .chain(std::iter::once(original))
@@ -659,7 +673,7 @@ pub fn clear_assets(app: &AppHandle, account_id: Option<String>) -> Result<(), S
         .map_err(|error| error.to_string())
 }
 
-pub fn clear_account_browsing_data(
+pub async fn clear_account_browsing_data(
     app: &AppHandle,
     account_id: &str,
     home_url: &str,
@@ -667,10 +681,14 @@ pub fn clear_account_browsing_data(
     let Some(view) = app.get_webview(&webview_label(account_id)) else {
         return Ok(false);
     };
-    view.clear_all_browsing_data()
-        .map_err(|error| format!("清理网页登录数据失败: {error}"))?;
     let url = Url::parse(home_url).map_err(|error| error.to_string())?;
-    view.navigate(url).map_err(|error| error.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        view.clear_all_browsing_data()
+            .map_err(|error| format!("清理网页登录数据失败: {error}"))?;
+        view.navigate(url).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("清理网页登录数据任务失败: {error}"))??;
     Ok(true)
 }
 
@@ -687,17 +705,11 @@ pub async fn inspect_account_session(
     let is_doubao = cookie_url
         .host_str()
         .is_some_and(|host| host == "doubao.com" || host.ends_with(".doubao.com"));
-    let cookies = tokio::task::spawn_blocking(move || view.cookies_for_url(cookie_url))
-        .await
-        .map_err(|error| format!("网页登录状态检查任务失败: {error}"))?
-        .map_err(|error| format!("无法读取网页登录状态: {error}"))?;
-    let cookie_header = cookies
-        .iter()
-        .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
-        .collect::<Vec<_>>()
-        .join("; ");
     if is_doubao {
-        let check = doubao_web::validate_doubao_cookie_header(cookie_header).await;
+        // Reading cookies from a newly created WebView2 can deadlock its window
+        // thread. The authoritative server result is cached by doubao_web and
+        // opening the workbench must stay independent from network validation.
+        let check = doubao_web::cached_doubao_session_check(app, account_id)?;
         return Ok(Some((
             current_url,
             check.logged_in,
@@ -705,6 +717,10 @@ pub async fn inspect_account_session(
             check.detail,
         )));
     }
+    let cookies = tokio::task::spawn_blocking(move || view.cookies_for_url(cookie_url))
+        .await
+        .map_err(|error| format!("网页登录状态检查任务失败: {error}"))?
+        .map_err(|error| format!("无法读取网页登录状态: {error}"))?;
     let logged_in = cookies.iter().any(|cookie| {
         let name = cookie.name().to_ascii_lowercase();
         !cookie.value().trim().is_empty()
