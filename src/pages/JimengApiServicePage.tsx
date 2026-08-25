@@ -583,9 +583,9 @@ export function JimengApiServicePage({
       const scan = await jimengApiService.scanDoubaoDesktopProfiles();
       setDoubaoDesktopScan(scan);
       setDoubaoDesktopSelected((current) => {
-        const ready = scan.profiles.filter((profile) => profile.ready).map((profile) => profile.profileDir);
+        const ready = scan.profiles.filter((profile) => profile.hasCookieDatabase).map((profile) => profile.profileDir);
         const newProfiles = scan.profiles
-          .filter((profile) => profile.ready && !profile.alreadyImported)
+          .filter((profile) => profile.hasCookieDatabase && !profile.alreadyImported)
           .map((profile) => profile.profileDir);
         const retained = current.filter((profile) => ready.includes(profile));
         return retained.length ? retained : newProfiles.length ? newProfiles : ready;
@@ -1429,11 +1429,11 @@ export function JimengApiServicePage({
               {doubaoDesktopScan.profiles.map((profile) => {
                 const checked = doubaoDesktopSelected.includes(profile.profileDir);
                 return (
-                  <label key={profile.profileDir} className={!profile.ready ? 'disabled' : ''}>
+                  <label key={profile.profileDir} className={!profile.hasCookieDatabase ? 'disabled' : ''}>
                     <input
                       type="checkbox"
                       checked={checked}
-                      disabled={!profile.ready || doubaoDesktopBusy}
+                      disabled={!profile.hasCookieDatabase || doubaoDesktopBusy}
                       onChange={() => setDoubaoDesktopSelected((current) => checked
                         ? current.filter((item) => item !== profile.profileDir)
                         : [...current, profile.profileDir])}

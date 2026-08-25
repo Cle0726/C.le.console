@@ -98,6 +98,7 @@ export interface DoubaoDesktopProfile {
   profileDir: string;
   displayName: string;
   cookieCount: number;
+  hasCookieDatabase: boolean;
   ready: boolean;
   message: string;
   alreadyImported: boolean;

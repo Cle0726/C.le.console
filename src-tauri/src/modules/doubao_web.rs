@@ -95,6 +95,7 @@ pub struct DoubaoDesktopProfile {
     pub profile_dir: String,
     pub display_name: String,
     pub cookie_count: usize,
+    pub has_cookie_database: bool,
     pub ready: bool,
     pub message: String,
     pub already_imported: bool,
@@ -507,6 +508,11 @@ pub fn scan_desktop_profiles(app: &AppHandle) -> Result<DoubaoDesktopScan, Strin
         let profiles = profile_dirs
             .into_iter()
             .map(|profile_dir| {
+                let has_cookie_database = root
+                    .join(&profile_dir)
+                    .join("Network")
+                    .join("Cookies")
+                    .is_file();
                 let result = desktop_cookie_count(&root, &profile_dir);
                 let cookie_count = result.as_ref().copied().unwrap_or(0);
                 let ready = cookie_count > 0;
@@ -523,6 +529,7 @@ pub fn scan_desktop_profiles(app: &AppHandle) -> Result<DoubaoDesktopScan, Strin
                         .unwrap_or_else(|| profile_dir.clone()),
                     profile_dir,
                     cookie_count,
+                    has_cookie_database,
                     ready,
                     message,
                     already_imported: account_id.is_some(),
@@ -787,9 +794,9 @@ pub async fn import_desktop_profiles(
         })
         .collect::<Result<_, _>>()?;
     for profile in &selected {
-        if !profile.ready {
+        if !profile.has_cookie_database {
             return Err(format!(
-                "{} 当前不能导入：{}",
+                "{} 没有 Cookie 数据库，不能登记：{}",
                 profile.display_name, profile.message
             ));
         }
@@ -799,7 +806,9 @@ pub async fn import_desktop_profiles(
     {
         let root = doubao_desktop_user_data_dir()?;
         for profile in &selected {
-            read_desktop_cookies(&root, &profile.profile_dir)?;
+            if profile.ready {
+                read_desktop_cookies(&root, &profile.profile_dir)?;
+            }
         }
     }
 
@@ -818,9 +827,13 @@ pub async fn import_desktop_profiles(
             if let Some(account) = store.accounts.iter_mut().find(|account| {
                 account.desktop_profile_dir.as_deref() == Some(profile.profile_dir.as_str())
             }) {
-                account.desktop_cookie_sync_pending = true;
+                account.desktop_cookie_sync_pending = profile.ready;
                 account.enabled = true;
-                account.last_error.clear();
+                account.last_error = if profile.ready {
+                    String::new()
+                } else {
+                    format!("桌面 Cookie 当前不可读取：{}", profile.message)
+                };
                 account_ids.push(account.id.clone());
                 continue;
             }
@@ -830,11 +843,15 @@ pub async fn import_desktop_profiles(
                 platform_id: "doubao".into(),
                 enabled: true,
                 last_known_logged_in: false,
-                last_error: String::new(),
+                last_error: if profile.ready {
+                    String::new()
+                } else {
+                    format!("桌面 Cookie 当前不可读取：{}", profile.message)
+                },
                 consecutive_failures: 0,
                 last_used_at: 0,
                 desktop_profile_dir: Some(profile.profile_dir.clone()),
-                desktop_cookie_sync_pending: true,
+                desktop_cookie_sync_pending: profile.ready,
                 last_cookie_sync_at: 0,
             };
             account_ids.push(account.id.clone());
@@ -844,10 +861,11 @@ pub async fn import_desktop_profiles(
     })?;
     let selected_account_id = imported_account_ids.first().cloned();
     let state = build_state(&app, selected_account_id).await?;
+    let cookie_ready_count = selected.iter().filter(|profile| profile.ready).count();
     Ok(DoubaoDesktopImportResult {
         message: format!(
-            "已登记 {} 个豆包桌面账号；首次打开时会将 Cookie 写入各自的隔离浏览器",
-            imported_account_ids.len()
+            "已登记 {} 个豆包桌面账号，其中 {} 个 Cookie 可立即同步；其余账号已保留，退出豆包后可重新导入 Cookie",
+            imported_account_ids.len(), cookie_ready_count
         ),
         state,
         imported_account_ids,
