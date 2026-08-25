@@ -572,9 +572,38 @@ export function JimengApiServicePage({
     setWebCreatorWorkspaceState(next);
     setWebCreatorAddress(next.currentUrl || selectedWebCreatorPlatform?.homeUrl || '');
     setWebCreatorAssets([]);
-    void jimengApiService.getDoubaoWebState(accountId).then(applyDoubaoWebState).catch(() => undefined);
+    const refreshed = await jimengApiService.getDoubaoWebState(accountId);
+    applyDoubaoWebState(refreshed);
     window.requestAnimationFrame(() => void syncWebCreatorBounds());
-    return next;
+    return { workspace: next, state: refreshed };
+  };
+
+  const verifyWebCreatorAccounts = async (accountIds = webCreatorAccounts.map((account) => account.id)) => {
+    if (!accountIds.length) return { online: 0, invalid: 0, unknown: 0 };
+    setDoubaoWebBusy(true);
+    let online = 0;
+    let invalid = 0;
+    let unknown = 0;
+    try {
+      for (const accountId of accountIds) {
+        try {
+          const result = await openWebCreatorAccount(accountId);
+          const account = result.state.accounts.find((item) => item.id === accountId);
+          if (!account?.statusVerified) unknown += 1;
+          else if (account.loggedIn) online += 1;
+          else invalid += 1;
+        } catch {
+          unknown += 1;
+        }
+      }
+      setNotice({
+        tone: invalid || unknown ? 'error' : 'success',
+        text: `平台服务端逐账号验证完成：${online} 个可用、${invalid} 个无效、${unknown} 个暂时无法确认。`,
+      });
+      return { online, invalid, unknown };
+    } finally {
+      setDoubaoWebBusy(false);
+    }
   };
 
   const scanDoubaoDesktopProfiles = async () => {
@@ -610,8 +639,12 @@ export function JimengApiServicePage({
       }
       setDoubaoDesktopScan(null);
       setDoubaoDesktopSelected([]);
+      const validation = await verifyWebCreatorAccounts(result.importedAccountIds);
       if (firstAccountId) await openWebCreatorAccount(firstAccountId);
-      setNotice({ tone: 'success', text: `${result.message}；没有修改任何代理设置。` });
+      setNotice({
+        tone: validation.invalid || validation.unknown ? 'error' : 'success',
+        text: `${result.message}；服务端确认 ${validation.online}/${result.importedAccountIds.length} 个账号可用；没有修改任何代理设置。`,
+      });
     } catch (error) {
       const message = String(error);
       setNotice({
@@ -1110,7 +1143,7 @@ export function JimengApiServicePage({
               <div className="web-creator-platform-list" aria-label="网页创作平台">
                 {doubaoWeb?.platforms.map((platform) => {
                   const accounts = doubaoWeb.accounts.filter((account) => account.platformId === platform.id);
-                  const online = accounts.filter((account) => account.loggedIn).length;
+                  const online = accounts.filter((account) => account.statusVerified && account.loggedIn).length;
                   return (
                     <button
                       key={platform.id}
@@ -1131,6 +1164,7 @@ export function JimengApiServicePage({
                   {webCreatorPlatformId === 'doubao' && (
                     <button type="button" title="从豆包桌面版导入账号 Cookie" disabled={doubaoWebBusy || doubaoDesktopBusy} onClick={() => void scanDoubaoDesktopProfiles()}><Download size={16} /></button>
                   )}
+                  <button type="button" title="逐个向平台服务端验证当前账号" disabled={doubaoWebBusy || !webCreatorAccounts.length} onClick={() => void verifyWebCreatorAccounts()}><BadgeCheck size={16} /></button>
                   <button type="button" title="新增账号" disabled={doubaoWebBusy} onClick={() => void runWebCreatorAccountAction('add')}><Plus size={16} /></button>
                 </div>
               </div>
@@ -1147,8 +1181,8 @@ export function JimengApiServicePage({
                     onDoubleClick={() => void openWebCreatorAccount(account.id)}
                   >
                     <span><strong>{account.name}{account.desktopProfileDir && <b className="web-creator-desktop-badge">桌面</b>}</strong><small>{account.message}</small></span>
-                    <em className={account.busy ? 'busy' : account.loggedIn ? 'online' : ''}>
-                      {account.busy ? '生成中' : account.desktopCookieSyncPending ? '待导入' : account.loggedIn ? '在线' : account.statusVerified ? '未登录' : '待检测'}
+                    <em className={account.busy ? 'busy' : account.statusVerified && account.loggedIn ? 'online' : ''}>
+                      {account.busy ? '生成中' : account.desktopCookieSyncPending ? '待导入' : account.statusVerified && account.loggedIn ? '在线' : account.statusVerified ? '未登录' : '待检测'}
                     </em>
                   </button>
                 ))}
@@ -1326,15 +1360,15 @@ export function JimengApiServicePage({
               ))}
             </div>
             {isDoubaoWebVideo && (
-              <div className={`jimeng-doubao-login${selectedDoubaoWebAccount?.loggedIn ? ' online' : ''}`}>
+              <div className={`jimeng-doubao-login${selectedDoubaoWebAccount?.statusVerified && selectedDoubaoWebAccount.loggedIn ? ' online' : ''}`}>
                 <div className="jimeng-doubao-status">
                   <Globe2 size={20} />
-                  <span><strong>{selectedDoubaoWebAccount ? `${selectedDoubaoWebAccount.name} · ${selectedDoubaoWebAccount.loggedIn ? '已登录' : '未登录'}` : `自动故障切换 · ${doubaoWebAccounts.filter((account) => account.enabled).length} 个启用账号`}</strong><small>{selectedDoubaoWebAccount?.message || '登录失效、额度不足或临时错误时自动尝试下一个账号'}</small></span>
+                  <span><strong>{selectedDoubaoWebAccount ? `${selectedDoubaoWebAccount.name} · ${selectedDoubaoWebAccount.statusVerified && selectedDoubaoWebAccount.loggedIn ? '已登录' : selectedDoubaoWebAccount.statusVerified ? '未登录' : '待检测'}` : `自动故障切换 · ${doubaoWebAccounts.filter((account) => account.enabled).length} 个启用账号`}</strong><small>{selectedDoubaoWebAccount?.message || '登录失效、额度不足或临时错误时自动尝试下一个账号'}</small></span>
                 </div>
                 <div className="jimeng-doubao-actions">
                   <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy} onClick={() => void addDoubaoWebAccount()}><Plus size={16} />新增账号</button>
-                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy || !selectedDoubaoWebAccount} onClick={() => void openDoubaoWebLogin()}>{doubaoWebBusy ? <LoaderCircle className="spin" size={16} /> : <Globe2 size={16} />}{selectedDoubaoWebAccount?.loggedIn ? '打开网页' : '登录账号'}</button>
-                  {selectedDoubaoWebAccount?.loggedIn && <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy} onClick={() => void logoutDoubaoWeb()}>退出登录</button>}
+                  <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy || !selectedDoubaoWebAccount} onClick={() => void openDoubaoWebLogin()}>{doubaoWebBusy ? <LoaderCircle className="spin" size={16} /> : <Globe2 size={16} />}{selectedDoubaoWebAccount?.statusVerified && selectedDoubaoWebAccount.loggedIn ? '打开网页' : '验证账号'}</button>
+                  {selectedDoubaoWebAccount?.statusVerified && selectedDoubaoWebAccount.loggedIn && <button className="btn btn-secondary jimeng-button" disabled={doubaoWebBusy} onClick={() => void logoutDoubaoWeb()}>退出登录</button>}
                 </div>
                 {selectedDoubaoWebAccount && (
                   <div className="jimeng-doubao-account-edit">
@@ -1346,7 +1380,7 @@ export function JimengApiServicePage({
               </div>
             )}
             <div className="jimeng-form-grid">
-              <label><span>使用账号</span>{isDoubaoWebVideo ? <select value={doubaoWebAccountId} onChange={(event) => { const accountId = event.target.value; setDoubaoWebAccountId(accountId); setDoubaoWebAccountName(doubaoWebAccounts.find((account) => account.id === accountId)?.name || ''); }}><option value="">自动故障切换</option>{doubaoWebAccounts.map((account) => <option key={account.id} value={account.id} disabled={!account.enabled}>{account.name} · {!account.enabled ? '已停用' : account.loggedIn ? '已登录' : '未登录'}</option>)}</select> : <select value={videoAccountId} onChange={(event) => setVideoAccountId(event.target.value)}><option value="">自动故障切换</option>{enabledAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.region.toUpperCase()}</option>)}</select>}</label>
+              <label><span>使用账号</span>{isDoubaoWebVideo ? <select value={doubaoWebAccountId} onChange={(event) => { const accountId = event.target.value; setDoubaoWebAccountId(accountId); setDoubaoWebAccountName(doubaoWebAccounts.find((account) => account.id === accountId)?.name || ''); }}><option value="">自动故障切换</option>{doubaoWebAccounts.map((account) => <option key={account.id} value={account.id} disabled={!account.enabled}>{account.name} · {!account.enabled ? '已停用' : account.statusVerified && account.loggedIn ? '已登录' : account.statusVerified ? '未登录' : '待检测'}</option>)}</select> : <select value={videoAccountId} onChange={(event) => setVideoAccountId(event.target.value)}><option value="">自动故障切换</option>{enabledAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.region.toUpperCase()}</option>)}</select>}</label>
               <label><span>模型</span><select value={videoModel} onChange={(event) => setVideoModel(event.target.value)}>{videoModels.map((model) => <option key={model.id} value={model.id}>{model.id === DOUBAO_WEB_MODEL_ID ? '豆包网页版 · Seedance 2.0' : model.id}</option>)}</select></label>
               <label><span>比例</span><select value={videoRatio} onChange={(event) => setVideoRatio(event.target.value)}>{RATIOS.filter((ratio) => isDoubaoWebVideo ? ['1:1', '16:9', '9:16'].includes(ratio) : ratio !== '3:2' && ratio !== '2:3').map((ratio) => <option key={ratio}>{ratio}</option>)}</select></label>
               <label><span>分辨率</span><select value={isDoubaoWebVideo ? 'auto' : videoResolution} onChange={(event) => setVideoResolution(event.target.value)} disabled={isDoubaoWebVideo}>{isDoubaoWebVideo ? <option value="auto">由豆包自动选择</option> : VIDEO_RESOLUTIONS.map((resolution) => <option key={resolution}>{resolution}</option>)}</select></label>

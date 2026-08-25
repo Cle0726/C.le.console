@@ -2940,6 +2940,16 @@ pub async fn test_chat(
 
 pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
     let mut config = load_config()?;
+    // A provider account can be healthy enough for quota reads while its model
+    // endpoint still requires an extra verification step. If the user disables
+    // that route in the API account pool, a later "同步账号" must not silently
+    // enable it again and reintroduce failed model calls.
+    let previous_managed_enabled = config
+        .accounts
+        .iter()
+        .filter(|account| account.source.starts_with("cle:"))
+        .map(|account| (account.source.clone(), account.enabled))
+        .collect::<BTreeMap<_, _>>();
     config
         .accounts
         .retain(|account| !account.source.starts_with("cle:"));
@@ -2973,6 +2983,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                 })
                 .unwrap_or_default();
             let models = models_or_defaults(discovered_models, DEFAULT_ANTIGRAVITY_MODELS);
+            let source = format!("cle:antigravity:{}", managed.id);
             config.accounts.push(MultiModelAccount {
                 id: format!("cle-antigravity-{}", managed.id),
                 name: format!("Antigravity · {}", managed.email),
@@ -2994,8 +3005,11 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                 priority: 0,
                 headers: BTreeMap::new(),
                 models,
-                enabled: true,
-                source: format!("cle:antigravity:{}", managed.id),
+                enabled: previous_managed_enabled
+                    .get(&source)
+                    .copied()
+                    .unwrap_or(true),
+                source,
             });
         }
     }
@@ -3043,6 +3057,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                     })),
                 ),
             };
+            let source = format!("cle:codex:{}", account.id);
             config.accounts.push(MultiModelAccount {
                 id: format!("cle-codex-{}", account.id),
                 name: format!("Codex · {}", account.email),
@@ -3056,8 +3071,11 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                 priority: 0,
                 headers: BTreeMap::new(),
                 models: models_or_defaults(account.api_model_catalog, DEFAULT_CODEX_MODELS),
-                enabled: true,
-                source: format!("cle:codex:{}", account.id),
+                enabled: previous_managed_enabled
+                    .get(&source)
+                    .copied()
+                    .unwrap_or(true),
+                source,
             });
         }
     }
@@ -3074,6 +3092,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                 .into_iter()
                 .map(|(model, _remaining)| model)
                 .collect::<Vec<_>>();
+            let source = format!("cle:gemini:{}", account.id);
             config.accounts.push(MultiModelAccount {
                 id: format!("cle-gemini-{}", account.id),
                 name: format!("Gemini · {}", account.email),
@@ -3095,8 +3114,11 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                 priority: 0,
                 headers: BTreeMap::new(),
                 models: models_or_defaults(discovered_models, DEFAULT_GEMINI_MODELS),
-                enabled: true,
-                source: format!("cle:gemini:{}", account.id),
+                enabled: previous_managed_enabled
+                    .get(&source)
+                    .copied()
+                    .unwrap_or(true),
+                source,
             });
         }
     }
@@ -3121,6 +3143,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                 if !auth_export_path.is_file() {
                     continue;
                 }
+                let source = format!("cle:claude-web:{}", account.id);
                 config.accounts.push(MultiModelAccount {
                     id: format!("cle-claude-web-{}", account.id),
                     name: format!("Claude Web 路 {}", account.email),
@@ -3137,8 +3160,11 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                     priority: 0,
                     headers: BTreeMap::new(),
                     models: models_or_defaults(Vec::new(), DEFAULT_CLAUDE_WEB_MODELS),
-                    enabled: true,
-                    source: format!("cle:claude-web:{}", account.id),
+                    enabled: previous_managed_enabled
+                        .get(&source)
+                        .copied()
+                        .unwrap_or(true),
+                    source,
                 });
                 continue;
             }
@@ -3161,6 +3187,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
             if api_key.trim().is_empty() && credential_json.is_none() {
                 continue;
             }
+            let source = format!("cle:claude:{}", account.id);
             config.accounts.push(MultiModelAccount {
                 id: format!("cle-claude-{}", account.id),
                 name: format!("Claude · {}", account.email),
@@ -3181,8 +3208,11 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                     account.api_model_catalog.unwrap_or_default(),
                     DEFAULT_CLAUDE_MODELS,
                 ),
-                enabled: true,
-                source: format!("cle:claude:{}", account.id),
+                enabled: previous_managed_enabled
+                    .get(&source)
+                    .copied()
+                    .unwrap_or(true),
+                source,
             });
         }
     }

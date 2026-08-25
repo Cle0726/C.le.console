@@ -407,6 +407,21 @@ pub async fn open_account(
             .map_err(|error| format!("Cookie 已导入，但刷新豆包页面失败: {error}"))?;
         tokio::time::sleep(Duration::from_millis(450)).await;
     }
+    if account_for_cookie_sync.platform_id == "doubao" {
+        let cookie_url =
+            Url::parse("https://www.doubao.com/").map_err(|error| error.to_string())?;
+        let check = doubao_web::validate_doubao_cookie_header(
+            cookie_header(&view, &cookie_url).unwrap_or_default(),
+        )
+        .await;
+        if check.verified {
+            doubao_web::update_last_known_login(
+                &app,
+                &account_for_cookie_sync.id,
+                check.logged_in,
+            )?;
+        }
+    }
     apply_bounds(&view, &bounds)?;
     set_active_account_id(Some(account_id));
     Ok(workspace_state(&app))
@@ -663,16 +678,33 @@ pub async fn inspect_account_session(
     app: &AppHandle,
     account_id: &str,
     home_url: &str,
-) -> Result<Option<(Option<String>, bool)>, String> {
+) -> Result<Option<(Option<String>, bool, bool, Option<String>)>, String> {
     let Some(view) = app.get_webview(&webview_label(account_id)) else {
         return Ok(None);
     };
     let current_url = view.url().ok().map(|url| url.to_string());
     let cookie_url = Url::parse(home_url).map_err(|error| error.to_string())?;
+    let is_doubao = cookie_url
+        .host_str()
+        .is_some_and(|host| host == "doubao.com" || host.ends_with(".doubao.com"));
     let cookies = tokio::task::spawn_blocking(move || view.cookies_for_url(cookie_url))
         .await
         .map_err(|error| format!("网页登录状态检查任务失败: {error}"))?
         .map_err(|error| format!("无法读取网页登录状态: {error}"))?;
+    let cookie_header = cookies
+        .iter()
+        .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if is_doubao {
+        let check = doubao_web::validate_doubao_cookie_header(cookie_header).await;
+        return Ok(Some((
+            current_url,
+            check.logged_in,
+            check.verified,
+            check.detail,
+        )));
+    }
     let logged_in = cookies.iter().any(|cookie| {
         let name = cookie.name().to_ascii_lowercase();
         !cookie.value().trim().is_empty()
@@ -681,7 +713,7 @@ pub async fn inspect_account_session(
                 || name.contains("auth")
                 || name.contains("login"))
     });
-    Ok(Some((current_url, logged_in)))
+    Ok(Some((current_url, logged_in, true, None)))
 }
 
 pub fn close_account_view(app: &AppHandle, account_id: &str) -> Result<(), String> {

@@ -37,6 +37,17 @@ const GENERATION_TIMEOUT: Duration = Duration::from_secs(390);
 static STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static GENERATING_ACCOUNTS: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
 
+const DOUBAO_ACCOUNT_INFO_URL: &str =
+    "https://www.doubao.com/passport/account/info/v2?account_sdk_source=web";
+const DOUBAO_LOGIN_VALIDATION_VERSION: u8 = 1;
+
+#[derive(Debug, Clone)]
+pub(crate) struct DoubaoSessionCheck {
+    pub(crate) logged_in: bool,
+    pub(crate) verified: bool,
+    pub(crate) detail: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DoubaoWebAccountRecord {
@@ -60,6 +71,10 @@ pub(crate) struct DoubaoWebAccountRecord {
     desktop_cookie_sync_pending: bool,
     #[serde(default)]
     last_cookie_sync_at: u64,
+    #[serde(default)]
+    last_login_verified_at: u64,
+    #[serde(default)]
+    login_validation_version: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,6 +256,8 @@ fn default_account() -> DoubaoWebAccountRecord {
         desktop_profile_dir: None,
         desktop_cookie_sync_pending: false,
         last_cookie_sync_at: 0,
+        last_login_verified_at: 0,
+        login_validation_version: 0,
     }
 }
 
@@ -271,16 +288,27 @@ fn read_store_unlocked(app: &AppHandle) -> Result<DoubaoWebAccountStore, String>
     let mut store: DoubaoWebAccountStore =
         serde_json::from_str(&raw).map_err(|error| format!("网页创作账号配置格式损坏: {error}"))?;
     let mut ids = HashSet::new();
-    for account in &store.accounts {
+    let mut migrated_unverified_doubao_state = false;
+    for account in &mut store.accounts {
         if !valid_account_id(&account.id)
             || !valid_platform_id(&account.platform_id)
             || !ids.insert(account.id.as_str())
         {
             return Err("网页创作账号配置包含无效或重复的账号 ID".into());
         }
+        if account.platform_id == "doubao"
+            && account.login_validation_version < DOUBAO_LOGIN_VALIDATION_VERSION
+            && (account.last_known_logged_in || account.last_login_verified_at > 0)
+        {
+            account.last_known_logged_in = false;
+            account.last_login_verified_at = 0;
+            migrated_unverified_doubao_state = true;
+        }
     }
     if store.accounts.is_empty() {
         store.accounts.push(default_account());
+        write_store_unlocked(app, &store)?;
+    } else if migrated_unverified_doubao_state {
         write_store_unlocked(app, &store)?;
     }
     Ok(store)
@@ -755,11 +783,161 @@ pub(crate) fn sync_desktop_cookies_to_view(
                 .ok_or_else(|| "导入目标账号不存在".to_string())?;
             record.desktop_cookie_sync_pending = false;
             record.last_cookie_sync_at = unix_timestamp();
-            record.last_known_logged_in = true;
+            // Copying auth-shaped cookies does not prove that Doubao still
+            // accepts the session. The account endpoint is authoritative and
+            // will update this flag after the webview is opened.
+            record.last_known_logged_in = false;
+            record.last_login_verified_at = 0;
+            record.login_validation_version = 0;
             record.last_error.clear();
             Ok(())
         })?;
         Ok(Some(count))
+    }
+}
+
+fn non_empty_json_identity(value: &Value) -> bool {
+    const IDENTITY_KEYS: &[&str] = &[
+        "user_id",
+        "user_id_str",
+        "userId",
+        "uid",
+        "sec_user_id",
+        "secUid",
+        "screen_name",
+        "screenName",
+        "nickname",
+    ];
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    IDENTITY_KEYS.iter().any(|key| {
+        object.get(*key).is_some_and(|item| match item {
+            Value::String(text) => !text.trim().is_empty(),
+            Value::Number(_) => true,
+            _ => false,
+        })
+    })
+}
+
+fn response_error_code(value: &Value) -> Option<i64> {
+    value
+        .pointer("/data/error_code")
+        .or_else(|| value.pointer("/data/errorCode"))
+        .or_else(|| value.get("error_code"))
+        .or_else(|| value.get("errorCode"))
+        .and_then(|code| {
+            code.as_i64()
+                .or_else(|| code.as_str().and_then(|text| text.parse().ok()))
+        })
+}
+
+fn doubao_account_response_authenticated(value: &Value) -> bool {
+    if response_error_code(value).is_some_and(|code| code != 0) {
+        return false;
+    }
+    let data = value.get("data").unwrap_or(value);
+    non_empty_json_identity(data)
+        || data.get("user").is_some_and(non_empty_json_identity)
+        || data.get("account").is_some_and(non_empty_json_identity)
+}
+
+pub(crate) async fn validate_doubao_cookie_header(cookie_header: String) -> DoubaoSessionCheck {
+    if cookie_header.trim().is_empty() {
+        return DoubaoSessionCheck {
+            logged_in: false,
+            verified: true,
+            detail: Some("没有可用于登录验证的豆包 Cookie".into()),
+        };
+    }
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .user_agent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        )
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            return DoubaoSessionCheck {
+                logged_in: false,
+                verified: false,
+                detail: Some(format!("无法创建豆包登录验证请求: {error}")),
+            };
+        }
+    };
+    let response = match client
+        .get(DOUBAO_ACCOUNT_INFO_URL)
+        .query(&[
+            ("sdk_version", "2.2.5"),
+            ("language", "zh"),
+            ("browser_language", "zh-CN"),
+            ("device_platform", "web"),
+            ("doubao_device_platform", "web"),
+            ("aid", "582478"),
+            ("real_aid", "582478"),
+            ("pkg_type", "release_version"),
+            ("use-olympus-account", "1"),
+            ("samantha_web", "1"),
+        ])
+        .header(reqwest::header::COOKIE, cookie_header)
+        .header(reqwest::header::ORIGIN, "https://www.doubao.com")
+        .header(reqwest::header::REFERER, "https://www.doubao.com/chat/")
+        .header(reqwest::header::ACCEPT, "application/json, text/plain, */*")
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            return DoubaoSessionCheck {
+                logged_in: false,
+                verified: false,
+                detail: Some(format!("豆包服务端登录验证失败: {error}")),
+            };
+        }
+    };
+    if !response.status().is_success() {
+        return DoubaoSessionCheck {
+            logged_in: false,
+            verified: false,
+            detail: Some(format!("豆包服务端登录验证返回 HTTP {}", response.status())),
+        };
+    }
+    let value = match response.json::<Value>().await {
+        Ok(value) => value,
+        Err(error) => {
+            return DoubaoSessionCheck {
+                logged_in: false,
+                verified: false,
+                detail: Some(format!("豆包登录验证响应无法解析: {error}")),
+            };
+        }
+    };
+    if doubao_account_response_authenticated(&value) {
+        DoubaoSessionCheck {
+            logged_in: true,
+            verified: true,
+            detail: None,
+        }
+    } else if let Some(code) = response_error_code(&value) {
+        DoubaoSessionCheck {
+            logged_in: false,
+            verified: true,
+            detail: Some(if code == 13 {
+                "豆包服务端判定会话已过期；需要先让桌面端刷新该账号，再重新导入".into()
+            } else {
+                format!("豆包服务端拒绝当前会话（错误码 {code}）")
+            }),
+        }
+    } else {
+        // Unknown response shapes are not allowed to turn an account green.
+        DoubaoSessionCheck {
+            logged_in: false,
+            verified: false,
+            detail: Some("豆包登录验证响应缺少可确认的账号身份".into()),
+        }
     }
 }
 
@@ -829,6 +1007,9 @@ pub async fn import_desktop_profiles(
             }) {
                 account.desktop_cookie_sync_pending = profile.ready;
                 account.enabled = true;
+                account.last_known_logged_in = false;
+                account.last_login_verified_at = 0;
+                account.login_validation_version = 0;
                 account.last_error = if profile.ready {
                     String::new()
                 } else {
@@ -853,6 +1034,8 @@ pub async fn import_desktop_profiles(
                 desktop_profile_dir: Some(profile.profile_dir.clone()),
                 desktop_cookie_sync_pending: profile.ready,
                 last_cookie_sync_at: 0,
+                last_login_verified_at: 0,
+                login_validation_version: 0,
             };
             account_ids.push(account.id.clone());
             store.accounts.push(account);
@@ -920,7 +1103,9 @@ async fn inspect_account(
         .contains(&account.id);
     let platform =
         platform(&account.platform_id).ok_or_else(|| "不支持的网页创作平台".to_string())?;
-    if let Some((current_url, logged_in)) =
+    let cached_verified = account.platform_id == "doubao"
+        && account.login_validation_version >= DOUBAO_LOGIN_VALIDATION_VERSION;
+    if let Some((current_url, logged_in, status_verified, validation_detail)) =
         crate::modules::web_creator_workspace::inspect_account_session(
             app,
             &account.id,
@@ -936,7 +1121,7 @@ async fn inspect_account(
             busy,
             window_open: true,
             logged_in,
-            status_verified: true,
+            status_verified,
             current_url,
             message: if !account.enabled {
                 "已停用，不参与自动故障切换".into()
@@ -945,7 +1130,13 @@ async fn inspect_account(
             } else if logged_in {
                 format!("{}网页登录状态可用", platform.name)
             } else {
-                format!("请在当前工作台中完成{}登录或扫码确认", platform.name)
+                validation_detail.unwrap_or_else(|| {
+                    if status_verified {
+                        format!("请在当前工作台中完成{}登录或扫码确认", platform.name)
+                    } else {
+                        format!("暂时无法向{}服务端确认登录状态", platform.name)
+                    }
+                })
             },
             last_error: (!account.last_error.is_empty()).then(|| account.last_error.clone()),
             consecutive_failures: account.consecutive_failures,
@@ -965,7 +1156,7 @@ async fn inspect_account(
             busy,
             window_open: false,
             logged_in: account.last_known_logged_in,
-            status_verified: false,
+            status_verified: cached_verified,
             current_url: None,
             message: if !account.enabled {
                 "已停用，不参与自动故障切换".into()
@@ -974,9 +1165,11 @@ async fn inspect_account(
             } else if account.desktop_cookie_sync_pending {
                 "桌面 Cookie 已就绪，打开账号后完成导入".into()
             } else if account.last_known_logged_in {
-                "上次检测已登录，生成前会再次验证".into()
+                "上次已由豆包服务端确认登录，使用前会再次验证".into()
+            } else if cached_verified {
+                "豆包服务端未接受当前会话".into()
             } else {
-                "尚未检测到网页登录状态".into()
+                "尚未向平台服务端验证登录状态".into()
             },
             last_error: (!account.last_error.is_empty()).then(|| account.last_error.clone()),
             consecutive_failures: account.consecutive_failures,
@@ -992,14 +1185,25 @@ async fn inspect_account(
         .await
         .map_err(|error| format!("网页登录状态检查任务失败: {error}"))?
         .map_err(|error| format!("无法读取网页登录状态: {error}"))?;
-    let logged_in = cookies.iter().any(|cookie| {
-        let name = cookie.name().to_ascii_lowercase();
-        !cookie.value().trim().is_empty()
-            && (name.contains("session")
-                || name.contains("token")
-                || name.contains("auth")
-                || name.contains("login"))
-    });
+    let (logged_in, status_verified, validation_detail) = if account.platform_id == "doubao" {
+        let cookie_header = cookies
+            .iter()
+            .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let check = validate_doubao_cookie_header(cookie_header).await;
+        (check.logged_in, check.verified, check.detail)
+    } else {
+        let logged_in = cookies.iter().any(|cookie| {
+            let name = cookie.name().to_ascii_lowercase();
+            !cookie.value().trim().is_empty()
+                && (name.contains("session")
+                    || name.contains("token")
+                    || name.contains("auth")
+                    || name.contains("login"))
+        });
+        (logged_in, true, None)
+    };
 
     Ok(DoubaoWebAccountState {
         id: account.id.clone(),
@@ -1009,7 +1213,7 @@ async fn inspect_account(
         busy,
         window_open: true,
         logged_in,
-        status_verified: true,
+        status_verified,
         current_url,
         message: if !account.enabled {
             "已停用，不参与自动故障切换".into()
@@ -1018,7 +1222,13 @@ async fn inspect_account(
         } else if logged_in {
             format!("{}网页登录状态可用", platform.name)
         } else {
-            format!("请在专用窗口中完成{}登录或扫码确认", platform.name)
+            validation_detail.unwrap_or_else(|| {
+                if status_verified {
+                    format!("请在专用窗口中完成{}登录或扫码确认", platform.name)
+                } else {
+                    format!("暂时无法向{}服务端确认登录状态", platform.name)
+                }
+            })
         },
         last_error: (!account.last_error.is_empty()).then(|| account.last_error.clone()),
         consecutive_failures: account.consecutive_failures,
@@ -1029,7 +1239,7 @@ async fn inspect_account(
     })
 }
 
-fn update_last_known_login(
+pub(crate) fn update_last_known_login(
     app: &AppHandle,
     account_id: &str,
     logged_in: bool,
@@ -1041,6 +1251,10 @@ fn update_last_known_login(
             .find(|account| account.id == account_id)
         {
             account.last_known_logged_in = logged_in;
+            if account.platform_id == "doubao" {
+                account.last_login_verified_at = unix_timestamp();
+                account.login_validation_version = DOUBAO_LOGIN_VALIDATION_VERSION;
+            }
         }
         Ok(())
     })
@@ -1054,7 +1268,11 @@ async fn build_state(
     let mut accounts = Vec::with_capacity(store.accounts.len());
     for account in &store.accounts {
         let state = inspect_account(app, account).await?;
-        if state.status_verified && state.logged_in != account.last_known_logged_in {
+        if state.status_verified
+            && (state.logged_in != account.last_known_logged_in
+                || (account.platform_id == "doubao"
+                    && account.login_validation_version < DOUBAO_LOGIN_VALIDATION_VERSION))
+        {
             update_last_known_login(app, &account.id, state.logged_in)?;
         }
         accounts.push(state);
@@ -1110,6 +1328,8 @@ pub async fn add_account(
             desktop_profile_dir: None,
             desktop_cookie_sync_pending: false,
             last_cookie_sync_at: 0,
+            last_login_verified_at: 0,
+            login_validation_version: 0,
         };
         store.accounts.push(account.clone());
         Ok(account)
@@ -1770,5 +1990,27 @@ mod tests {
         assert!(is_retryable_video_error("视频额度已用完"));
         assert!(is_retryable_video_error("service timeout"));
         assert!(!is_retryable_video_error("提示词包含敏感内容"));
+    }
+
+    #[test]
+    fn doubao_account_response_requires_a_real_identity() {
+        let expired = serde_json::json!({
+            "message": "error",
+            "data": { "error_code": 13 }
+        });
+        assert!(!doubao_account_response_authenticated(&expired));
+        assert_eq!(response_error_code(&expired), Some(13));
+
+        let authenticated = serde_json::json!({
+            "message": "success",
+            "data": { "user_id_str": "redacted" }
+        });
+        assert!(doubao_account_response_authenticated(&authenticated));
+
+        let ambiguous = serde_json::json!({
+            "message": "success",
+            "data": { "error_code": 0 }
+        });
+        assert!(!doubao_account_response_authenticated(&ambiguous));
     }
 }
