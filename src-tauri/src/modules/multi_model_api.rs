@@ -650,12 +650,18 @@ fn builtin_catalog() -> Vec<MultiModelCatalogEntry> {
 }
 
 fn catalog_for_config(config: &MultiModelApiConfig) -> Vec<MultiModelCatalogEntry> {
-    let mut result = builtin_catalog();
+    // Antigravity availability is account-scoped and changes independently of
+    // the application release. Static suggestions must not be presented as
+    // callable models; only enabled, saved account models are authoritative.
+    let mut result = builtin_catalog()
+        .into_iter()
+        .filter(|entry| entry.provider != "antigravity")
+        .collect::<Vec<_>>();
     let mut seen: BTreeSet<(String, String)> = result
         .iter()
         .map(|entry| (entry.provider.clone(), entry.id.to_ascii_lowercase()))
         .collect();
-    for account in &config.accounts {
+    for account in config.accounts.iter().filter(|account| account.enabled) {
         for model in &account.models {
             let key = (account.provider.clone(), model.id.to_ascii_lowercase());
             if model.enabled && seen.insert(key) {
@@ -1014,6 +1020,9 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
     };
 
     for entry in builtin_catalog() {
+        if entry.provider == "antigravity" {
+            continue;
+        }
         if providers.contains(&entry.provider)
             || (entry.provider == "gemini" && providers.contains("gemini-cli"))
         {
@@ -2950,6 +2959,16 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         .filter(|account| account.source.starts_with("cle:"))
         .map(|account| (account.source.clone(), account.enabled))
         .collect::<BTreeMap<_, _>>();
+    // Keep the user's verified/pruned model selection for managed accounts.
+    // Quota discovery is intentionally broad and can contain experimental or
+    // retired model IDs. Replacing the saved list on every sync makes models
+    // that were already proven unusable reappear in the gateway catalog.
+    let previous_managed_models = config
+        .accounts
+        .iter()
+        .filter(|account| account.source.starts_with("cle:"))
+        .map(|account| (account.source.clone(), account.models.clone()))
+        .collect::<BTreeMap<_, _>>();
     config
         .accounts
         .retain(|account| !account.source.starts_with("cle:"));
@@ -2982,8 +3001,12 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let models = models_or_defaults(discovered_models, DEFAULT_ANTIGRAVITY_MODELS);
             let source = format!("cle:antigravity:{}", managed.id);
+            let models = managed_models_or_previous_selection(
+                discovered_models,
+                DEFAULT_ANTIGRAVITY_MODELS,
+                previous_managed_models.get(&source),
+            );
             config.accounts.push(MultiModelAccount {
                 id: format!("cle-antigravity-{}", managed.id),
                 name: format!("Antigravity · {}", managed.email),
@@ -3288,9 +3311,38 @@ fn models_or_defaults(models: Vec<String>, defaults: &[&str]) -> Vec<MultiModelD
     source.into_iter().map(model_definition).collect()
 }
 
+fn managed_models_or_previous_selection(
+    discovered_models: Vec<String>,
+    defaults: &[&str],
+    previous_models: Option<&Vec<MultiModelDefinition>>,
+) -> Vec<MultiModelDefinition> {
+    let discovered_was_empty = discovered_models.is_empty();
+    let candidates = models_or_defaults(discovered_models, defaults);
+    let Some(previous_models) = previous_models else {
+        return candidates;
+    };
+    if previous_models.is_empty() {
+        return Vec::new();
+    }
+    if discovered_was_empty {
+        return previous_models.clone();
+    }
+
+    let available = candidates
+        .iter()
+        .map(|model| model.id.trim().to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
+    previous_models
+        .iter()
+        .filter(|model| available.contains(&model.id.trim().to_ascii_lowercase()))
+        .cloned()
+        .collect()
+}
+
 fn is_routable_antigravity_model(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
     !(normalized.is_empty()
+        || normalized.starts_with("chat_")
         || normalized.starts_with("3p-")
         || normalized.ends_with("-weekly")
         || normalized.ends_with("-5h"))
@@ -3483,11 +3535,12 @@ pub async fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::{
-        automatic_chat_test_models, builtin_catalog, default_config,
+        automatic_chat_test_models, builtin_catalog, catalog_for_config, default_config,
         is_blocking_managed_account_status, is_blocking_managed_route_error,
-        is_routable_antigravity_model, model_definition, normalize_config,
-        normalize_oauth_credential, normalize_provider, provider_chat_test_models,
-        watchdog_restart_delay, MultiModelAccount, MultiModelDefinition,
+        is_routable_antigravity_model, managed_models_or_previous_selection, model_definition,
+        normalize_config, normalize_oauth_credential, normalize_provider,
+        provider_chat_test_models, watchdog_restart_delay, MultiModelAccount, MultiModelDefinition,
+        DEFAULT_ANTIGRAVITY_MODELS,
     };
     use serde_json::json;
     use std::time::Duration;
@@ -3520,12 +3573,83 @@ mod tests {
     fn antigravity_sync_keeps_new_official_models_but_rejects_aggregate_buckets() {
         assert!(is_routable_antigravity_model("imagen-4-ultra"));
         assert!(is_routable_antigravity_model("future-provider-model-v1"));
+        assert!(!is_routable_antigravity_model("chat_20706"));
         assert!(!is_routable_antigravity_model("3p-5h"));
         assert!(!is_routable_antigravity_model("gemini-weekly"));
         assert!(!is_routable_antigravity_model("claude-5h"));
 
         let image = model_definition("imagen-4-ultra".to_string());
         assert_eq!(image.capabilities, ["image", "vision"]);
+    }
+
+    #[test]
+    fn antigravity_sync_preserves_a_pruned_model_selection() {
+        let previous = vec![
+            model_definition("gemini-3-flash".to_string()),
+            MultiModelDefinition {
+                enabled: false,
+                ..model_definition("claude-sonnet-4-6".to_string())
+            },
+        ];
+        let models = managed_models_or_previous_selection(
+            vec![
+                "gemini-3-flash".to_string(),
+                "claude-sonnet-4-6".to_string(),
+                "gemini-2.5-pro".to_string(),
+            ],
+            DEFAULT_ANTIGRAVITY_MODELS,
+            Some(&previous),
+        );
+
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "gemini-3-flash");
+        assert_eq!(models[1].id, "claude-sonnet-4-6");
+        assert!(!models[1].enabled);
+        assert!(!models.iter().any(|model| model.id == "gemini-2.5-pro"));
+    }
+
+    #[test]
+    fn antigravity_catalog_uses_only_enabled_account_models() {
+        let mut config = default_config();
+        config.accounts.push(MultiModelAccount {
+            id: "enabled-antigravity".to_string(),
+            name: "enabled".to_string(),
+            provider: "antigravity".to_string(),
+            auth_mode: "oauth_json".to_string(),
+            base_url: String::new(),
+            api_key: String::new(),
+            credential_json: None,
+            proxy_url: String::new(),
+            prefix: String::new(),
+            priority: 0,
+            headers: Default::default(),
+            models: vec![model_definition("gemini-3-flash".to_string())],
+            enabled: true,
+            source: "test".to_string(),
+        });
+        config.accounts.push(MultiModelAccount {
+            id: "disabled-antigravity".to_string(),
+            name: "disabled".to_string(),
+            provider: "antigravity".to_string(),
+            auth_mode: "oauth_json".to_string(),
+            base_url: String::new(),
+            api_key: String::new(),
+            credential_json: None,
+            proxy_url: String::new(),
+            prefix: String::new(),
+            priority: 0,
+            headers: Default::default(),
+            models: vec![model_definition("gemini-2.5-pro".to_string())],
+            enabled: false,
+            source: "test-disabled".to_string(),
+        });
+
+        let antigravity = catalog_for_config(&config)
+            .into_iter()
+            .filter(|entry| entry.provider == "antigravity")
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
+        assert_eq!(antigravity, ["gemini-3-flash"]);
     }
 
     #[test]
