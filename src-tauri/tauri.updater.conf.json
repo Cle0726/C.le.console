@@ -4,7 +4,6 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
       "windows": {
         "installMode": "passive"
       }

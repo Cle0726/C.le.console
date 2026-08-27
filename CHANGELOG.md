@@ -4,6 +4,20 @@
 
 ## 未发布
 
+## 1.1.6
+
+### 新增
+
+- 发布 Windows x64 与 macOS Apple Silicon 双平台安装包。
+- 建立 GitHub Release 签名更新链路，同时生成两平台 `latest.json` 更新清单。
+- macOS 客户端现在会检查新版本并支持应用内下载更新。
+
+### 修复
+
+- 修复更新构建未注入公钥，导致 Tauri 打包报 `missing field pubkey` 的问题。
+- 修复 GitHub Release 缺少签名包和 `latest.json`，导致应用内更新地址返回 404 的问题。
+- 修复 Antigravity 不可调用模型被重复加入模型目录的问题。
+
 ### 新增
 
 - 新增即梦 API 服务管理页面和 Rust 后端服务模块。

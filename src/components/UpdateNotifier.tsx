@@ -65,8 +65,8 @@ function isNewerVersion(candidate: string, current: string): boolean {
   return false;
 }
 
-function isWindowsDesktop(): boolean {
-  return '__TAURI_INTERNALS__' in window && /Windows/i.test(navigator.userAgent);
+function isSupportedDesktop(): boolean {
+  return '__TAURI_INTERNALS__' in window && /(Windows|Macintosh|Mac OS X)/i.test(navigator.userAgent);
 }
 
 function dismissedStorageKey(version: string): string {
@@ -127,7 +127,7 @@ export function UpdateNotifier() {
   }, [downloadedBytes, totalBytes]);
 
   useEffect(() => {
-    if (!isWindowsDesktop()) return;
+    if (!isSupportedDesktop()) return;
 
     let cancelled = false;
     const timer = window.setTimeout(() => {
