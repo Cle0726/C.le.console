@@ -1,0 +1,149 @@
+name: macOS Apple Silicon release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish a signed/notarized GitHub Release asset'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release-macos-arm64:
+    name: Build macOS Apple Silicon app and DMG
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            third_party/jimeng-api/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sidecars/cle-cliproxy/go.mod
+          cache-dependency-path: sidecars/cle-cliproxy/go.sum
+
+      - name: Set up Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify version and macOS source readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          TAURI_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          CARGO_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)"
+
+          test "$VERSION" = "$TAURI_VERSION"
+          test "$VERSION" = "$CARGO_VERSION"
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            test "${{ github.ref_name }}" = "v$VERSION"
+          fi
+
+          npm run macos:check
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Verify Apple release secrets
+        if: github.event_name == 'push' || inputs.publish
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          required=(
+            APPLE_CERTIFICATE
+            APPLE_CERTIFICATE_PASSWORD
+            APPLE_ID
+            APPLE_PASSWORD
+            APPLE_TEAM_ID
+          )
+          for key in "${required[@]}"; do
+            if [[ -z "${!key:-}" ]]; then
+              echo "Missing GitHub Actions secret: $key" >&2
+              exit 1
+            fi
+          done
+
+      - name: Build native macOS sidecars
+        run: npm run macos:sidecars -- aarch64-apple-darwin
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Build ad-hoc M1 test package
+        if: github.event_name == 'workflow_dispatch' && !inputs.publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run macos:build -- aarch64-apple-darwin
+          mkdir -p artifacts/macos
+          APP_PATH="$(find target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          DMG_PATH="$(find target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$APP_PATH"
+          test -n "$DMG_PATH"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "artifacts/macos/C.le.console_${VERSION}_macos_arm64.app.zip"
+          cp "$DMG_PATH" "artifacts/macos/C.le.console_${VERSION}_macos_arm64.dmg"
+          shasum -a 256 artifacts/macos/* > artifacts/macos/SHA256SUMS.txt
+
+      - name: Upload M1 test artifact
+        if: github.event_name == 'workflow_dispatch' && !inputs.publish
+        uses: actions/upload-artifact@v4
+        with:
+          name: C.le.console-${{ env.VERSION }}-macos-arm64
+          path: artifacts/macos/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build, sign, notarize and publish macOS release
+        if: github.event_name == 'push' || inputs.publish
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.event_name == 'push' && github.ref_name || 'v__VERSION__' }}
+          releaseName: 'C.le.控制台 v__VERSION__'
+          releaseBody: 'macOS Apple Silicon (M1/M2/M3/M4) signed and notarized release for C.le.控制台.'
+          releaseDraft: false
+          prerelease: false
+          retryAttempts: 3
+          args: --target aarch64-apple-darwin
