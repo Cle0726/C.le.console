@@ -83,11 +83,9 @@ jobs:
           $sourceDir = 'target/release/bundle/nsis'; $out = 'artifacts/windows'
           New-Item -ItemType Directory -Force $out | Out-Null
           $installer = Get-ChildItem $sourceDir -File -Filter '*.exe' | Select-Object -First 1
-          $archive = Get-ChildItem $sourceDir -File -Filter '*.nsis.zip' | Select-Object -First 1
-          if (-not $installer -or -not $archive -or -not (Test-Path "$($archive.FullName).sig")) { throw 'Windows updater artifacts are incomplete' }
+          if (-not $installer -or -not (Test-Path "$($installer.FullName).sig")) { throw 'Windows updater artifacts are incomplete' }
           Copy-Item $installer.FullName "$out/C.le.console_${version}_x64_setup.exe"
-          Copy-Item $archive.FullName "$out/C.le.console_${version}_x64-setup.nsis.zip"
-          Copy-Item "$($archive.FullName).sig" "$out/C.le.console_${version}_x64-setup.nsis.zip.sig"
+          Copy-Item "$($installer.FullName).sig" "$out/C.le.console_${version}_x64_setup.exe.sig"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -190,7 +188,7 @@ jobs:
               path = root / name
               if not path.is_file(): raise SystemExit(f'missing release asset: {path}')
               return path
-          win = f'C.le.console_{version}_x64-setup.nsis.zip'
+          win = f'C.le.console_{version}_x64_setup.exe'
           mac = f'C.le.console_{version}_aarch64.app.tar.gz'
           base = f'https://github.com/{repo}/releases/download/{tag}/'
           manifest = {
