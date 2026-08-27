@@ -123,10 +123,6 @@
   box-shadow: inset 0 1px color-mix(in srgb, white 26%, transparent);
 }
 
-.industrial-window-toggle {
-  min-width: 48px;
-}
-
 .industrial-lite-toggle > span:not(.industrial-lite-bars) {
   font: 750 10px/1 var(--font-sans);
 }

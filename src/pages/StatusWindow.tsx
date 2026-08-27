@@ -21,14 +21,20 @@ import {
   VISUAL_THEME_STORAGE_KEY,
   type VisualTheme,
 } from '../utils/visualTheme';
+import {
+  applyPerformanceMode,
+  readPerformanceMode,
+  savePerformanceMode,
+  PERFORMANCE_MODE_STORAGE_KEY,
+  type PerformanceMode,
+} from '../utils/performanceMode';
 import './StatusWindow.css';
-
-const INTERACTIVE_SELECTOR = 'button, input, select, textarea, a, [role="button"]';
 
 export function StatusWindow() {
   const { t } = useTranslation();
   const { currentAccount, fetchAccounts, fetchCurrentAccount, refreshQuota } = useCodexAccountStore();
   const [theme, setTheme] = useState<VisualTheme>(() => readVisualTheme());
+  const [performanceMode, setPerformanceMode] = useState<PerformanceMode>(() => readPerformanceMode());
   const [checkedAt, setCheckedAt] = useState(() => new Date());
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -76,11 +82,17 @@ export function StatusWindow() {
   useEffect(() => {
     const syncTheme = () => {
       const nextTheme = readVisualTheme();
+      const nextPerformanceMode = readPerformanceMode();
       setTheme(nextTheme);
+      setPerformanceMode(nextPerformanceMode);
       applyVisualTheme(nextTheme);
+      applyPerformanceMode(nextPerformanceMode);
     };
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === VISUAL_THEME_STORAGE_KEY) syncTheme();
+      if (
+        event.key === VISUAL_THEME_STORAGE_KEY
+        || event.key === PERFORMANCE_MODE_STORAGE_KEY
+      ) syncTheme();
     };
     const handleVisibility = () => {
       if (!document.hidden) syncTheme();
@@ -168,15 +180,36 @@ export function StatusWindow() {
     saveVisualTheme(nextTheme);
   }, [theme]);
 
+  const handleTogglePerformanceMode = useCallback(() => {
+    const nextMode: PerformanceMode = performanceMode === 'lite' ? 'full' : 'lite';
+    setPerformanceMode(nextMode);
+    savePerformanceMode(nextMode);
+  }, [performanceMode]);
+
+  const handleRestoreWindow = useCallback(() => {
+    void hideStatusWindow().catch((error) => {
+      console.error('[StatusWindow] 恢复主窗口失败:', error);
+    });
+  }, []);
+
   const handleClose = useCallback(() => {
     void hideStatusWindow().catch(() => getCurrentWindow().hide());
   }, []);
 
-  const handleWindowMouseDown = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest(INTERACTIVE_SELECTOR)) return;
+  const handleDragStart = useCallback((event?: ReactMouseEvent<HTMLElement>) => {
+    if (event && event.button !== 0) return;
+    event?.preventDefault();
+    event?.stopPropagation();
     void getCurrentWindow().startDragging();
   }, []);
+
+  const handleWindowMouseDown = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest('[data-tauri-drag-region]')) return;
+    if (target.closest('[data-status-window-no-drag="true"], button, input, select, textarea, a, [role="button"]')) return;
+    handleDragStart(event);
+  }, [handleDragStart]);
 
   return (
     <div className="status-window" onMouseDown={handleWindowMouseDown}>
@@ -192,12 +225,14 @@ export function StatusWindow() {
         routeItems={routeItems}
         checkedAt={checkedAt}
         theme={theme}
+        performanceMode={performanceMode}
         refreshing={refreshing}
         refreshError={refreshError ?? egressError}
         onRefresh={() => void handleRefresh()}
+        onRestoreWindow={handleRestoreWindow}
+        onTogglePerformanceMode={handleTogglePerformanceMode}
         onToggleTheme={handleToggleTheme}
         onClose={handleClose}
-        onDragStart={() => void getCurrentWindow().startDragging()}
       />
     </div>
   );

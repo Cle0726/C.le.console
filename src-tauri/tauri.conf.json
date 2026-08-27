@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "C.le.控制台",
   "mainBinaryName": "C.le.控制台",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "identifier": "com.cle0726.cle-console",
   "build": {
     "beforeDevCommand": "node scripts/prepare-tauri.cjs && node scripts/dev-frontend.cjs",

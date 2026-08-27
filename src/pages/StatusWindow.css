@@ -96,13 +96,14 @@ body.status-window-root,
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: clamp(8px, calc(var(--status-u) * 1.04), 28px);
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 .compact-status-brand,
 .compact-status-titlebar-meta {
   display: flex;
   align-items: center;
+  -webkit-app-region: drag;
 }
 
 .compact-status-brand {
@@ -149,9 +150,12 @@ body.status-window-root,
 }
 
 .compact-status-window-actions {
+  position: relative;
+  z-index: 5;
   display: flex;
   gap: clamp(4px, calc(var(--status-u) * .52), 14px);
   -webkit-app-region: no-drag;
+  pointer-events: auto;
 }
 
 .compact-status-panel svg {
@@ -181,6 +185,17 @@ body.status-window-root,
   width: clamp(25px, calc(var(--status-u) * 2.92), 76px);
   height: clamp(25px, calc(var(--status-u) * 2.92), 76px);
   border-radius: 50%;
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  touch-action: manipulation;
+}
+
+.compact-status-window-actions button[data-active='true'] {
+  border-color: var(--status-solid);
+  background: var(--status-solid);
+  color: var(--status-inverse);
 }
 
 .compact-status-window-actions button:hover,

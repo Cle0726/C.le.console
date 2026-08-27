@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { Page } from '../../types/navigation';
 import {
   applyVisualTheme,
@@ -56,12 +55,6 @@ function getPageSequence(page: Page): string {
   return String(index >= 0 ? index + 1 : 0).padStart(3, '0');
 }
 
-function isMacOSPlatform(): boolean {
-  const navWithUAData = navigator as Navigator & { userAgentData?: { platform?: string } };
-  const platform = navWithUAData.userAgentData?.platform || navigator.platform || '';
-  return platform.toLowerCase().includes('mac');
-}
-
 export function IndustrialChrome({ page }: IndustrialChromeProps) {
   const { i18n } = useTranslation();
   const [now, setNow] = useState(() => new Date());
@@ -107,23 +100,6 @@ export function IndustrialChrome({ page }: IndustrialChromeProps) {
     savePerformanceMode(nextMode);
   };
 
-  const toggleMacWindowMode = async () => {
-    const currentWindow = getCurrentWindow();
-    try {
-      if (await currentWindow.isFullscreen()) {
-        await currentWindow.setFullscreen(false);
-        return;
-      }
-      if (await currentWindow.isMaximized()) {
-        await currentWindow.unmaximize();
-        return;
-      }
-      await currentWindow.maximize();
-    } catch (error) {
-      console.warn('[Window] macOS 窗口模式切换失败:', error);
-    }
-  };
-
   const dateParts = useMemo(() => {
     const locale = i18n.resolvedLanguage || i18n.language || undefined;
     return {
@@ -151,17 +127,6 @@ export function IndustrialChrome({ page }: IndustrialChromeProps) {
         <span className="industrial-chrome-time">{dateParts.time}</span>
       </div>
       <div className="industrial-chrome-year">
-        {isMacOSPlatform() && (
-          <button
-            type="button"
-            className="industrial-lite-toggle industrial-window-toggle"
-            aria-label="切换窗口模式 / Toggle window mode"
-            title="窗口化 / 最大化"
-            onClick={() => void toggleMacWindowMode()}
-          >
-            <span>窗</span><small>WIN</small>
-          </button>
-        )}
         <button
           type="button"
           className="industrial-lite-toggle"

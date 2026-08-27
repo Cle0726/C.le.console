@@ -1,5 +1,7 @@
 import {
+  Gauge,
   Moon,
+  PanelTopOpen,
   RefreshCw,
   Sun,
   X,
@@ -30,12 +32,14 @@ type CompactStatusPanelProps = {
   routeItems: CompactRouteItem[];
   checkedAt: Date;
   theme: 'day' | 'night';
+  performanceMode: 'full' | 'lite';
   refreshing?: boolean;
   refreshError?: string | null;
   onRefresh: () => void;
+  onRestoreWindow: () => void;
+  onTogglePerformanceMode: () => void;
   onToggleTheme: () => void;
   onClose: () => void;
-  onDragStart?: () => void;
 };
 
 function clampPercentage(value: number | null) {
@@ -63,12 +67,14 @@ export function CompactStatusPanel({
   routeItems,
   checkedAt,
   theme,
+  performanceMode,
   refreshing = false,
   refreshError,
   onRefresh,
+  onRestoreWindow,
+  onTogglePerformanceMode,
   onToggleTheme,
   onClose,
-  onDragStart,
 }: CompactStatusPanelProps) {
   const primaryQuota = clampPercentage(quotaItems[0]?.percentage ?? null);
   return (
@@ -78,17 +84,44 @@ export function CompactStatusPanel({
     >
       <header
         className="compact-status-titlebar"
-        data-tauri-drag-region
-        onDoubleClick={onDragStart}
       >
-        <div className="compact-status-brand" data-tauri-drag-region>
+        <div
+          className="compact-status-brand"
+          data-tauri-drag-region
+        >
           <strong>C.le.</strong>
           <span>状态窗 <small>/ STATUS</small></span>
         </div>
-        <div className="compact-status-titlebar-meta" data-tauri-drag-region>
+        <div
+          className="compact-status-titlebar-meta"
+          data-tauri-drag-region
+        >
           <time>{checkedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}</time>
         </div>
-        <div className="compact-status-window-actions">
+        <div
+          className="compact-status-window-actions"
+          data-status-window-no-drag="true"
+          onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={onRestoreWindow}
+            aria-label="恢复主窗口 / Restore main window"
+            title="窗口化 / WINDOW"
+          >
+            <PanelTopOpen size={16} />
+          </button>
+          <button
+            type="button"
+            data-active={performanceMode === 'lite'}
+            onClick={onTogglePerformanceMode}
+            aria-label={performanceMode === 'lite' ? '退出简模式 / Restore full effects' : '启用简模式 / Lite mode'}
+            aria-pressed={performanceMode === 'lite'}
+            title={performanceMode === 'lite' ? '完整效果 / FULL' : '简模式 / LITE'}
+          >
+            <Gauge size={16} />
+          </button>
           <button
             type="button"
             onClick={onToggleTheme}
@@ -97,7 +130,7 @@ export function CompactStatusPanel({
           >
             {theme === 'night' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
-          <button type="button" onClick={onClose} aria-label="关闭状态窗 / Close status window" title="关闭 / CLOSE">
+          <button type="button" onClick={onClose} aria-label="隐藏状态窗 / Hide status window" title="隐藏 / HIDE">
             <X size={17} />
           </button>
         </div>
