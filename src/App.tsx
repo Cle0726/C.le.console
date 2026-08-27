@@ -540,6 +540,12 @@ function isWindowsPlatform(): boolean {
   return platform.toLowerCase().includes('win');
 }
 
+function isMacOSPlatform(): boolean {
+  const navWithUAData = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const platform = navWithUAData.userAgentData?.platform || navigator.platform || '';
+  return platform.toLowerCase().includes('mac');
+}
+
 function MainApp({ startupReady }: { startupReady: boolean }) {
   const { t } = useTranslation();
   const sideNavLayoutMode = useSideNavLayoutStore((state) => state.mode);
@@ -1803,7 +1809,7 @@ function MainApp({ startupReady }: { startupReady: boolean }) {
   return (
     <StartupPerformanceProvider ready={startupReady}>
       <div
-        className={`app-container${isWindowsPlatform() ? ' app-container-windows' : ''}${sideNavLayoutMode === 'classic' ? ' app-container-side-nav-classic' : ''}${sideNavLayoutMode === 'classic' && sideNavClassicCollapsed ? ' app-container-side-nav-classic-collapsed' : ''}`}
+        className={`app-container${isWindowsPlatform() ? ' app-container-windows' : ''}${isMacOSPlatform() ? ' app-container-macos' : ''}${sideNavLayoutMode === 'classic' ? ' app-container-side-nav-classic' : ''}${sideNavLayoutMode === 'classic' && sideNavClassicCollapsed ? ' app-container-side-nav-classic-collapsed' : ''}`}
       >
       <AmbientInteractionLayer enabled={startupReady} />
       <PetFishCursorLayer enabled={startupReady} />
