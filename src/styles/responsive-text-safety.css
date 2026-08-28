@@ -65,6 +65,65 @@
   word-break: normal;
 }
 
+/* Native desktop windows are frequently resized to narrow columns. Scale the
+ * semantic text tiers smoothly instead of letting each legacy screen keep a
+ * fixed pixel size, and make CJK/translated labels wrap before they overflow. */
+html[data-native-liquid-glass='true'] body #root :is(
+  .page-title,
+  .scene-header strong,
+  .page-top-strip-label,
+  .codex-api-service-title,
+  .manual-card-title-block h3,
+  .jimeng-panel-title h2,
+  .settings-page-title
+) {
+  font-size: clamp(1rem, 0.65rem + 0.8vw, 1.45rem) !important;
+  line-height: 1.28 !important;
+  text-wrap: balance;
+}
+
+html[data-native-liquid-glass='true'] body #root :is(
+  .page-subtitle,
+  .scene-header small,
+  .page-top-strip-label + small,
+  .manual-card-title-block p,
+  .jimeng-panel-title p,
+  .empty-state p,
+  .settings-page-description
+) {
+  font-size: clamp(0.76rem, 0.65rem + 0.24vw, 0.94rem) !important;
+  line-height: 1.55 !important;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+html[data-native-liquid-glass='true'] body #root :is(
+  .page-header,
+  .page-top-strip,
+  .page-tabs-row,
+  .toolbar,
+  .account-command-dock,
+  .account-selection-toolbar,
+  .codex-overview-selection-bar,
+  .scene-header
+) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+html[data-native-liquid-glass='true'] body #root :is(
+  .page-header *,
+  .page-top-strip *,
+  .page-tabs-row *,
+  .toolbar *,
+  .account-command-dock *,
+  .account-selection-toolbar *,
+  .codex-overview-selection-bar *,
+  .scene-header *
+) {
+  min-inline-size: 0;
+}
+
 /* The legacy primary gradient can resolve too dark in the night palette.
    Manual headings are instructional text, so keep their contrast deterministic
    instead of using transparent gradient-filled glyphs. */
@@ -327,6 +386,42 @@ html[data-ui-scale-band='xlarge'] .jimeng-panel {
   }
 }
 
+@media (max-width: 960px) {
+  html[data-native-liquid-glass='true'] body #root :is(
+    .page-header,
+    .page-top-strip,
+    .toolbar,
+    .account-command-dock,
+    .account-selection-toolbar,
+    .codex-overview-selection-bar
+  ) {
+    block-size: auto !important;
+    min-block-size: 0;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  html[data-native-liquid-glass='true'] body #root :is(
+    .accounts-grid,
+    .account-grid,
+    .settings-grid,
+    .manual-info-grid,
+    .jimeng-accounts-layout,
+    .jimeng-api-layout,
+    .mm-api-grid
+  ) {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  html[data-native-liquid-glass='true'] body #root .launchpad-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  html[data-native-liquid-glass='true'] body #root .launchpad-primary {
+    min-block-size: min(520px, 62vh);
+  }
+}
+
 /* The centered tab group reserves an equally wide phantom column opposite the
    leading context badge. At medium effective widths (including WebView zoom)
    that symmetry can push the last JiMeng tab outside the viewport. Stack the
@@ -392,5 +487,26 @@ html[data-ui-scale-band='xlarge'] .jimeng-panel {
   .jimeng-secret-row {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 620px) {
+  html[data-native-liquid-glass='true'] body #root :is(
+    .main-content,
+    .page-container,
+    .manual-page,
+    .jimeng-page,
+    .codex-api-service-page,
+    .mm-api-page,
+    .ghcp-accounts-page,
+    .codex-accounts-page
+  ) {
+    padding-inline: 12px !important;
+  }
+
+  html[data-native-liquid-glass='true'] body #root :is(.page-tabs, .filter-tabs) {
+    inline-size: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
   }
 }

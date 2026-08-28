@@ -82,20 +82,12 @@ export function CompactStatusPanel({
       className="compact-status-panel"
       aria-label="模型额度与网络出口 / Model quota and network egress"
     >
-      <header
-        className="compact-status-titlebar"
-      >
-        <div
-          className="compact-status-brand"
-          data-tauri-drag-region
-        >
+      <header className="compact-status-titlebar">
+        <div className="compact-status-brand" data-tauri-drag-region>
           <strong>C.le.</strong>
           <span>状态窗 <small>/ STATUS</small></span>
         </div>
-        <div
-          className="compact-status-titlebar-meta"
-          data-tauri-drag-region
-        >
+        <div className="compact-status-titlebar-meta" data-tauri-drag-region>
           <time>{checkedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}</time>
         </div>
         <div

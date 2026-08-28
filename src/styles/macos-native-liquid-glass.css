@@ -1,0 +1,310 @@
+/*
+ * The macOS main window is a native Liquid Glass (or vibrancy) surface. Keep
+ * the WebView transparent so macOS can provide the real refraction, then add a
+ * restrained graphite tint for contrast. This layer intentionally loads after
+ * the legacy and CSS glass systems.
+ */
+
+html[data-native-liquid-glass='true'],
+html[data-native-liquid-glass='true'] body,
+html[data-native-liquid-glass='true'][data-theme='dark'] body,
+html[data-native-liquid-glass='true'][data-visual-theme] body {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+html[data-native-liquid-glass='true'] body {
+  isolation: isolate;
+  color: var(--lg-ink, #f2f3f5) !important;
+}
+
+/* A translucent black-grey tonal ramp over the system material. The base page
+ * stays transparent: this is only a tint, not an artificial page canvas. */
+html[data-native-liquid-glass='true'] body::before {
+  content: '';
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  opacity: 1 !important;
+  background:
+    radial-gradient(74% 58% at 12% -8%, rgba(128, 136, 148, 0.12) 0%, transparent 68%),
+    radial-gradient(62% 54% at 104% 104%, rgba(0, 0, 0, 0.16) 0%, transparent 72%),
+    linear-gradient(148deg, rgba(58, 64, 72, 0.2) 0%, rgba(22, 25, 30, 0.13) 48%, rgba(3, 4, 6, 0.28) 100%) !important;
+  filter: none !important;
+  transform: none !important;
+  animation: none !important;
+}
+
+/* Keep one low-cost reflection field, but remove the opaque synthetic canvas
+ * from the old glass treatment. */
+html[data-native-liquid-glass='true'] body::after {
+  z-index: 0;
+  inset: -16% !important;
+  opacity: 0.2 !important;
+  background:
+    radial-gradient(40% 34% at 76% 20%, rgba(226, 230, 236, 0.17), transparent 72%),
+    radial-gradient(46% 40% at 34% 82%, rgba(90, 98, 110, 0.18), transparent 74%) !important;
+  filter: blur(42px) saturate(0.3) !important;
+  mix-blend-mode: screen;
+  animation: none !important;
+  will-change: auto !important;
+}
+
+/* `liquid-glass-system.css` uses a high-specificity night canvas. Repeating
+ * the native marker here is deliberate: without it that old opaque gradient
+ * wins the cascade and hides the desktop behind an otherwise transparent
+ * WebView. */
+html[data-native-liquid-glass='true'][data-theme='dark'] body::before,
+html[data-native-liquid-glass='true'][data-visual-theme] body::before {
+  background:
+    radial-gradient(72% 58% at 10% -8%, rgba(136, 146, 160, 0.07) 0%, transparent 70%),
+    linear-gradient(148deg, rgba(38, 43, 50, 0.09), rgba(8, 10, 14, 0.14)) !important;
+}
+
+html[data-native-liquid-glass='true'][data-theme='dark'] body::after,
+html[data-native-liquid-glass='true'][data-visual-theme] body::after {
+  opacity: 0.1 !important;
+  background: radial-gradient(44% 38% at 70% 22%, rgba(230, 235, 240, 0.13), transparent 74%) !important;
+}
+
+html[data-native-liquid-glass='true'] #root {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;
+}
+
+/* The page components sit on the native window material rather than on an
+ * opaque browser gradient. Lower fills preserve a readable, calm hierarchy. */
+html[data-native-liquid-glass='true'] {
+  /* The shared night theme is intentionally dense for normal desktop builds.
+   * On a native transparent window those same tokens must stay light enough
+   * for the actual wallpaper to remain legible through the page base. */
+  --bg-primary: rgba(8, 10, 13, 0.06);
+  --bg-secondary: rgba(10, 13, 17, 0.1);
+  --bg-surface: rgba(11, 14, 18, 0.12);
+  --bg-tertiary: rgba(15, 18, 23, 0.15);
+  --bg-card: rgba(12, 15, 19, 0.16);
+  --bg-hover: rgba(212, 220, 230, 0.12);
+
+  --lg-1-fill: rgba(8, 10, 13, 0.12);
+  --lg-1-fill-hover: rgba(156, 166, 180, 0.14);
+  --lg-1-edge: rgba(255, 255, 255, 0.18);
+  --lg-1-shadow: 0 12px 34px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.17);
+  --lg-2-fill: rgba(12, 15, 19, 0.18);
+  --lg-2-fill-hover: rgba(182, 190, 202, 0.18);
+  --lg-2-edge: rgba(255, 255, 255, 0.26);
+  --lg-2-shadow: 0 20px 46px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  --lg-3-fill: rgba(12, 14, 18, 0.42);
+  --lg-3-edge: rgba(255, 255, 255, 0.32);
+  --lg-3-shadow: 0 36px 88px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  --lg-recess: rgba(2, 3, 5, 0.16);
+  --lg-recess-soft: rgba(2, 3, 5, 0.1);
+
+  /* Several legacy screens use the earlier `glass-*` surface tokens rather
+   * than the `lg-*` material tiers. Keep those screens equally transparent. */
+  --glass-static-bg: rgba(8, 10, 13, 0.08);
+  --glass-content-bg: rgba(10, 13, 17, 0.13);
+  --glass-float-bg: rgba(12, 15, 19, 0.19);
+  --glass-modal-bg: rgba(10, 13, 17, 0.46);
+  --glass-static-blur: 10px;
+  --glass-content-blur: 14px;
+  --glass-float-blur: 18px;
+  --glass-shadow-static: 0 8px 28px rgba(0, 0, 0, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  --glass-shadow-float: 0 20px 54px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.34);
+
+  /* ui-unified-2026 is used by the lazily-loaded service pages. Its normal
+   * night values are 90–96% opaque, which hid the native material entirely. */
+  --ui-surface: rgba(10, 13, 17, 0.16);
+  --ui-surface-raised: rgba(13, 16, 21, 0.22);
+  --ui-shadow-1: 0 9px 28px rgba(0, 0, 0, 0.18);
+  --ui-shadow-2: 0 20px 56px rgba(0, 0, 0, 0.26);
+}
+
+/* Lazy page chunks are injected after App.css. Reassert the transparent
+ * canvas at the component boundary so a page can never repaint the whole
+ * native window with its own opaque background. */
+html[data-native-liquid-glass='true'] body #root > .app-container,
+html[data-native-liquid-glass='true'] body #root .main-wrapper,
+html[data-native-liquid-glass='true'] body #root .main-content,
+html[data-native-liquid-glass='true'] body #root .content-area,
+html[data-native-liquid-glass='true'] body #root :is(
+  .codex-api-service-page,
+  .codex-api-service-content,
+  .accounts-page,
+  .codex-accounts-page,
+  .dashboard-page,
+  .settings-page
+) {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+/* Dashboard landing view has its own dark-theme rules with `!important`.
+ * Keep its information hierarchy, but make its base pane and cards genuinely
+ * translucent so wallpaper remains visible through the actual native window. */
+html[data-native-liquid-glass='true'][data-theme='dark'] body #root .dashboard-scene .launchpad-primary,
+html[data-native-liquid-glass='true'][data-visual-theme='night'] body #root .dashboard-scene .launchpad-primary {
+  background-color: rgba(8, 11, 15, 0.1) !important;
+  background-image:
+    linear-gradient(135deg, rgba(242, 246, 250, 0.1), transparent 34%),
+    radial-gradient(84% 68% at 8% 2%, rgba(218, 226, 236, 0.06), transparent 72%) !important;
+  box-shadow:
+    0 18px 46px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-native-liquid-glass='true'] body #root .dashboard-scene :is(.launchpad-secondary, .model-gallery-card) {
+  background-color: rgba(7, 10, 14, 0.14) !important;
+  background-image:
+    radial-gradient(120% 96% at 8% -18%, rgba(255, 255, 255, 0.1), transparent 42%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.025), rgba(4, 6, 9, 0.06)) !important;
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.23) !important;
+}
+
+html[data-native-liquid-glass='true'][data-theme='dark'] body #root .dashboard-scene .launchpad-model-switcher,
+html[data-native-liquid-glass='true'][data-visual-theme='night'] body #root .dashboard-scene .launchpad-model-switcher {
+  background-color: rgba(8, 11, 15, 0.18) !important;
+  box-shadow: 0 9px 24px rgba(0, 0, 0, 0.13), inset 0 1px rgba(255, 255, 255, 0.16) !important;
+}
+
+/* The current API/service surfaces deliberately remain cards, just as thin
+ * graphite glass instead of the 90% opaque desktop panels from the legacy
+ * night theme. */
+html[data-native-liquid-glass='true'] body #root :is(
+  .codex-api-service-hero,
+  .codex-api-service-panel,
+  .codex-api-service-summary-card,
+  .codex-api-service-compat-item,
+  .codex-api-service-message,
+  .codex-api-service-table,
+  .codex-api-service-log-panel
+) {
+  background-color: rgba(10, 13, 17, 0.18) !important;
+  background-image: linear-gradient(145deg, rgba(245, 248, 252, 0.08), rgba(7, 9, 12, 0.1)) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
+}
+
+/* Application-wide hierarchy: route roots are optically empty, ordinary
+ * information groups are thin glass, and transient dialogs stay denser. This
+ * covers every platform/account/API route instead of relying on a dashboard-
+ * only exception. */
+html[data-native-liquid-glass='true'] body #root :is(
+  .dashboard-page,
+  .dashboard-scene,
+  .accounts-page,
+  .codex-accounts-page,
+  .ghcp-accounts-page,
+  .mm-api-page,
+  .codex-api-service-page,
+  .jimeng-page,
+  .manual-page,
+  .instances-page,
+  .wakeup-page,
+  .wakeup-verification-page,
+  .two-factor-query-page,
+  .infinite-workspace-page,
+  .settings-page,
+  .settings-content,
+  .claude-web-api-page
+) {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+/* Account workspaces add a fixed, legacy navigation safety rail above the
+ * scrollable content. Its night rule used a 92–99% opaque black gradient,
+ * which made the top of only those pages look like the old application even
+ * after the rest of the window became native glass. Keep the readable blur,
+ * but let the wallpaper's colour and light pass through the rail as well. */
+html[data-native-liquid-glass='true'] body #root .app-container:has(
+  :is(.accounts-page, .codex-accounts-page, .ghcp-accounts-page)
+)::before {
+  border-bottom-color: rgba(255, 255, 255, 0.14) !important;
+  background:
+    linear-gradient(90deg, transparent 0 49.96%, rgba(255, 255, 255, 0.025) 50%, transparent 50.04%),
+    linear-gradient(180deg, rgba(8, 12, 17, 0.1), rgba(8, 12, 17, 0.055) 72%, rgba(8, 12, 17, 0)) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(0.82) !important;
+  backdrop-filter: blur(18px) saturate(0.82) !important;
+}
+
+html[data-native-liquid-glass='true'] body #root .app-container:has(
+  :is(.accounts-page, .codex-accounts-page, .ghcp-accounts-page)
+) .spatial-top-nav.expanded::before {
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  background:
+    radial-gradient(circle at 50% -34%, rgba(255, 255, 255, 0.13), transparent 46%),
+    linear-gradient(112deg, rgba(15, 21, 27, 0.17), rgba(8, 12, 17, 0.12)) !important;
+  box-shadow:
+    0 16px 38px rgba(0, 0, 0, 0.16),
+    0 1px 0 rgba(255, 255, 255, 0.17) inset !important;
+}
+
+html[data-native-liquid-glass='true'] body #root :is(
+  [class*='-card'],
+  [class*='-panel'],
+  [class*='-section'],
+  [class*='-table'],
+  [class*='-hero'],
+  .settings-group,
+  .empty-state,
+  .account-command-dock,
+  .page-top-strip,
+  .page-header,
+  .scene-header
+) {
+  background-color: rgba(8, 11, 15, 0.15) !important;
+  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(5, 7, 10, 0.055)) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.16) !important;
+}
+
+html[data-native-liquid-glass='true'] body #root :is(
+  .modal,
+  .modal-content,
+  .global-modal,
+  [role='dialog'],
+  [class*='-modal'],
+  [class*='-popover'],
+  [class*='-dropdown-menu']
+) {
+  background-color: rgba(7, 9, 13, 0.36) !important;
+  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(5, 7, 10, 0.15)) !important;
+  border-color: rgba(255, 255, 255, 0.26) !important;
+  box-shadow: 0 24px 68px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+html[data-native-liquid-glass='true'] body #root :is(input, textarea, select, .search-box, .search-input-wrap) {
+  background-color: rgba(3, 5, 8, 0.2) !important;
+  border-color: rgba(255, 255, 255, 0.19) !important;
+}
+
+/* The welcome layer uses the same translucent graphite tint, so there is no
+ * opaque black flash before the React page is ready. */
+html[data-native-liquid-glass='true'] .startup-greeting.sg {
+  background:
+    radial-gradient(58% 48% at 62% 32%, rgba(220, 224, 232, 0.12), transparent 68%),
+    linear-gradient(156deg, rgba(52, 57, 64, 0.28), rgba(10, 12, 16, 0.34)) !important;
+}
+
+/* Tauri's macOS overlay leaves the traffic lights in the page coordinate
+ * space. The technical date strip used to start at 38px, directly underneath
+ * them. Keep a fixed safe gutter on older WebKit builds, but honour the native
+ * title-bar geometry when the browser provides it. */
+html[data-native-liquid-glass='true'] :is(
+  .industrial-chrome-date,
+  .app-container-side-nav-classic .industrial-chrome-date,
+  .app-container-side-nav-classic-collapsed .industrial-chrome-date
+) {
+  inset-inline-start: max(
+    106px,
+    calc(env(titlebar-area-x, 0px) + env(titlebar-area-width, 0px) + 18px)
+  ) !important;
+}

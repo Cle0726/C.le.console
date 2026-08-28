@@ -30,11 +30,6 @@
   inset-inline-start: 76px;
 }
 
-.app-container-macos:not(.app-container-side-nav-classic) .industrial-chrome-date {
-  /* Do not visually collide with the red/yellow/green macOS controls. */
-  inset-inline-start: 88px;
-}
-
 .app-container-windows .side-nav,
 .app-container-windows .side-nav-classic-handle {
   -webkit-app-region: no-drag;

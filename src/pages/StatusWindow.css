@@ -13,7 +13,7 @@ body.status-window-root,
 .status-window {
   width: 100%;
   height: 100%;
-  padding: 4px;
+  padding: 0;
   box-sizing: border-box;
   font-family: var(--font-sans, "Segoe UI Variable Display", Inter, "Microsoft YaHei UI", sans-serif);
   font-synthesis: none;
@@ -885,4 +885,65 @@ html[data-performance-mode='lite'] .is-spinning {
   .compact-live-monitor {
     padding: 0 4px;
   }
+}
+
+/* The compact window imports the full app material system as well. Keep its
+   controls above those generic button and glass rules: this is a functional
+   titlebar, not decorative chrome. */
+html.status-window-root body #root .compact-status-window-actions {
+  display: flex !important;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: max-content;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--status-line-strong) 76%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--status-panel-strong) 52%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 28%, transparent);
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+html.status-window-root body #root .compact-status-window-actions > button {
+  display: inline-grid !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  flex: 0 0 auto;
+  border-color: color-mix(in srgb, var(--status-line-strong) 84%, transparent) !important;
+  background: color-mix(in srgb, var(--status-panel-strong) 82%, transparent) !important;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 32%, transparent), 0 1px 2px rgba(0, 0, 0, .12);
+  pointer-events: auto !important;
+}
+
+html.status-window-root body #root .compact-status-window-actions > button[data-active='true'] {
+  background: var(--status-solid) !important;
+}
+
+/* This utility window is the card itself. The main app's full-window graphite
+   tint uses body pseudo-elements, which would otherwise paint a rectangular
+   veil behind the rounded card. Keep every root layer empty here so the only
+   visible boundary is the panel's continuous rounded edge. */
+html.status-window-root[data-native-liquid-glass='true'],
+html.status-window-root[data-native-liquid-glass='true'] body,
+html.status-window-root[data-native-liquid-glass='true'] #root,
+html.status-window-root[data-native-liquid-glass='true'] .status-window {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html.status-window-root[data-native-liquid-glass='true'] body::before,
+html.status-window-root[data-native-liquid-glass='true'] body::after {
+  content: none !important;
+  display: none !important;
+  background: none !important;
+  opacity: 0 !important;
+}
+
+html.status-window-root[data-native-liquid-glass='true'] .compact-status-panel {
+  border-radius: 26px !important;
 }

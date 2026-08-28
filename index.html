@@ -12,6 +12,13 @@
         document.documentElement.setAttribute('data-visual-theme', cleFirstTheme);
         document.documentElement.setAttribute('data-theme', cleFirstTheme === 'day' ? 'light' : 'dark');
         document.documentElement.style.colorScheme = cleFirstTheme === 'day' ? 'light' : 'dark';
+
+        var cleRuntimePlatform = navigator.userAgentData && navigator.userAgentData.platform
+          ? navigator.userAgentData.platform
+          : (navigator.platform || navigator.userAgent || '');
+        if (/mac/i.test(cleRuntimePlatform) && '__TAURI_INTERNALS__' in window) {
+          document.documentElement.setAttribute('data-native-liquid-glass', 'true');
+        }
       } catch (_) {
         document.documentElement.setAttribute('data-visual-theme', 'night');
         document.documentElement.setAttribute('data-theme', 'dark');
@@ -47,6 +54,17 @@
           radial-gradient(46% 38% at 66% 30%, rgba(214, 224, 238, 0.6), transparent 62%),
           radial-gradient(62% 50% at 46% 70%, rgba(92, 127, 174, 0.66), transparent 66%),
           linear-gradient(154deg, #33507c 0%, #40639a 22%, #3a5b8c 64%, #141f33 100%);
+      }
+
+      html[data-native-liquid-glass='true'] {
+        background: transparent;
+      }
+
+      html[data-native-liquid-glass='true'] body {
+        background:
+          radial-gradient(86% 68% at 14% 0%, rgba(92, 100, 110, 0.1), transparent 64%),
+          radial-gradient(72% 56% at 100% 100%, rgba(0, 0, 0, 0.14), transparent 70%),
+          linear-gradient(148deg, rgba(48, 53, 60, 0.16) 0%, rgba(20, 23, 28, 0.1) 48%, rgba(4, 5, 7, 0.2) 100%);
       }
 
       /*

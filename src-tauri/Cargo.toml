@@ -1,6 +1,6 @@
 [package]
 name = "cle-console"
-version = "1.1.8"
+version = "1.1.14"
 description = "C.le.控制台"
 authors = ["Cle0726"]
 license = "CC-BY-NC-SA-4.0"
@@ -81,8 +81,12 @@ windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Graphics_Gd
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6"
 objc2 = "0.6.3"
-objc2-foundation = "0.3.2"
+objc2-foundation = { version = "0.3.2", features = ["block2"] }
 objc2-app-kit = "0.3.2"
+objc2-web-kit = "0.3.2"
+block2 = "0.6.2"
+# macOS 26+ Liquid Glass with a system vibrancy fallback for older macOS.
+window-vibrancy = "0.8"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-process = "2.3.1"

@@ -16,6 +16,18 @@ import { initializePerformanceMode } from "./utils/performanceMode";
 import { initializeLiquidGlassInteractions } from "./utils/liquidGlassInteractions";
 import { initializeFrameGovernor } from "./utils/frameGovernor";
 
+function enableMacOSNativeLiquidGlassTheme() {
+  const runtimePlatform = (navigator as Navigator & {
+    userAgentData?: { platform?: string };
+  }).userAgentData?.platform || navigator.platform || navigator.userAgent || "";
+
+  if (/mac/i.test(runtimePlatform) && "__TAURI_INTERNALS__" in window) {
+    document.documentElement.setAttribute("data-native-liquid-glass", "true");
+  }
+}
+
+enableMacOSNativeLiquidGlassTheme();
+
 const visualReviewParams = new URLSearchParams(window.location.search);
 const visualReviewTarget = ["127.0.0.1", "localhost"].includes(window.location.hostname)
   ? visualReviewParams.get("visual-review")

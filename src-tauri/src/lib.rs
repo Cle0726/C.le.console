@@ -3,6 +3,8 @@ mod commands;
 pub mod error;
 mod models;
 mod modules;
+#[cfg(target_os = "macos")]
+mod native_liquid_glass;
 mod utils;
 
 use modules::logger;
@@ -181,6 +183,70 @@ fn should_show_status_window(was_minimized: bool, is_minimized: bool, is_restori
     !is_restoring && is_minimized && !was_minimized
 }
 
+/// AppKit does not consistently translate the yellow macOS minimise control
+/// into Tauri's `Resized` event. Keep a low-frequency native-state guard so
+/// the compact quota window is always shown on the actual minimise edge.
+///
+/// The initial sample only establishes the baseline. This deliberately keeps
+/// the user's "start hidden" preference as hidden instead of turning it into
+/// a surprise status window at launch.
+fn start_main_window_minimize_monitor(app: &tauri::AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(700));
+
+        if let Some(main_window) = app.get_webview_window("main") {
+            match main_window.is_minimized() {
+                Ok(is_minimized) => MAIN_WINDOW_MINIMIZED.store(is_minimized, Ordering::SeqCst),
+                Err(error) => logger::log_warn(&format!(
+                    "[StatusWindow] 无法建立 macOS 最小化状态基线: {}",
+                    error
+                )),
+            }
+        }
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(220));
+            let Some(main_window) = app.get_webview_window("main") else {
+                return;
+            };
+
+            if MAIN_WINDOW_RESTORING.load(Ordering::SeqCst) {
+                continue;
+            }
+
+            let is_minimized = match main_window.is_minimized() {
+                Ok(value) => value,
+                Err(error) => {
+                    logger::log_warn(&format!(
+                        "[StatusWindow] 无法读取 macOS 最小化状态: {}",
+                        error
+                    ));
+                    continue;
+                }
+            };
+            let was_minimized = MAIN_WINDOW_MINIMIZED.swap(is_minimized, Ordering::SeqCst);
+            if !should_show_status_window(was_minimized, is_minimized, false) {
+                continue;
+            }
+
+            match modules::status_window::show_status_window(&app) {
+                Ok(()) => match main_window.hide() {
+                    Ok(()) => info!("[Window] macOS 最小化，已切换到紧凑状态窗口"),
+                    Err(error) => logger::log_warn(&format!(
+                        "[Window] 紧凑状态窗口已显示，但隐藏主窗口失败: {}",
+                        error
+                    )),
+                },
+                Err(error) => logger::log_warn(&format!(
+                    "[Window] macOS 最小化后显示紧凑状态窗口失败: {}",
+                    error
+                )),
+            }
+        }
+    });
+}
+
 pub(crate) fn begin_main_window_restore() -> u64 {
     let epoch = MAIN_WINDOW_RESTORE_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
     MAIN_WINDOW_RESTORING.store(true, Ordering::SeqCst);
@@ -225,6 +291,78 @@ fn apply_startup_minimized(app: &tauri::AppHandle) {
         Ok(()) => logger::log_info(&format!("[Window] 启动后已自动{}主窗口", action_label)),
         Err(err) => logger::log_warn(&format!("[Window] 启动后自动最小化失败: {}", err)),
     }
+}
+
+/// Lets the packaging workflow render representative routes and the dedicated
+/// creator workbench without changing a user's saved navigation state. It is
+/// inactive unless one of the review-only environment variables is set.
+fn schedule_visual_review_navigation(app: &tauri::AppHandle) {
+    const REVIEWABLE_PAGES: &[&str] = &[
+        "dashboard",
+        "overview",
+        "codex",
+        "codex-api-service",
+        "multi-model-api-service",
+        "jimeng-api-service",
+        "manual",
+        "instances",
+        "wakeup",
+        "settings",
+    ];
+
+    let page = std::env::var("CLE_CONSOLE_VISUAL_REVIEW_PAGE")
+        .ok()
+        .filter(|value| REVIEWABLE_PAGES.contains(&value.as_str()));
+    let review_workspace = matches!(
+        std::env::var("CLE_CONSOLE_VISUAL_REVIEW_WORKSPACE").as_deref(),
+        Ok("1")
+    );
+    let review_expanded_window = matches!(
+        std::env::var("CLE_CONSOLE_VISUAL_REVIEW_EXPANDED_WINDOW").as_deref(),
+        Ok("1")
+    );
+    let review_status_window = matches!(
+        std::env::var("CLE_CONSOLE_VISUAL_REVIEW_STATUS_WINDOW").as_deref(),
+        Ok("1")
+    );
+
+    if page.is_none() && !review_workspace && !review_expanded_window && !review_status_window {
+        return;
+    }
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        // React registers the navigation listener during its initial mount.
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if let Some(page) = page {
+            if let Some(window) = app.get_webview_window("main") {
+                let script = format!(
+                    "window.dispatchEvent(new CustomEvent('app-request-navigate', {{ detail: '{}' }}));",
+                    page
+                );
+                if let Err(error) = window.eval(&script) {
+                    logger::log_warn(&format!("[VisualReview] 页面跳转失败: {}", error));
+                }
+            }
+        }
+        if review_workspace {
+            if let Err(error) = modules::web_creator_workspace::show_workspace_window(&app) {
+                logger::log_warn(&format!("[VisualReview] 网页创作工作台打开失败: {}", error));
+            }
+        }
+        if review_expanded_window {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = window.set_fullscreen(true) {
+                    logger::log_warn(&format!("[VisualReview] 展开窗口测试触发失败: {}", error));
+                }
+            }
+        }
+        if review_status_window {
+            if let Err(error) = modules::status_window::show_status_window(&app) {
+                logger::log_warn(&format!("[VisualReview] 状态窗打开失败: {}", error));
+            }
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -322,6 +460,9 @@ pub fn run() {
 
             // 存储全局 AppHandle
             let _ = APP_HANDLE.set(app.handle().clone());
+
+            #[cfg(target_os = "macos")]
+            native_liquid_glass::apply_to_main_window(&app.handle());
 
             if let Err(err) =
                 modules::web_creator_workspace::initialize_workspace_window(&app.handle())
@@ -504,8 +645,7 @@ pub fn run() {
                 }
             });
 
-            if let Err(err) =
-                modules::floating_card_window::show_floating_card_window_on_startup(&app.handle())
+            if let Err(err) = modules::floating_card_window::show_floating_card_window_on_startup(&app.handle())
             {
                 logger::log_warn(&format!("[FloatingCard] 启动时显示悬浮卡片失败: {}", err));
             }
@@ -524,6 +664,14 @@ pub fn run() {
             ));
 
             apply_startup_minimized(&app.handle());
+            if let Err(error) = modules::status_window::install_main_window_minimize_observer(&app.handle()) {
+                logger::log_warn(&format!(
+                    "[StatusWindow] 安装 macOS 最小化状态窗监听失败: {}",
+                    error
+                ));
+            }
+            start_main_window_minimize_monitor(&app.handle());
+            schedule_visual_review_navigation(&app.handle());
 
             Ok(())
         })
@@ -548,6 +696,9 @@ pub fn run() {
                 if window.label() != "main" {
                     return;
                 }
+
+                #[cfg(target_os = "macos")]
+                native_liquid_glass::preserve_desktop_backdrop_in_expanded_window(window);
 
                 // Windows emits a burst of stale minimized/restored resize events while
                 // a hidden main window is being brought back. Do not let that burst alter

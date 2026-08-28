@@ -7,6 +7,9 @@ const env = {
   VITE_CLE_CONSOLE_PROFILE: process.env.VITE_CLE_CONSOLE_PROFILE || 'dev',
 };
 const extraArgs = process.argv.slice(2);
+const devConfigs = process.platform === 'darwin'
+  ? ['src-tauri/tauri.dev.conf.json', 'src-tauri/tauri.macos.dev.conf.json']
+  : ['src-tauri/tauri.dev.conf.json'];
 
 const syncResult = spawnSync('npm', ['run', 'sync-version'], {
   stdio: 'inherit',
@@ -20,7 +23,7 @@ if (syncResult.status !== 0) {
 
 const tauriResult = spawnSync(
   'npx',
-  ['tauri', 'dev', '--config', 'src-tauri/tauri.dev.conf.json', ...extraArgs],
+  ['tauri', 'dev', ...devConfigs.flatMap((config) => ['--config', config]), ...extraArgs],
   {
     stdio: 'inherit',
     env,

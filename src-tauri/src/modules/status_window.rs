@@ -4,6 +4,95 @@ use crate::modules::logger;
 
 pub const STATUS_WINDOW_LABEL: &str = "status-window";
 
+/// AppKit emits this notification exactly when the user presses the yellow
+/// window control. Tauri does not guarantee a matching resize event on macOS,
+/// so this native hook is the authoritative minimise trigger for the compact
+/// quota window.
+#[cfg(target_os = "macos")]
+pub fn install_main_window_minimize_observer<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    use block2::RcBlock;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::NSWindowDidMiniaturizeNotification;
+    use objc2_foundation::{NSNotification, NSNotificationCenter, NSThread};
+
+    let main_window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main_window_not_found".to_string())?;
+    let ns_window = main_window.ns_window().map_err(|err| err.to_string())? as usize;
+    let app_handle = app.clone();
+
+    let register = move || -> Result<(), String> {
+        let native_window = unsafe {
+            (ns_window as *mut AnyObject)
+                .as_ref()
+                .ok_or_else(|| "main_ns_window_not_found".to_string())?
+        };
+        let notification_handler = RcBlock::new(move |_notification: core::ptr::NonNull<NSNotification>| {
+            if crate::MAIN_WINDOW_RESTORING.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+
+            let Some(main_window) = app_handle.get_webview_window("main") else {
+                return;
+            };
+            let was_minimized = crate::MAIN_WINDOW_MINIMIZED.swap(
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            if was_minimized {
+                return;
+            }
+
+            match show_status_window(&app_handle) {
+                Ok(()) => match main_window.hide() {
+                    Ok(()) => logger::log_info("[StatusWindow] AppKit 最小化通知已切换到紧凑状态窗口"),
+                    Err(error) => logger::log_warn(&format!(
+                        "[StatusWindow] 紧凑状态窗口已显示，但隐藏主窗口失败: {}",
+                        error
+                    )),
+                },
+                Err(error) => logger::log_warn(&format!(
+                    "[StatusWindow] AppKit 最小化后显示紧凑状态窗口失败: {}",
+                    error
+                )),
+            }
+        });
+        let notification_center = NSNotificationCenter::defaultCenter();
+        unsafe {
+            // NotificationCenter retains the observer and copied block until
+            // process shutdown. It is intentionally scoped to this NSWindow,
+            // so compact/creator windows cannot trigger it.
+            let _observer = notification_center.addObserverForName_object_queue_usingBlock(
+                Some(&NSWindowDidMiniaturizeNotification),
+                Some(native_window),
+                None,
+                &notification_handler,
+            );
+        }
+        Ok(())
+    };
+
+    if NSThread::isMainThread_class() {
+        register()
+    } else {
+        let (tx, rx) = std::sync::mpsc::channel();
+        main_window
+            .run_on_main_thread(move || {
+                let _ = tx.send(register());
+            })
+            .map_err(|err| err.to_string())?;
+        rx.recv()
+            .map_err(|_| "status_window_minimize_observer_channel_closed".to_string())?
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn install_main_window_minimize_observer<R: Runtime>(
+    _app: &AppHandle<R>,
+) -> Result<(), String> {
+    Ok(())
+}
+
 fn status_window_config(
     app: &AppHandle<impl Runtime>,
 ) -> Result<&tauri::utils::config::WindowConfig, String> {
@@ -71,7 +160,85 @@ pub fn apply_native_status_window_shape<R: Runtime>(
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub fn apply_native_status_window_shape<R: Runtime>(
+    window: &WebviewWindow<R>,
+) -> Result<(), String> {
+    use objc2_foundation::NSThread;
+    use std::sync::mpsc;
+
+    // CSS can round the panel, but WKWebView still owns a rectangular native
+    // backing surface. Clip both AppKit layers so no square translucent halo
+    // remains around the compact Liquid Glass card.
+    let ns_window = window.ns_window().map_err(|err| err.to_string())? as usize;
+
+    if NSThread::isMainThread_class() {
+        return unsafe { configure_status_window_ns_window(ns_window as *mut std::ffi::c_void) };
+    }
+
+    let (tx, rx) = mpsc::channel();
+    window
+        .run_on_main_thread(move || {
+            let result = unsafe {
+                configure_status_window_ns_window(ns_window as *mut std::ffi::c_void)
+            };
+            let _ = tx.send(result);
+        })
+        .map_err(|err| err.to_string())?;
+
+    rx.recv()
+        .map_err(|_| "status_window_main_thread_channel_closed".to_string())?
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn configure_status_window_ns_window(
+    ns_window: *mut std::ffi::c_void,
+) -> Result<(), String> {
+    use objc2_app_kit::{NSColor, NSWindow};
+
+    const STATUS_WINDOW_CORNER_RADIUS: f64 = 26.0;
+    let window = ns_window
+        .cast::<NSWindow>()
+        .as_ref()
+        .ok_or_else(|| "status_window_ns_window_not_found".to_string())?;
+
+    window.setOpaque(false);
+    let clear_color = NSColor::clearColor();
+    window.setBackgroundColor(Some(&clear_color));
+
+    let content_view = window
+        .contentView()
+        .ok_or_else(|| "status_window_content_view_not_found".to_string())?;
+    apply_status_window_corner_mask_to_view(&content_view, STATUS_WINDOW_CORNER_RADIUS)?;
+    if let Some(frame_view) = content_view.superview() {
+        apply_status_window_corner_mask_to_view(&frame_view, STATUS_WINDOW_CORNER_RADIUS)?;
+    }
+
+    window.invalidateShadow();
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn apply_status_window_corner_mask_to_view(
+    view: &objc2_app_kit::NSView,
+    corner_radius: f64,
+) -> Result<(), String> {
+    use objc2::{msg_send, runtime::AnyObject};
+
+    view.setWantsLayer(true);
+    let layer: *mut AnyObject = unsafe { msg_send![view, layer] };
+    if layer.is_null() {
+        return Err("status_window_view_layer_not_found".to_string());
+    }
+
+    unsafe {
+        let _: () = msg_send![layer, setCornerRadius: corner_radius];
+        let _: () = msg_send![layer, setMasksToBounds: true];
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn apply_native_status_window_shape<R: Runtime>(
     _window: &WebviewWindow<R>,
 ) -> Result<(), String> {
