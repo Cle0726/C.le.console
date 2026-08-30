@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { readPerformanceMode } from '../utils/performanceMode';
 import appIcon from '../assets/app-icon-rounded.png';
 import { resolveGreetingCopy } from '../data/startupGreetings';
+import { formatBeijingDate } from '../utils/beijingTime';
 import './StartupGreeting.css';
 
 type StartupPhase = 'loading' | 'ready' | 'leaving';
@@ -197,7 +198,7 @@ export function StartupGreeting({
 
       <div className="sg-foot">
         <span className="sg-foot-date">
-          {now.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}
+          {formatBeijingDate(now, 'zh-CN', { month: '2-digit', day: '2-digit' })}
         </span>
         <span className="sg-foot-state">
           {phase === 'ready' ? '就绪' : '正在准备工作区'}

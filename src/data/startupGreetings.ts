@@ -1,3 +1,5 @@
+import { getBeijingCalendarFields } from '../utils/beijingTime';
+
 /**
  * Opening sequence copy.
  *
@@ -163,8 +165,7 @@ function resolveBand(hour: number): Band {
 }
 
 function resolveNotePool(now: Date): string[] {
-  const hour = now.getHours();
-  const day = now.getDay();
+  const { hour, weekday: day } = getBeijingCalendarFields(now);
   const pool = [...NOTES_ANY];
 
   // Contextual lines are added rather than substituted, so the general pool
@@ -178,7 +179,7 @@ function resolveNotePool(now: Date): string[] {
 }
 
 export function resolveGreetingCopy(now: Date): GreetingCopy {
-  const band = resolveBand(now.getHours());
+  const band = resolveBand(getBeijingCalendarFields(now).hour);
   const line = pick(band.lines);
   return {
     ...line,

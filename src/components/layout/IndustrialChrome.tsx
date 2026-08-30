@@ -15,6 +15,7 @@ import {
   PERFORMANCE_MODE_STORAGE_KEY,
   type PerformanceMode,
 } from '../../utils/performanceMode';
+import { formatBeijingDate } from '../../utils/beijingTime';
 
 const PAGE_SEQUENCE: readonly Page[] = [
   'dashboard',
@@ -103,14 +104,14 @@ export function IndustrialChrome({ page }: IndustrialChromeProps) {
   const dateParts = useMemo(() => {
     const locale = i18n.resolvedLanguage || i18n.language || undefined;
     return {
-      weekday: new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(now),
-      date: new Intl.DateTimeFormat(locale, { day: '2-digit', month: 'long' }).format(now),
-      year: new Intl.DateTimeFormat(locale, { year: 'numeric' }).format(now),
-      time: new Intl.DateTimeFormat(locale, {
+      weekday: formatBeijingDate(now, locale, { weekday: 'short' }),
+      date: formatBeijingDate(now, locale, { day: '2-digit', month: 'long' }),
+      year: formatBeijingDate(now, locale, { year: 'numeric' }),
+      time: formatBeijingDate(now, locale, {
         hour: '2-digit',
         minute: '2-digit',
         hour12: false,
-      }).format(now),
+      }),
     };
   }, [i18n.language, i18n.resolvedLanguage, now]);
 
@@ -123,7 +124,7 @@ export function IndustrialChrome({ page }: IndustrialChromeProps) {
       </div>
       <div className="industrial-chrome-status">
         <span className="industrial-chrome-signal" />
-        <span>LOCAL CONTROL</span>
+        <span>北京时间 · UTC+8</span>
         <span className="industrial-chrome-time">{dateParts.time}</span>
       </div>
       <div className="industrial-chrome-year">
