@@ -613,11 +613,8 @@ export function JimengApiServicePage({
       setDoubaoDesktopScan(scan);
       setDoubaoDesktopSelected((current) => {
         const ready = scan.profiles.filter((profile) => profile.hasCookieDatabase).map((profile) => profile.profileDir);
-        const newProfiles = scan.profiles
-          .filter((profile) => profile.hasCookieDatabase && !profile.alreadyImported)
-          .map((profile) => profile.profileDir);
         const retained = current.filter((profile) => ready.includes(profile));
-        return retained.length ? retained : newProfiles.length ? newProfiles : ready;
+        return retained.length ? retained : ready;
       });
     } catch (error) {
       setNotice({ tone: 'error', text: `扫描豆包桌面账号失败：${String(error)}` });
@@ -1446,18 +1443,18 @@ export function JimengApiServicePage({
           <div className="jimeng-modal doubao-desktop-import-modal">
             <div className="jimeng-panel-title">
               <Download size={21} />
-              <div><h2>从豆包桌面版导入账号</h2><p>读取各 Chromium Profile 的 doubao.com Cookie，写入 C.le. 独立账号目录。</p></div>
+              <div><h2>同步豆包桌面版账号</h2><p>登记全部 Chromium Profile，并在每次打开时同步最新登录凭证。</p></div>
             </div>
             <div className="doubao-desktop-import-summary">
               <ShieldCheck size={21} />
               <div>
                 <strong>{doubaoDesktopScan.message}</strong>
-                <span>只读取 Cookie，不修改豆包文件，不改系统代理或 C.le. 网络出口。</span>
+                <span>只读豆包数据；不修改豆包文件，不关闭豆包，不改系统代理或 C.le. 网络出口。</span>
                 {doubaoDesktopScan.userDataDir && <code title={doubaoDesktopScan.userDataDir}>{doubaoDesktopScan.userDataDir}</code>}
               </div>
             </div>
             {doubaoDesktopScan.running && doubaoDesktopScan.profiles.some((profile) => !profile.ready) && (
-              <div className="doubao-desktop-import-warning"><CircleAlert size={17} />豆包桌面版正在运行，部分 Profile 可能被锁定；退出豆包后点击“重新扫描”即可。</div>
+              <div className="doubao-desktop-import-warning"><CircleAlert size={17} />当前使用中的 Profile 可能暂时被锁定；仍可登记，切换账号或下次打开时会自动重试同步。</div>
             )}
             <div className="doubao-desktop-profile-list">
               {doubaoDesktopScan.profiles.map((profile) => {
@@ -1487,7 +1484,7 @@ export function JimengApiServicePage({
               <span>{doubaoDesktopSelected.length ? `已选择 ${doubaoDesktopSelected.length} 个账号` : '请选择可用账号'}</span>
               <button className="btn btn-secondary jimeng-button" disabled={doubaoDesktopBusy} onClick={() => setDoubaoDesktopScan(null)}>取消</button>
               <button className="btn btn-primary jimeng-button" disabled={doubaoDesktopBusy || !doubaoDesktopSelected.length} onClick={() => void importDoubaoDesktopProfiles()}>
-                {doubaoDesktopBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}导入 Cookie
+                {doubaoDesktopBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}同步所选账号
               </button>
             </div>
           </div>

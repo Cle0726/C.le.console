@@ -37,15 +37,25 @@ const GENERATION_TIMEOUT: Duration = Duration::from_secs(390);
 static STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static GENERATING_ACCOUNTS: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
 
+// Keep the trailing slash. Doubao redirects `/v2` to `/v2/`; HTTP clients are
+// allowed to remove sensitive headers such as Cookie while following that
+// redirect, which made valid desktop sessions look expired (error code 13).
 const DOUBAO_ACCOUNT_INFO_URL: &str =
-    "https://www.doubao.com/passport/account/info/v2?account_sdk_source=web";
-const DOUBAO_LOGIN_VALIDATION_VERSION: u8 = 1;
+    "https://www.doubao.com/passport/account/info/v2/?account_sdk_source=web";
+const DOUBAO_LOGIN_VALIDATION_VERSION: u8 = 2;
 
 #[derive(Debug, Clone)]
 pub(crate) struct DoubaoSessionCheck {
     pub(crate) logged_in: bool,
     pub(crate) verified: bool,
     pub(crate) detail: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct DesktopCookieSyncResult {
+    pub(crate) cookie_header: Option<String>,
+    pub(crate) refreshed: bool,
+    pub(crate) warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -580,6 +590,103 @@ pub fn scan_desktop_profiles(app: &AppHandle) -> Result<DoubaoDesktopScan, Strin
     }
 }
 
+/// Keep the creator workspace account list in sync with the locally installed
+/// Doubao desktop profiles. This only registers profile metadata; Cookie bytes
+/// are copied lazily when that account is opened, so a running/locked desktop
+/// profile cannot stall the whole workspace during startup.
+#[cfg(target_os = "windows")]
+fn reconcile_desktop_profile_records(app: &AppHandle) -> Result<usize, String> {
+    let root = doubao_desktop_user_data_dir()?;
+    if !root.is_dir() {
+        return Ok(0);
+    }
+
+    let names = profile_display_names(&root);
+    let mut profiles = HashSet::new();
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            let profile_dir = entry.file_name().to_string_lossy().into_owned();
+            if valid_desktop_profile_dir(&profile_dir)
+                && entry.path().join("Network").join("Cookies").is_file()
+            {
+                profiles.insert(profile_dir);
+            }
+        }
+    }
+    if profiles.is_empty() {
+        return Ok(0);
+    }
+
+    let mut profiles = profiles.into_iter().collect::<Vec<_>>();
+    profiles.sort_by_key(|name| {
+        if name == "Default" {
+            0
+        } else {
+            name.strip_prefix("Profile ")
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(u32::MAX - 1)
+                .saturating_add(1)
+        }
+    });
+
+    let existing = load_store(app)?;
+    let known = existing
+        .accounts
+        .iter()
+        .filter_map(|account| account.desktop_profile_dir.as_deref())
+        .collect::<HashSet<_>>();
+    let missing = profiles
+        .into_iter()
+        .filter(|profile_dir| !known.contains(profile_dir.as_str()))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(0);
+    }
+    update_store(app, |store| {
+        let mut added = 0usize;
+        for profile_dir in missing {
+            // React can request state more than once during startup. Re-check
+            // under the store lock so concurrent reconciliation stays
+            // idempotent and never creates duplicate profile records.
+            if store
+                .accounts
+                .iter()
+                .any(|account| account.desktop_profile_dir.as_deref() == Some(profile_dir.as_str()))
+            {
+                continue;
+            }
+            if store.accounts.len() >= 50 {
+                return Err("自动同步豆包桌面账号后将超过 50 个网页创作账号".into());
+            }
+            store.accounts.push(DoubaoWebAccountRecord {
+                id: uuid::Uuid::new_v4().simple().to_string(),
+                name: normalized_name(
+                    names.get(&profile_dir).map(String::as_str).unwrap_or(""),
+                    &profile_dir,
+                ),
+                platform_id: "doubao".into(),
+                enabled: true,
+                last_known_logged_in: false,
+                last_error: "已发现豆包桌面账号，首次打开时同步登录凭证".into(),
+                consecutive_failures: 0,
+                last_used_at: 0,
+                desktop_profile_dir: Some(profile_dir),
+                desktop_cookie_sync_pending: true,
+                last_cookie_sync_at: 0,
+                last_login_verified_at: 0,
+                login_validation_version: 0,
+            });
+            added += 1;
+        }
+        Ok(added)
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn reconcile_desktop_profile_records(_app: &AppHandle) -> Result<usize, String> {
+    Ok(0)
+}
+
 #[cfg(target_os = "windows")]
 fn dpapi_decrypt(encrypted: &[u8]) -> Result<Vec<u8>, String> {
     unsafe {
@@ -732,18 +839,142 @@ fn read_desktop_cookies(root: &Path, profile_dir: &str) -> Result<Vec<DesktopCoo
     Ok(cookies)
 }
 
+#[cfg(target_os = "windows")]
+fn desktop_cookie_database_modified_at(root: &Path, profile_dir: &str) -> Option<u64> {
+    root.join(profile_dir)
+        .join("Network")
+        .join("Cookies")
+        .metadata()
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+#[cfg(target_os = "windows")]
+fn desktop_cookie_header(cookies: &[DesktopCookie]) -> String {
+    cookies
+        .iter()
+        .map(|cookie| format!("{}={}", cookie.name, cookie.value))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+#[cfg(target_os = "windows")]
+fn multi_sid_from_local_state(
+    local_state: &Value,
+    profile_dir: &str,
+) -> Result<(String, String), String> {
+    let user_id = local_state
+        .pointer("/profile/info_cache")
+        .and_then(Value::as_object)
+        .and_then(|profiles| profiles.get(profile_dir))
+        .and_then(|profile| profile.pointer("/saman/user_id"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{profile_dir} 缺少豆包用户 ID"))?;
+    let enterprise = local_state
+        .pointer("/saman/local_storage_app_for_web/enterprise")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "豆包 Local State 缺少多账号登录信息".to_string())?;
+    let enterprise: Value = serde_json::from_str(enterprise)
+        .map_err(|error| format!("解析豆包多账号登录信息失败: {error}"))?;
+    let encoded_multi_sids = enterprise
+        .get("x-tt-multi-sids")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "豆包桌面版没有保存多账号会话".to_string())?;
+    let decoded = urlencoding::decode(encoded_multi_sids)
+        .map_err(|error| format!("解析豆包多账号会话失败: {error}"))?;
+    let sid = decoded
+        .split('|')
+        .filter_map(|entry| entry.split_once(':'))
+        .find_map(|(entry_user_id, sid)| (entry_user_id == user_id).then_some(sid))
+        .filter(|sid| !sid.is_empty())
+        .ok_or_else(|| format!("{profile_dir} 不在豆包桌面版的有效多账号会话中"))?;
+    Ok((sid.to_string(), encoded_multi_sids.to_string()))
+}
+
+#[cfg(target_os = "windows")]
+fn desktop_multi_sid(root: &Path, profile_dir: &str) -> Result<(String, String), String> {
+    let raw = std::fs::read_to_string(root.join("Local State"))
+        .map_err(|error| format!("读取豆包 Local State 失败: {error}"))?;
+    let local_state: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("解析豆包 Local State 失败: {error}"))?;
+    multi_sid_from_local_state(&local_state, profile_dir)
+}
+
+#[cfg(target_os = "windows")]
+fn sync_multi_sid_to_view(
+    root: &Path,
+    profile_dir: &str,
+    view: &Webview,
+) -> Result<String, String> {
+    let (sid, multi_sids) = desktop_multi_sid(root, profile_dir)?;
+    let session_cookie_names = [
+        "sessionid",
+        "sessionid_ss",
+        "sid_tt",
+        "sid_ucp_v1",
+        "ssid_ucp_v1",
+    ];
+    for name in session_cookie_names {
+        let cookie = tauri::webview::Cookie::build((name.to_string(), sid.clone()))
+            .domain(".doubao.com")
+            .path("/")
+            .secure(true)
+            .http_only(true)
+            .same_site(SameSite::None)
+            .build();
+        view.set_cookie(cookie)
+            .map_err(|error| format!("写入豆包多账号会话失败: {error}"))?;
+    }
+    let cookie = tauri::webview::Cookie::build(("multi_sids".to_string(), multi_sids.clone()))
+        .domain(".doubao.com")
+        .path("/")
+        .secure(true)
+        .http_only(true)
+        .same_site(SameSite::None)
+        .build();
+    view.set_cookie(cookie)
+        .map_err(|error| format!("写入豆包多账号列表失败: {error}"))?;
+    Ok(format!(
+        "sessionid={sid}; sessionid_ss={sid}; sid_tt={sid}; sid_ucp_v1={sid}; ssid_ucp_v1={sid}; multi_sids={multi_sids}"
+    ))
+}
+
+pub(crate) fn synced_cookie_header(
+    app: &AppHandle,
+    account: &DoubaoWebAccountRecord,
+) -> Result<Option<String>, String> {
+    if account.platform_id != "doubao" || account.last_cookie_sync_at == 0 {
+        return Ok(None);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, account);
+        Ok(None)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let root = browser_data_dir(app, account)?.join("EBWebView");
+        if !root.join("Local State").is_file() {
+            return Ok(None);
+        }
+        read_desktop_cookies(&root, "Default").map(|cookies| Some(desktop_cookie_header(&cookies)))
+    }
+}
+
 pub(crate) fn sync_desktop_cookies_to_view(
     app: &AppHandle,
     account: &DoubaoWebAccountRecord,
     view: &Webview,
-) -> Result<Option<usize>, String> {
+) -> Result<Option<DesktopCookieSyncResult>, String> {
     let Some(profile_dir) = account.desktop_profile_dir.as_deref() else {
         return Ok(None);
     };
-    if !account.desktop_cookie_sync_pending {
-        return Ok(None);
-    }
-
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (app, profile_dir, view);
@@ -752,47 +983,121 @@ pub(crate) fn sync_desktop_cookies_to_view(
 
     #[cfg(target_os = "windows")]
     {
-        let cookies = read_desktop_cookies(&doubao_desktop_user_data_dir()?, profile_dir)?;
-        let count = cookies.len();
-        for item in cookies {
-            let mut builder = tauri::webview::Cookie::build((item.name, item.value))
-                .domain(item.domain)
-                .path(item.path)
-                .secure(item.secure)
-                .http_only(item.http_only);
-            builder = match item.same_site {
-                0 => builder.same_site(SameSite::None),
-                1 => builder.same_site(SameSite::Lax),
-                2 => builder.same_site(SameSite::Strict),
-                _ => builder,
-            };
-            if let Some(expires) = item
-                .expires_unix
-                .and_then(|value| OffsetDateTime::from_unix_timestamp(value).ok())
-            {
-                builder = builder.expires(expires);
+        let root = doubao_desktop_user_data_dir()?;
+        let source_modified_at = desktop_cookie_database_modified_at(&root, profile_dir);
+        let should_refresh = account.desktop_cookie_sync_pending
+            || account.last_cookie_sync_at == 0
+            || source_modified_at.is_some_and(|modified| modified > account.last_cookie_sync_at);
+        let cookies = match read_desktop_cookies(&root, profile_dir) {
+            Ok(cookies) => cookies,
+            Err(cookie_error) => match sync_multi_sid_to_view(&root, profile_dir, view) {
+                Ok(cookie_header) => {
+                    // Chromium exclusively locks the active profile's Cookie
+                    // database. Doubao also persists that profile's session in
+                    // its multi-account Local State, which stays readable while
+                    // the app is running. Import that exact session instead of
+                    // asking the user to close Doubao or log in again.
+                    let warning = format!(
+                        "桌面账号 {profile_dir} 的 Cookie 数据库正在使用，已从豆包多账号会话同步；解锁后会自动补全 Cookie"
+                    );
+                    update_store(app, |store| {
+                        let record = store
+                            .accounts
+                            .iter_mut()
+                            .find(|record| record.id == account.id)
+                            .ok_or_else(|| "导入目标账号不存在".to_string())?;
+                        record.desktop_cookie_sync_pending = true;
+                        record.last_cookie_sync_at = unix_timestamp();
+                        record.last_known_logged_in = false;
+                        record.last_login_verified_at = 0;
+                        record.login_validation_version = 0;
+                        record.last_error = warning.clone();
+                        Ok(())
+                    })?;
+                    return Ok(Some(DesktopCookieSyncResult {
+                        cookie_header: Some(cookie_header),
+                        refreshed: true,
+                        warning: Some(warning),
+                    }));
+                }
+                Err(multi_sid_error) if account.last_cookie_sync_at > 0 => {
+                    // The active Doubao profile may hold an exclusive lock. Keep
+                    // the last known WebView snapshot usable and retry next open;
+                    // never turn a transient source lock into a broken account.
+                    let warning = format!(
+                    "桌面账号 {profile_dir} 当前被豆包占用，继续使用上次同步的登录凭证；下次打开会自动重试：{cookie_error}；多账号会话回退不可用：{multi_sid_error}"
+                );
+                    update_store(app, |store| {
+                        if let Some(record) = store
+                            .accounts
+                            .iter_mut()
+                            .find(|record| record.id == account.id)
+                        {
+                            record.desktop_cookie_sync_pending = true;
+                            record.last_error = warning.clone();
+                        }
+                        Ok(())
+                    })?;
+                    return Ok(Some(DesktopCookieSyncResult {
+                        cookie_header: None,
+                        refreshed: false,
+                        warning: Some(warning),
+                    }));
+                }
+                Err(multi_sid_error) => {
+                    return Err(format!(
+                        "{cookie_error}；豆包多账号会话也无法导入：{multi_sid_error}"
+                    ));
+                }
+            },
+        };
+        let cookie_header = desktop_cookie_header(&cookies);
+        if should_refresh {
+            for item in &cookies {
+                let mut builder =
+                    tauri::webview::Cookie::build((item.name.clone(), item.value.clone()))
+                        .domain(item.domain.clone())
+                        .path(item.path.clone())
+                        .secure(item.secure)
+                        .http_only(item.http_only);
+                builder = match item.same_site {
+                    0 => builder.same_site(SameSite::None),
+                    1 => builder.same_site(SameSite::Lax),
+                    2 => builder.same_site(SameSite::Strict),
+                    _ => builder,
+                };
+                if let Some(expires) = item
+                    .expires_unix
+                    .and_then(|value| OffsetDateTime::from_unix_timestamp(value).ok())
+                {
+                    builder = builder.expires(expires);
+                }
+                view.set_cookie(builder.build())
+                    .map_err(|error| format!("写入豆包 Cookie 失败: {error}"))?;
             }
-            view.set_cookie(builder.build())
-                .map_err(|error| format!("写入豆包 Cookie 失败: {error}"))?;
+            update_store(app, |store| {
+                let record = store
+                    .accounts
+                    .iter_mut()
+                    .find(|record| record.id == account.id)
+                    .ok_or_else(|| "导入目标账号不存在".to_string())?;
+                record.desktop_cookie_sync_pending = false;
+                record.last_cookie_sync_at = unix_timestamp();
+                // Copying cookies is not proof of a live session. The caller
+                // validates this exact header against Doubao before marking it
+                // online.
+                record.last_known_logged_in = false;
+                record.last_login_verified_at = 0;
+                record.login_validation_version = 0;
+                record.last_error.clear();
+                Ok(())
+            })?;
         }
-        update_store(app, |store| {
-            let record = store
-                .accounts
-                .iter_mut()
-                .find(|record| record.id == account.id)
-                .ok_or_else(|| "导入目标账号不存在".to_string())?;
-            record.desktop_cookie_sync_pending = false;
-            record.last_cookie_sync_at = unix_timestamp();
-            // Copying auth-shaped cookies does not prove that Doubao still
-            // accepts the session. The account endpoint is authoritative and
-            // will update this flag after the webview is opened.
-            record.last_known_logged_in = false;
-            record.last_login_verified_at = 0;
-            record.login_validation_version = 0;
-            record.last_error.clear();
-            Ok(())
-        })?;
-        Ok(Some(count))
+        Ok(Some(DesktopCookieSyncResult {
+            cookie_header: Some(cookie_header),
+            refreshed: should_refresh,
+            warning: None,
+        }))
     }
 }
 
@@ -950,7 +1255,38 @@ pub(crate) fn cached_doubao_session_check(
     Ok(DoubaoSessionCheck {
         logged_in: verified && account.last_known_logged_in,
         verified,
-        detail: (!verified).then(|| "该账号尚未完成安全的服务端登录验证".into()),
+        detail: if !verified {
+            Some("该账号尚未完成安全的服务端登录验证".into())
+        } else if !account.last_known_logged_in && !account.last_error.is_empty() {
+            Some(account.last_error)
+        } else {
+            None
+        },
+    })
+}
+
+pub(crate) fn update_session_check(
+    app: &AppHandle,
+    account_id: &str,
+    check: &DoubaoSessionCheck,
+) -> Result<(), String> {
+    update_store(app, |store| {
+        if let Some(account) = store
+            .accounts
+            .iter_mut()
+            .find(|account| account.id == account_id)
+        {
+            account.last_known_logged_in = check.logged_in;
+            if check.verified {
+                account.last_login_verified_at = unix_timestamp();
+                account.login_validation_version = DOUBAO_LOGIN_VALIDATION_VERSION;
+            } else {
+                account.last_login_verified_at = 0;
+                account.login_validation_version = 0;
+            }
+            account.last_error = check.detail.clone().unwrap_or_default();
+        }
+        Ok(())
     })
 }
 
@@ -993,16 +1329,6 @@ pub async fn import_desktop_profiles(
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        let root = doubao_desktop_user_data_dir()?;
-        for profile in &selected {
-            if profile.ready {
-                read_desktop_cookies(&root, &profile.profile_dir)?;
-            }
-        }
-    }
-
     let imported_account_ids = update_store(&app, |store| {
         if store.accounts.len()
             + selected
@@ -1018,7 +1344,7 @@ pub async fn import_desktop_profiles(
             if let Some(account) = store.accounts.iter_mut().find(|account| {
                 account.desktop_profile_dir.as_deref() == Some(profile.profile_dir.as_str())
             }) {
-                account.desktop_cookie_sync_pending = profile.ready;
+                account.desktop_cookie_sync_pending = profile.has_cookie_database;
                 account.enabled = true;
                 account.last_known_logged_in = false;
                 account.last_login_verified_at = 0;
@@ -1045,7 +1371,7 @@ pub async fn import_desktop_profiles(
                 consecutive_failures: 0,
                 last_used_at: 0,
                 desktop_profile_dir: Some(profile.profile_dir.clone()),
-                desktop_cookie_sync_pending: profile.ready,
+                desktop_cookie_sync_pending: profile.has_cookie_database,
                 last_cookie_sync_at: 0,
                 last_login_verified_at: 0,
                 login_validation_version: 0,
@@ -1060,7 +1386,7 @@ pub async fn import_desktop_profiles(
     let cookie_ready_count = selected.iter().filter(|profile| profile.ready).count();
     Ok(DoubaoDesktopImportResult {
         message: format!(
-            "已登记 {} 个豆包桌面账号，其中 {} 个 Cookie 可立即同步；其余账号已保留，退出豆包后可重新导入 Cookie",
+            "已登记 {} 个豆包桌面账号，其中 {} 个当前可同步；被占用的账号也已保留，切换或下次打开时会自动重试",
             imported_account_ids.len(), cookie_ready_count
         ),
         state,
@@ -1311,6 +1637,9 @@ pub async fn get_state(
     app: AppHandle,
     selected_account_id: Option<String>,
 ) -> Result<DoubaoWebState, String> {
+    // Import newly discovered desktop profiles automatically. The potentially
+    // locked Cookie database itself is deliberately not opened here.
+    reconcile_desktop_profile_records(&app)?;
     build_state(&app, selected_account_id).await
 }
 
@@ -2032,5 +2361,40 @@ mod tests {
             "data": { "error_code": 0 }
         });
         assert!(!doubao_account_response_authenticated(&ambiguous));
+    }
+
+    #[test]
+    fn account_info_url_keeps_cookie_safe_trailing_slash() {
+        let parsed = Url::parse(DOUBAO_ACCOUNT_INFO_URL).unwrap();
+        assert_eq!(parsed.path(), "/passport/account/info/v2/");
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "account_sdk_source")
+                .map(|(_, value)| value.into_owned()),
+            Some("web".into())
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn locked_profile_can_use_doubao_multi_account_session() {
+        let local_state = serde_json::json!({
+            "profile": {
+                "info_cache": {
+                    "Profile 15": { "saman": { "user_id": "2803105319361600" } }
+                }
+            },
+            "saman": {
+                "local_storage_app_for_web": {
+                    "enterprise": r#"{"x-tt-multi-sids":"other%3Aold%7C2803105319361600%3Alive-session"}"#
+                }
+            }
+        });
+        let (sid, encoded) =
+            multi_sid_from_local_state(&local_state, "Profile 15").expect("multi sid");
+        assert_eq!(sid, "live-session");
+        assert!(encoded.contains("2803105319361600%3Alive-session"));
+        assert!(multi_sid_from_local_state(&local_state, "Profile 99").is_err());
     }
 }

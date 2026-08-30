@@ -397,6 +397,18 @@ pub async fn open_account(
             let _ = view.close();
         }
     }
+    let synced_cookie_header = if app.get_webview(&label).is_none() {
+        let cached_app = app.clone();
+        let cached_account = account_for_cookie_sync.clone();
+        tokio::task::spawn_blocking(move || {
+            doubao_web::synced_cookie_header(&cached_app, &cached_account)
+        })
+        .await
+        .map_err(|error| format!("读取已同步登录凭证任务失败: {error}"))?
+        .unwrap_or(None)
+    } else {
+        None
+    };
     let view = if let Some(view) = app.get_webview(&label) {
         view
     } else {
@@ -420,13 +432,24 @@ pub async fn open_account(
     })
     .await
     .map_err(|error| format!("导入豆包 Cookie 任务失败: {error}"))??;
-    if cookie_sync_result.is_some() {
+    if cookie_sync_result
+        .as_ref()
+        .is_some_and(|result| result.refreshed)
+    {
         let home_url = doubao_web::platform(&account_for_cookie_sync.platform_id)
             .ok_or_else(|| "不支持的网页创作平台".to_string())?
             .home_url;
         view.navigate(Url::parse(home_url).map_err(|error| error.to_string())?)
             .map_err(|error| format!("Cookie 已导入，但刷新豆包页面失败: {error}"))?;
         tokio::time::sleep(Duration::from_millis(450)).await;
+    }
+    if let Some(result) = cookie_sync_result {
+        if let Some(cookie_header) = result.cookie_header.or(synced_cookie_header) {
+            let check = doubao_web::validate_doubao_cookie_header(cookie_header).await;
+            doubao_web::update_session_check(&app, &account_id, &check)?;
+        } else if let Some(warning) = result.warning {
+            tracing::warn!("{warning}");
+        }
     }
     // Do not read WebView2 cookies while the account view is being created.
     // On Windows that dispatcher call can deadlock the UI message loop before
