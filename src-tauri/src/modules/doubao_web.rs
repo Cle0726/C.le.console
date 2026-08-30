@@ -10,7 +10,10 @@ use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, OnceLock,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -36,6 +39,15 @@ const DEFAULT_ACCOUNT_ID: &str = "default";
 const GENERATION_TIMEOUT: Duration = Duration::from_secs(390);
 static STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static GENERATING_ACCOUNTS: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
+static KEEPALIVE_STARTED: AtomicBool = AtomicBool::new(false);
+
+// A small authenticated request is enough to keep an otherwise idle desktop
+// session active.  Accounts are refreshed serially so the background task does
+// not create hidden WebViews or cause UI frame drops.
+const KEEPALIVE_INITIAL_DELAY: Duration = Duration::from_secs(30);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
+const KEEPALIVE_ACCOUNT_DELAY: Duration = Duration::from_millis(1500);
+const DESKTOP_PROFILE_DISCOVERY_INTERVAL: Duration = Duration::from_secs(60);
 
 // Keep the trailing slash. Doubao redirects `/v2` to `/v2/`; HTTP clients are
 // allowed to remove sensitive headers such as Cookie while following that
@@ -253,6 +265,10 @@ fn store_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("doubao-web-accounts.json"))
 }
 
+fn store_backup_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("doubao-web-accounts.json.bak"))
+}
+
 fn default_account() -> DoubaoWebAccountRecord {
     DoubaoWebAccountRecord {
         id: DEFAULT_ACCOUNT_ID.into(),
@@ -295,8 +311,23 @@ fn read_store_unlocked(app: &AppHandle) -> Result<DoubaoWebAccountStore, String>
     }
     let raw = std::fs::read_to_string(&path)
         .map_err(|error| format!("无法读取网页创作账号配置: {error}"))?;
-    let mut store: DoubaoWebAccountStore =
-        serde_json::from_str(&raw).map_err(|error| format!("网页创作账号配置格式损坏: {error}"))?;
+    let mut store: DoubaoWebAccountStore = match serde_json::from_str(&raw) {
+        Ok(store) => store,
+        Err(primary_error) => {
+            let backup_path = store_backup_path(app)?;
+            let backup_raw = std::fs::read_to_string(&backup_path).map_err(|backup_error| {
+                format!("网页创作账号配置格式损坏且备份不可用: {primary_error}; {backup_error}")
+            })?;
+            let store = serde_json::from_str(&backup_raw).map_err(|backup_error| {
+                format!("网页创作账号配置与备份均已损坏: {primary_error}; {backup_error}")
+            })?;
+            // Restore the readable backup without first replacing it with the
+            // corrupt primary file.
+            std::fs::write(&path, backup_raw)
+                .map_err(|error| format!("恢复网页创作账号配置备份失败: {error}"))?;
+            store
+        }
+    };
     let mut ids = HashSet::new();
     let mut migrated_unverified_doubao_state = false;
     for account in &mut store.accounts {
@@ -326,13 +357,31 @@ fn read_store_unlocked(app: &AppHandle) -> Result<DoubaoWebAccountStore, String>
 
 fn write_store_unlocked(app: &AppHandle, store: &DoubaoWebAccountStore) -> Result<(), String> {
     let path = store_path(app)?;
+    let backup_path = store_backup_path(app)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("无法创建网页创作账号配置目录: {error}"))?;
     }
     let raw = serde_json::to_vec_pretty(store)
         .map_err(|error| format!("无法序列化网页创作账号配置: {error}"))?;
-    std::fs::write(path, raw).map_err(|error| format!("无法保存网页创作账号配置: {error}"))
+    let temp_path = path.with_extension("json.tmp");
+    {
+        use std::io::Write as _;
+        let mut file = std::fs::File::create(&temp_path)
+            .map_err(|error| format!("无法创建网页创作账号临时配置: {error}"))?;
+        file.write_all(&raw)
+            .map_err(|error| format!("无法写入网页创作账号临时配置: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("无法同步网页创作账号临时配置: {error}"))?;
+    }
+    if path.is_file() {
+        std::fs::copy(&path, &backup_path)
+            .map_err(|error| format!("无法备份网页创作账号配置: {error}"))?;
+    }
+    std::fs::copy(&temp_path, &path)
+        .map_err(|error| format!("无法保存网页创作账号配置: {error}"))?;
+    let _ = std::fs::remove_file(temp_path);
+    Ok(())
 }
 
 fn load_store(app: &AppHandle) -> Result<DoubaoWebAccountStore, String> {
@@ -471,8 +520,29 @@ fn profile_display_names(root: &Path) -> HashMap<String, String> {
 
 #[cfg(target_os = "windows")]
 fn open_desktop_cookie_db(path: &Path) -> Result<Connection, String> {
-    Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|error| format!("Cookie 数据库正被豆包占用或无法读取: {error}"))
+    match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+        Ok(connection) => Ok(connection),
+        Err(primary_error) => {
+            // Chromium keeps the active profile's Cookies database locked.
+            // SQLite's immutable read-only URI gives us a non-mutating
+            // snapshot of the last committed pages without asking the user to
+            // close Doubao or touching its WAL/lock files.
+            let mut uri = Url::from_file_path(path)
+                .map_err(|_| format!("豆包 Cookie 数据库路径无效: {}", path.display()))?;
+            uri.query_pairs_mut()
+                .append_pair("mode", "ro")
+                .append_pair("immutable", "1");
+            Connection::open_with_flags(
+                uri.as_str(),
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+            )
+            .map_err(|snapshot_error| {
+                format!(
+                    "Cookie 数据库正被豆包占用且只读快照也无法打开: {primary_error}; {snapshot_error}"
+                )
+            })
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -630,6 +700,21 @@ fn reconcile_desktop_profile_records(app: &AppHandle) -> Result<usize, String> {
     });
 
     let existing = load_store(app)?;
+    let has_desktop_accounts = existing
+        .accounts
+        .iter()
+        .any(|account| account.desktop_profile_dir.is_some());
+    let has_legacy_placeholders = has_desktop_accounts
+        && existing.accounts.iter().any(|account| {
+            account.platform_id == "doubao"
+                && account.desktop_profile_dir.is_none()
+                && !account.enabled
+                && !account.last_known_logged_in
+                && account.last_used_at == 0
+                && account.last_cookie_sync_at == 0
+                && account.last_login_verified_at == 0
+                && account.name.starts_with("豆包账号 ")
+        });
     let known = existing
         .accounts
         .iter()
@@ -639,11 +724,27 @@ fn reconcile_desktop_profile_records(app: &AppHandle) -> Result<usize, String> {
         .into_iter()
         .filter(|profile_dir| !known.contains(profile_dir.as_str()))
         .collect::<Vec<_>>();
-    if missing.is_empty() {
+    if missing.is_empty() && !has_legacy_placeholders {
         return Ok(0);
     }
     update_store(app, |store| {
         let mut added = 0usize;
+        // Old builds created disabled empty shells before desktop-profile
+        // import existed. Once real desktop accounts are present these shells
+        // only hide the usable accounts below the fold, so remove only the
+        // untouched legacy pattern and preserve every user-created account.
+        if has_legacy_placeholders {
+            store.accounts.retain(|account| {
+                !(account.platform_id == "doubao"
+                    && account.desktop_profile_dir.is_none()
+                    && !account.enabled
+                    && !account.last_known_logged_in
+                    && account.last_used_at == 0
+                    && account.last_cookie_sync_at == 0
+                    && account.last_login_verified_at == 0
+                    && account.name.starts_with("豆包账号 "))
+            });
+        }
         for profile_dir in missing {
             // React can request state more than once during startup. Re-check
             // under the store lock so concurrent reconciliation stays
@@ -840,20 +941,6 @@ fn read_desktop_cookies(root: &Path, profile_dir: &str) -> Result<Vec<DesktopCoo
 }
 
 #[cfg(target_os = "windows")]
-fn desktop_cookie_database_modified_at(root: &Path, profile_dir: &str) -> Option<u64> {
-    root.join(profile_dir)
-        .join("Network")
-        .join("Cookies")
-        .metadata()
-        .ok()?
-        .modified()
-        .ok()?
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_secs())
-}
-
-#[cfg(target_os = "windows")]
 fn desktop_cookie_header(cookies: &[DesktopCookie]) -> String {
     cookies
         .iter()
@@ -921,28 +1008,59 @@ fn sync_multi_sid_to_view(
         "ssid_ucp_v1",
     ];
     for name in session_cookie_names {
-        let cookie = tauri::webview::Cookie::build((name.to_string(), sid.clone()))
-            .domain(".doubao.com")
+        for domain in [".doubao.com", "www.doubao.com"] {
+            let cookie = tauri::webview::Cookie::build((name.to_string(), sid.clone()))
+                .domain(domain)
+                .path("/")
+                .secure(true)
+                .http_only(true)
+                .same_site(SameSite::None)
+                .build();
+            view.set_cookie(cookie)
+                .map_err(|error| format!("写入豆包多账号会话失败: {error}"))?;
+        }
+    }
+    for domain in [".doubao.com", "www.doubao.com"] {
+        let cookie = tauri::webview::Cookie::build(("multi_sids".to_string(), multi_sids.clone()))
+            .domain(domain)
             .path("/")
             .secure(true)
             .http_only(true)
             .same_site(SameSite::None)
             .build();
         view.set_cookie(cookie)
-            .map_err(|error| format!("写入豆包多账号会话失败: {error}"))?;
+            .map_err(|error| format!("写入豆包多账号列表失败: {error}"))?;
     }
-    let cookie = tauri::webview::Cookie::build(("multi_sids".to_string(), multi_sids.clone()))
-        .domain(".doubao.com")
-        .path("/")
-        .secure(true)
-        .http_only(true)
-        .same_site(SameSite::None)
-        .build();
-    view.set_cookie(cookie)
-        .map_err(|error| format!("写入豆包多账号列表失败: {error}"))?;
     Ok(format!(
         "sessionid={sid}; sessionid_ss={sid}; sid_tt={sid}; sid_ucp_v1={sid}; ssid_ucp_v1={sid}; multi_sids={multi_sids}"
     ))
+}
+
+#[cfg(target_os = "windows")]
+fn write_desktop_cookie_to_view(
+    view: &Webview,
+    item: &DesktopCookie,
+    domain: &str,
+) -> Result<(), String> {
+    let mut builder = tauri::webview::Cookie::build((item.name.clone(), item.value.clone()))
+        .domain(domain.to_string())
+        .path(item.path.clone())
+        .secure(item.secure)
+        .http_only(item.http_only);
+    builder = match item.same_site {
+        0 => builder.same_site(SameSite::None),
+        1 => builder.same_site(SameSite::Lax),
+        2 => builder.same_site(SameSite::Strict),
+        _ => builder,
+    };
+    if let Some(expires) = item
+        .expires_unix
+        .and_then(|value| OffsetDateTime::from_unix_timestamp(value).ok())
+    {
+        builder = builder.expires(expires);
+    }
+    view.set_cookie(builder.build())
+        .map_err(|error| format!("写入豆包 Cookie 失败: {error}"))
 }
 
 pub(crate) fn synced_cookie_header(
@@ -984,10 +1102,11 @@ pub(crate) fn sync_desktop_cookies_to_view(
     #[cfg(target_os = "windows")]
     {
         let root = doubao_desktop_user_data_dir()?;
-        let source_modified_at = desktop_cookie_database_modified_at(&root, profile_dir);
-        let should_refresh = account.desktop_cookie_sync_pending
-            || account.last_cookie_sync_at == 0
-            || source_modified_at.is_some_and(|modified| modified > account.last_cookie_sync_at);
+        // Always refresh on an explicit account open. Besides picking up a
+        // desktop-side account switch, this migrates profiles created before
+        // v1.1.18 whose `.doubao.com` cookies were normalized by WebView2 into
+        // unusable host-only `doubao.com` cookies.
+        let should_refresh = true;
         let cookies = match read_desktop_cookies(&root, profile_dir) {
             Ok(cookies) => cookies,
             Err(cookie_error) => match sync_multi_sid_to_view(&root, profile_dir, view) {
@@ -1054,26 +1173,14 @@ pub(crate) fn sync_desktop_cookies_to_view(
         let cookie_header = desktop_cookie_header(&cookies);
         if should_refresh {
             for item in &cookies {
-                let mut builder =
-                    tauri::webview::Cookie::build((item.name.clone(), item.value.clone()))
-                        .domain(item.domain.clone())
-                        .path(item.path.clone())
-                        .secure(item.secure)
-                        .http_only(item.http_only);
-                builder = match item.same_site {
-                    0 => builder.same_site(SameSite::None),
-                    1 => builder.same_site(SameSite::Lax),
-                    2 => builder.same_site(SameSite::Strict),
-                    _ => builder,
-                };
-                if let Some(expires) = item
-                    .expires_unix
-                    .and_then(|value| OffsetDateTime::from_unix_timestamp(value).ok())
-                {
-                    builder = builder.expires(expires);
+                write_desktop_cookie_to_view(view, item, &item.domain)?;
+                // Wry/WebView2 currently normalizes `.doubao.com` to a
+                // host-only `doubao.com` cookie. The actual creator page runs
+                // on `www.doubao.com`, so write a valid host cookie there as
+                // well instead of editing Chromium's encrypted database.
+                if matches!(item.domain.as_str(), "doubao.com" | ".doubao.com") {
+                    write_desktop_cookie_to_view(view, item, "www.doubao.com")?;
                 }
-                view.set_cookie(builder.build())
-                    .map_err(|error| format!("写入豆包 Cookie 失败: {error}"))?;
             }
             update_store(app, |store| {
                 let record = store
@@ -1288,6 +1395,152 @@ pub(crate) fn update_session_check(
         }
         Ok(())
     })
+}
+
+fn keepalive_cookie_header(
+    app: &AppHandle,
+    account: &DoubaoWebAccountRecord,
+) -> Result<Option<String>, String> {
+    #[cfg(target_os = "windows")]
+    if let Some(profile_dir) = account.desktop_profile_dir.as_deref() {
+        let root = doubao_desktop_user_data_dir()?;
+        match read_desktop_cookies(&root, profile_dir) {
+            Ok(cookies) => return Ok(Some(desktop_cookie_header(&cookies))),
+            Err(cookie_error) => match desktop_multi_sid(&root, profile_dir) {
+                Ok((sid, multi_sids)) => {
+                    return Ok(Some(format!(
+                        "sessionid={sid}; sessionid_ss={sid}; sid_tt={sid}; \
+                         sid_ucp_v1={sid}; ssid_ucp_v1={sid}; multi_sids={multi_sids}"
+                    )));
+                }
+                Err(multi_sid_error) => {
+                    if let Some(cookie_header) = synced_cookie_header(app, account)? {
+                        return Ok(Some(cookie_header));
+                    }
+                    return Err(format!(
+                        "无法读取桌面 Cookie，也无法读取多账号会话: {cookie_error}; {multi_sid_error}"
+                    ));
+                }
+            },
+        }
+    }
+    synced_cookie_header(app, account)
+}
+
+/// Refresh every enabled Doubao account without creating hidden browser
+/// windows. Transient network/read errors never overwrite the last verified
+/// state; an authoritative server response does.
+pub(crate) async fn run_keepalive_cycle(app: &AppHandle) -> Result<(usize, usize), String> {
+    let accounts: Vec<DoubaoWebAccountRecord> = load_store(app)?
+        .accounts
+        .into_iter()
+        .filter(|account| account.enabled && account.platform_id == "doubao")
+        .collect();
+    let mut verified_checks = Vec::new();
+    let mut errors = Vec::new();
+
+    for (index, account) in accounts.iter().enumerate() {
+        let app_handle = app.clone();
+        let account_for_read = account.clone();
+        let cookie_header = match tokio::task::spawn_blocking(move || {
+            keepalive_cookie_header(&app_handle, &account_for_read)
+        })
+        .await
+        {
+            Ok(Ok(Some(cookie_header))) if !cookie_header.trim().is_empty() => cookie_header,
+            Ok(Ok(_)) => {
+                errors.push(format!("{} 没有可刷新的 Cookie", account.name));
+                continue;
+            }
+            Ok(Err(error)) => {
+                errors.push(format!("{}: {error}", account.name));
+                continue;
+            }
+            Err(error) => {
+                errors.push(format!("{} Cookie 读取任务失败: {error}", account.name));
+                continue;
+            }
+        };
+
+        let check = validate_doubao_cookie_header(cookie_header).await;
+        if check.verified {
+            verified_checks.push((account.id.clone(), check));
+        } else {
+            errors.push(format!(
+                "{}: {}",
+                account.name,
+                check
+                    .detail
+                    .unwrap_or_else(|| "服务端未返回可确认的登录状态".into())
+            ));
+        }
+        if index + 1 < accounts.len() {
+            tokio::time::sleep(KEEPALIVE_ACCOUNT_DELAY).await;
+        }
+    }
+
+    if !verified_checks.is_empty() {
+        update_store(app, |store| {
+            let now = unix_timestamp();
+            for (account_id, check) in &verified_checks {
+                if let Some(account) = store
+                    .accounts
+                    .iter_mut()
+                    .find(|account| account.id == *account_id)
+                {
+                    account.last_known_logged_in = check.logged_in;
+                    account.last_login_verified_at = now;
+                    account.login_validation_version = DOUBAO_LOGIN_VALIDATION_VERSION;
+                    account.last_error = check.detail.clone().unwrap_or_default();
+                }
+            }
+            Ok(())
+        })?;
+    }
+
+    if !errors.is_empty() {
+        crate::logger::log_warn(&format!(
+            "[DoubaoKeepalive] 本轮有 {} 个账号未刷新: {}",
+            errors.len(),
+            errors.join(" | ")
+        ));
+    }
+    Ok((verified_checks.len(), errors.len()))
+}
+
+pub(crate) fn ensure_keepalive_started(app: AppHandle) {
+    if KEEPALIVE_STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let discovery_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match reconcile_desktop_profile_records(&discovery_app) {
+                Ok(added) if added > 0 => crate::logger::log_info(&format!(
+                    "[DoubaoKeepalive] 自动发现并加入 {added} 个豆包桌面账号"
+                )),
+                Ok(_) => {}
+                Err(error) => crate::logger::log_warn(&format!(
+                    "[DoubaoKeepalive] 自动发现豆包桌面账号失败: {error}"
+                )),
+            }
+            tokio::time::sleep(DESKTOP_PROFILE_DISCOVERY_INTERVAL).await;
+        }
+    });
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(KEEPALIVE_INITIAL_DELAY).await;
+        loop {
+            match run_keepalive_cycle(&app).await {
+                Ok((refreshed, errors)) => crate::logger::log_info(&format!(
+                    "[DoubaoKeepalive] 定时刷新完成: refreshed={refreshed}, errors={errors}"
+                )),
+                Err(error) => crate::logger::log_warn(&format!(
+                    "[DoubaoKeepalive] 定时刷新失败，保留原账号状态: {error}"
+                )),
+            }
+            tokio::time::sleep(KEEPALIVE_INTERVAL).await;
+        }
+    });
 }
 
 pub async fn import_desktop_profiles(

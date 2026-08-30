@@ -339,11 +339,12 @@ async fn create_embedded_view(
     let app_for_new_window = app.clone();
     let label_for_new_window = label.clone();
     let platform_id = account.platform_id.clone();
+    let bypass_system_proxy = platform_id == "doubao";
     let download_dir = creator_download_dir(&app, &platform_id)?;
     std::fs::create_dir_all(&download_dir)
         .map_err(|error| format!("创建网页下载目录失败: {error}"))?;
     let view = tokio::task::spawn_blocking(move || {
-        let builder = WebviewBuilder::new(label, WebviewUrl::External(url))
+        let mut builder = WebviewBuilder::new(label, WebviewUrl::External(url))
             .data_directory(data_dir)
             .initialization_script(bridge_script(&platform_id))
             .on_navigation(|url| matches!(url.scheme(), "http" | "https"))
@@ -365,6 +366,13 @@ async fn create_embedded_view(
                 }
                 true
             });
+        if bypass_system_proxy {
+            // Doubao's website region-check page is triggered by the user's
+            // global proxy egress even though the desktop client works on the
+            // local route. Bypass that proxy only inside this account WebView;
+            // do not mutate WinINET/WinHTTP/system proxy settings.
+            builder = builder.additional_browser_args("--no-proxy-server");
+        }
         let view = parent.add_child(
             builder,
             tauri::LogicalPosition::new(bounds.x.max(0.0), bounds.y.max(0.0)),
@@ -387,9 +395,14 @@ pub async fn open_account(
     let account = doubao_web::find_account(&app, &account_id)?;
     let account_for_cookie_sync = account.clone();
     let bounds = bounds_or_default(bounds);
+    // Config-created windows are registered as a Window plus a managed
+    // Webview on Tauri 2.10. `get_webview_window()` can therefore return None
+    // even while the dedicated workbench is alive. Resolve its actual Window
+    // through the managed Webview; otherwise the account child is mistakenly
+    // attached to `main` and floats over/crops the control-center UI.
     let parent = app
-        .get_webview_window(CREATOR_WORKSPACE_WINDOW_LABEL)
-        .or_else(|| app.get_webview_window("main"))
+        .get_webview(CREATOR_WORKSPACE_WINDOW_LABEL)
+        .map(|webview| webview.window())
         .ok_or_else(|| "网页创作工作台尚未就绪".to_string())?;
     let label = webview_label(&account.id);
     for view in creator_webviews(&app) {
@@ -412,13 +425,7 @@ pub async fn open_account(
     let view = if let Some(view) = app.get_webview(&label) {
         view
     } else {
-        create_embedded_view(
-            app.clone(),
-            parent.as_ref().window(),
-            account,
-            bounds.clone(),
-        )
-        .await?
+        create_embedded_view(app.clone(), parent, account, bounds.clone()).await?
     };
     let cookie_sync_app = app.clone();
     let cookie_sync_account = account_for_cookie_sync.clone();

@@ -461,12 +461,15 @@ export function JimengApiServicePage({
   }, [webCreatorAccountId, webCreatorAccounts]);
 
   useEffect(() => {
-    if ((!isDoubaoWebVideo && tab !== 'platforms') || !doubaoWeb?.accounts.some((account) => account.windowOpen)) return;
+    const creatorWorkspaceVisible = standaloneWebCreator && tab === 'platforms';
+    const activeAccountNeedsPolling = !!doubaoWeb?.accounts.some((account) => account.windowOpen);
+    if (!creatorWorkspaceVisible && !isDoubaoWebVideo && !activeAccountNeedsPolling) return;
     const timer = window.setInterval(() => {
+      if (document.hidden) return;
       void jimengApiService.getDoubaoWebState(doubaoWebAccountId || null).then(setDoubaoWeb).catch(() => undefined);
-    }, 5000);
+    }, creatorWorkspaceVisible ? 15_000 : 5000);
     return () => window.clearInterval(timer);
-  }, [doubaoWeb?.accounts, doubaoWebAccountId, isDoubaoWebVideo, tab, webCreatorAccountId]);
+  }, [doubaoWeb?.accounts, doubaoWebAccountId, isDoubaoWebVideo, standaloneWebCreator, tab, webCreatorAccountId]);
 
   useEffect(() => {
     setDoubaoWebAccountName(selectedDoubaoWebAccount?.name || '');
