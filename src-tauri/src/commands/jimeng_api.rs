@@ -99,6 +99,22 @@ pub async fn doubao_desktop_import(
 }
 
 #[tauri::command]
+pub async fn doubao_credentials_export(
+    app: AppHandle,
+    account_ids: Option<Vec<String>>,
+) -> Result<doubao_web::DoubaoCredentialExportResult, String> {
+    doubao_web::export_credentials(app, account_ids).await
+}
+
+#[tauri::command]
+pub async fn doubao_credentials_import(
+    app: AppHandle,
+    json: String,
+) -> Result<doubao_web::DoubaoCredentialImportResult, String> {
+    doubao_web::import_credentials(app, json).await
+}
+
+#[tauri::command]
 pub async fn doubao_web_set_account_enabled(
     app: AppHandle,
     account_id: String,

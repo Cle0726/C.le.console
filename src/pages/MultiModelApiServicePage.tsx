@@ -1252,12 +1252,12 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
       }
       if (isXai) {
         setLocalBusy(true);
-        setModalStatus({ tone: 'loading', text: '正在导入 Grok CLI OAuth JSON 并检测额度...' });
+        setModalStatus({ tone: 'loading', text: '正在解析 Grok / Sub2API 账号并用 refresh_token 换取可用凭据...' });
         try {
           await multiModelApiService.importXaiAccountsJson(text);
-          await finishManagedImport('Grok CLI OAuth 账号已导入 API 账号池');
+          await finishManagedImport('Grok / Sub2API 账号已导入 API 账号池并完成凭据检测');
         } catch (error) {
-          setModalStatus({ tone: 'error', text: `导入 Grok OAuth JSON 失败：${String(error).replace(/^Error:\s*/, '')}` });
+          setModalStatus({ tone: 'error', text: `导入 Grok 账号失败：${String(error).replace(/^Error:\s*/, '')}` });
         } finally {
           setLocalBusy(false);
         }
@@ -1305,7 +1305,9 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
     try {
       const selected = await openFileDialog({
         multiple: true,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
+        filters: isXai
+          ? [{ name: 'Grok / Sub2API 账号', extensions: ['json', 'txt', 'csv'] }]
+          : [{ name: 'JSON', extensions: ['json'] }],
       });
       const filePaths = Array.isArray(selected) ? selected : selected ? [selected] : [];
       if (!filePaths.length) {
@@ -1410,17 +1412,17 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
 
         {addMode === 'token' && (
           <div className="mm-add-section wide">
-            <p className="section-desc">Token / JSON 会按供应商分别导入：Codex、Gemini、Claude、Antigravity 走各自账号模块；OpenAI、Grok/xAI、自定义则直接作为 OAuth credential 写入多模型代理。</p>
-            <label><span>{providerLabel(account.provider)} Token / JSON</span><textarea value={credentialText} onChange={(event) => setCredentialText(event.target.value)} rows={8} placeholder={isCodex ? '{"tokens":{"access_token":"...","refresh_token":"..."}}' : `{"type":"${account.provider === 'xai' ? 'xai' : account.provider}","access_token":"...","refresh_token":"..."}`} /></label>
+            <p className="section-desc">{isXai ? '支持官方 Grok CLI auth.json、Sub2API 导出 JSON、OAuth Token JSON，也支持账号商常用的“账号 + 密码 + RT”逐行批量格式。只有 refresh_token 也可以，导入后会自动交换 access_token 并检测额度。' : 'Token / JSON 会按供应商分别导入：Codex、Gemini、Claude、Antigravity 走各自账号模块；OpenAI、自定义则直接作为 OAuth credential 写入多模型代理。'}</p>
+            <label><span>{isXai ? 'Grok / Sub2API 账号、Token 或 JSON' : `${providerLabel(account.provider)} Token / JSON`}</span><textarea value={credentialText} onChange={(event) => setCredentialText(event.target.value)} rows={8} placeholder={isXai ? '每行一个：email@example.com----账号密码----rt_xxx\n也支持 |、Tab、:: 分隔，或直接粘贴 Sub2API / Grok CLI JSON' : isCodex ? '{"tokens":{"access_token":"...","refresh_token":"..."}}' : `{"type":"${account.provider}","access_token":"...","refresh_token":"..."}`} /></label>
             <button type="button" className="btn btn-primary btn-full" onClick={() => void handleTokenSubmit()} disabled={disabled || !credentialText.trim()}><Download size={16} />导入</button>
           </div>
         )}
 
         {addMode === 'import' && (
           <div className="mm-add-section wide">
-            <p className="section-desc">优先从本机已登录账号导入；也可以选择 JSON 文件。没有固定本机登录态的供应商会把 JSON 文件直接作为当前上游 credential 保存。</p>
+            <p className="section-desc">{isXai ? '可导入本机 Grok CLI 登录态，或选择 JSON/TXT/CSV 文件。文件支持 Sub2API JSON 和每行“账号----密码----refresh_token”的账号池格式。' : '优先从本机已登录账号导入；也可以选择 JSON 文件。没有固定本机登录态的供应商会把 JSON 文件直接作为当前上游 credential 保存。'}</p>
             <button type="button" className="btn btn-primary btn-full" onClick={() => void handleImportLocal()} disabled={disabled}>{localBusy ? <RefreshCw size={16} className="spin" /> : <Database size={16} />}获取本机 {providerLabel(account.provider)} 账号</button>
-            <button type="button" className="btn btn-secondary btn-full" onClick={() => void handleImportFiles()} disabled={disabled}><FileUp size={16} />从 JSON 文件导入</button>
+            <button type="button" className="btn btn-secondary btn-full" onClick={() => void handleImportFiles()} disabled={disabled}><FileUp size={16} />{isXai ? '从 Sub2API / JSON / TXT 文件导入' : '从 JSON 文件导入'}</button>
           </div>
         )}
 

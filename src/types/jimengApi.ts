@@ -119,6 +119,20 @@ export interface DoubaoDesktopImportResult {
   message: string;
 }
 
+export interface DoubaoCredentialExportResult {
+  json: string;
+  accountCount: number;
+  cookieCount: number;
+  skippedAccounts: string[];
+}
+
+export interface DoubaoCredentialImportResult {
+  state: DoubaoWebState;
+  importedAccountIds: string[];
+  cookieCount: number;
+  message: string;
+}
+
 export type WebCreatorPlatformId = 'doubao' | 'jimeng' | 'qianwen' | 'xiaoyunque' | 'douyin';
 
 export interface WebCreatorPlatform {

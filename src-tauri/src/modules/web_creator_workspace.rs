@@ -346,6 +346,14 @@ async fn create_embedded_view(
     let view = tokio::task::spawn_blocking(move || {
         let mut builder = WebviewBuilder::new(label, WebviewUrl::External(url))
             .data_directory(data_dir)
+            // Tauri's native file-drop handler is enabled by default and
+            // consumes the Windows OLE drop before WebView2 can turn it into
+            // the page's HTML5 DragEvent/DataTransfer. Creator sites such as
+            // Doubao therefore see no File when a user drags an image or
+            // document into the chat composer. Let WebView2 own file drops for
+            // this embedded browser; the surrounding C.le UI does not process
+            // dropped files itself.
+            .disable_drag_drop_handler()
             .initialization_script(bridge_script(&platform_id))
             .on_navigation(|url| matches!(url.scheme(), "http" | "https"))
             .on_new_window(move |url, _features| {
@@ -431,11 +439,17 @@ pub async fn open_account(
     let cookie_sync_account = account_for_cookie_sync.clone();
     let cookie_sync_view = view.clone();
     let cookie_sync_result = tokio::task::spawn_blocking(move || {
-        doubao_web::sync_desktop_cookies_to_view(
+        let desktop = doubao_web::sync_desktop_cookies_to_view(
             &cookie_sync_app,
             &cookie_sync_account,
             &cookie_sync_view,
-        )
+        )?;
+        let portable = doubao_web::sync_portable_cookies_to_view(
+            &cookie_sync_app,
+            &cookie_sync_account,
+            &cookie_sync_view,
+        )?;
+        Ok::<_, String>(portable.or(desktop))
     })
     .await
     .map_err(|error| format!("导入豆包 Cookie 任务失败: {error}"))??;
@@ -454,6 +468,11 @@ pub async fn open_account(
         if let Some(cookie_header) = result.cookie_header.or(synced_cookie_header) {
             let check = doubao_web::validate_doubao_cookie_header(cookie_header).await;
             doubao_web::update_session_check(&app, &account_id, &check)?;
+            doubao_web::finalize_portable_cookie_import(
+                &app,
+                &account_id,
+                check.verified && check.logged_in,
+            );
         } else if let Some(warning) = result.warning {
             tracing::warn!("{warning}");
         }

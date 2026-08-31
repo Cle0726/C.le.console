@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { openPath } from '@tauri-apps/plugin-opener';
 import { downloadDir, join } from '@tauri-apps/api/path';
 import {
   Activity, ArrowLeft, ArrowRight, BadgeCheck, CircleAlert, Clipboard, Coins, Copy, Download, Film,
-  FolderOpen, Gauge, Globe2, HeartPulse, Image as ImageIcon, KeyRound, Layers3,
+  FileDown, FileUp, FolderOpen, Gauge, Globe2, HeartPulse, Image as ImageIcon, KeyRound, Layers3,
   LoaderCircle, PanelsTopLeft, Plus, Power, RefreshCw, Save, ShieldCheck, Sparkles,
   Trash2, Upload, WandSparkles, X,
 } from 'lucide-react';
@@ -658,6 +659,60 @@ export function JimengApiServicePage({
     }
   };
 
+  const exportDoubaoCredentials = async () => {
+    const accountIds = (doubaoWeb?.accounts || [])
+      .filter((account) => account.platformId === 'doubao')
+      .map((account) => account.id);
+    if (!accountIds.length) return;
+    if (!window.confirm('导出的凭证文件包含豆包登录 Cookie，拿到文件的人可以登录这些账号。请只保存到可信位置，是否继续？')) return;
+    setDoubaoWebBusy(true);
+    try {
+      const result = await jimengApiService.exportDoubaoCredentials(accountIds);
+      const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const path = await saveDialog({
+        defaultPath: `C.le-豆包账号凭证-${day}.json`,
+        filters: [{ name: 'C.le 豆包凭证', extensions: ['json'] }],
+      });
+      if (!path) return;
+      await writeTextFile(path, result.json);
+      setNotice({
+        tone: result.skippedAccounts.length ? 'info' : 'success',
+        text: `已导出 ${result.accountCount} 个豆包账号、${result.cookieCount} 条 Cookie。${result.skippedAccounts.length ? `未导出：${result.skippedAccounts.join('；')}` : '请妥善保管凭证文件。'}`,
+      });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `导出豆包账号凭证失败：${String(error)}` });
+    } finally {
+      setDoubaoWebBusy(false);
+    }
+  };
+
+  const importDoubaoCredentials = async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'C.le 豆包凭证', extensions: ['json'] }],
+    });
+    if (!selected) return;
+    const path = Array.isArray(selected) ? selected[0] : selected;
+    if (!path) return;
+    if (!window.confirm('将从该文件导入豆包登录凭证。请仅导入由你自己导出且来源可信的文件，是否继续？')) return;
+    setDoubaoWebBusy(true);
+    try {
+      const result = await jimengApiService.importDoubaoCredentials(await readTextFile(path));
+      applyDoubaoWebState(result.state);
+      const firstAccountId = result.importedAccountIds[0];
+      if (firstAccountId) {
+        setWebCreatorPlatformId('doubao');
+        setWebCreatorAccountId(firstAccountId);
+        await openWebCreatorAccount(firstAccountId);
+      }
+      setNotice({ tone: 'success', text: result.message });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `导入豆包账号凭证失败：${String(error)}` });
+    } finally {
+      setDoubaoWebBusy(false);
+    }
+  };
+
   const navigateWebCreator = async (action: 'back' | 'forward' | 'reload') => {
     try {
       const next = await jimengApiService.navigateWebCreator(action);
@@ -1162,7 +1217,11 @@ export function JimengApiServicePage({
                 <span>{selectedWebCreatorPlatform?.name || '网页平台'}账号</span>
                 <div>
                   {webCreatorPlatformId === 'doubao' && (
-                    <button type="button" title="从豆包桌面版导入账号 Cookie" disabled={doubaoWebBusy || doubaoDesktopBusy} onClick={() => void scanDoubaoDesktopProfiles()}><Download size={16} /></button>
+                    <>
+                      <button type="button" title="从豆包桌面版同步账号" disabled={doubaoWebBusy || doubaoDesktopBusy} onClick={() => void scanDoubaoDesktopProfiles()}><Download size={16} /></button>
+                      <button type="button" title="导入 C.le 豆包账号凭证" disabled={doubaoWebBusy} onClick={() => void importDoubaoCredentials()}><FileUp size={16} /></button>
+                      <button type="button" title="导出全部豆包账号凭证" disabled={doubaoWebBusy || !webCreatorAccounts.length} onClick={() => void exportDoubaoCredentials()}><FileDown size={16} /></button>
+                    </>
                   )}
                   <button type="button" title="逐个向平台服务端验证当前账号" disabled={doubaoWebBusy || !webCreatorAccounts.length} onClick={() => void verifyWebCreatorAccounts()}><BadgeCheck size={16} /></button>
                   <button type="button" title="新增账号" disabled={doubaoWebBusy} onClick={() => void runWebCreatorAccountAction('add')}><Plus size={16} /></button>

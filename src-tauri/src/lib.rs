@@ -1078,6 +1078,8 @@ pub fn run() {
             commands::jimeng_api::doubao_web_add_account,
             commands::jimeng_api::doubao_desktop_scan,
             commands::jimeng_api::doubao_desktop_import,
+            commands::jimeng_api::doubao_credentials_export,
+            commands::jimeng_api::doubao_credentials_import,
             commands::jimeng_api::doubao_web_set_account_enabled,
             commands::jimeng_api::doubao_web_rename_account,
             commands::jimeng_api::doubao_web_remove_account,

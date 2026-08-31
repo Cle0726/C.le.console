@@ -4,6 +4,28 @@
 
 ## 未发布
 
+## 1.1.24
+
+### Grok / xAI 多账号导入
+
+- 新增 Sub2API `sub2api-data` 导出 JSON 解析，支持凭据位于 `accounts[].credentials`、camelCase/snake_case Token 字段的结构。
+- 新增“账号 + 密码 + refresh_token”批量文本导入，每行一个账号，兼容 `----`、`|`、Tab、`::`、分号和逗号分隔。
+- 支持只有 `refresh_token` 的 Grok 账号：导入后通过 xAI OAuth token endpoint 自动换取 `access_token`，再执行额度检测。
+- Grok 文件选择器扩展为 JSON、TXT 和 CSV；导入界面补充明确格式示例。
+- 账号密码仅作为本地迁移/恢复元数据保存，不会作为 xAI API 请求字段发送。
+
+### 网页创作工作台
+
+- 修复 Windows 下 Tauri 原生文件拖放处理器抢先消费系统 Drop，导致豆包网页聊天框收不到外部图片/文件的问题；账号内嵌 WebView 现在直接使用 WebView2 的 HTML5 `DragEvent` / `DataTransfer` 文件拖放。
+- 新增 C.le 豆包账号凭证 v1 的批量导出/导入接口和工作台按钮，可将 Cookie、域、路径、过期时间、HttpOnly、Secure 与 SameSite 属性迁移到另一台电脑的独立账号 Profile。
+- 导入文件会校验格式、账号数量、Cookie 域名和字段长度；仅接受 `doubao.com` 子域，首次打开后自动写入 WebView 并向豆包服务端验证；验证成功后删除明文引导副本，后续由独立浏览器 Profile 持久化，避免旧 Cookie 覆盖新会话。
+- 显式退出或删除账号时同步清除本地可迁移凭证，避免用户退出后被旧凭证自动恢复。
+
+### 验证
+
+- Rust 定向测试覆盖官方 Grok CLI registry、Sub2API 嵌套凭据和两种账号密码 RT 文本格式。
+- TypeScript 类型检查通过。
+
 ## 1.1.23
 
 ### 修复

@@ -436,14 +436,36 @@ pub fn cancel_oauth(login_id: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+fn first_text(object: &Map<String, Value>, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| text(object.get(*key)))
+}
+
 fn official_credential(entry: &Value) -> Option<Value> {
     let object = entry.as_object()?;
-    let access_token = text(object.get("access_token")).or_else(|| text(object.get("key")))?;
+    let access_token = first_text(object, &["access_token", "accessToken", "key"]);
+    let refresh_token = first_text(object, &["refresh_token", "refreshToken"]);
+    if access_token.is_none() && refresh_token.is_none() {
+        return None;
+    }
     let mut credential = object.clone();
     credential.insert("type".into(), Value::String("xai".into()));
     credential.insert("provider".into(), Value::String("xai".into()));
     credential.insert("auth_kind".into(), Value::String("oauth".into()));
-    credential.insert("access_token".into(), Value::String(access_token));
+    if let Some(access_token) = access_token {
+        credential.insert("access_token".into(), Value::String(access_token));
+    }
+    if let Some(refresh_token) = refresh_token {
+        credential.insert("refresh_token".into(), Value::String(refresh_token));
+    }
+    if let Some(email) = first_text(object, &["email", "account", "username"]) {
+        credential.insert("email".into(), Value::String(email));
+    }
+    if let Some(password) = first_text(object, &["account_password", "accountPassword", "password"])
+    {
+        // The password is migration/recovery metadata only. Runtime requests use
+        // OAuth tokens and never send this value to the xAI API.
+        credential.insert("account_password".into(), Value::String(password));
+    }
     credential
         .entry("token_endpoint")
         .or_insert_with(|| Value::String("https://auth.x.ai/oauth2/token".into()));
@@ -459,6 +481,37 @@ fn official_credential(entry: &Value) -> Option<Value> {
         }
     }
     Some(Value::Object(credential))
+}
+
+fn credential_from_nested_object(wrapper: &Map<String, Value>, nested: &Value) -> Option<Value> {
+    let mut credential = official_credential(nested)?;
+    let object = credential.as_object_mut()?;
+    if !object.contains_key("email") {
+        if let Some(email) = first_text(wrapper, &["email", "account", "username", "name"]) {
+            object.insert("email".into(), Value::String(email));
+        }
+    }
+    if !object.contains_key("account_password") {
+        if let Some(password) = first_text(
+            wrapper,
+            &["account_password", "accountPassword", "password"],
+        ) {
+            object.insert("account_password".into(), Value::String(password));
+        }
+    }
+    for (target, aliases) in [
+        ("principal_id", &["principal_id", "principalId"][..]),
+        ("user_id", &["user_id", "userId"][..]),
+        ("team_id", &["team_id", "teamId"][..]),
+        ("sub", &["sub"][..]),
+    ] {
+        if !object.contains_key(target) {
+            if let Some(value) = first_text(wrapper, aliases) {
+                object.insert(target.into(), Value::String(value));
+            }
+        }
+    }
+    Some(credential)
 }
 
 fn credentials_from_value(value: &Value, path: &std::path::Path) -> Vec<LocalXaiCredential> {
@@ -488,6 +541,26 @@ fn credentials_from_value(value: &Value, path: &std::path::Path) -> Vec<LocalXai
             }
             return entries;
         }
+        if let Some(accounts) = object.get("accounts").and_then(Value::as_array) {
+            for account in accounts {
+                entries.extend(credentials_from_value(account, path));
+            }
+            return entries;
+        }
+        for key in ["credentials", "credential", "tokens", "oauth"] {
+            if let Some(nested) = object.get(key) {
+                if let Some(credential) = credential_from_nested_object(object, nested) {
+                    let email =
+                        text(credential.get("email")).unwrap_or_else(|| "Grok OAuth 账号".into());
+                    entries.push(LocalXaiCredential {
+                        email,
+                        credential,
+                        source_path: path.to_path_buf(),
+                    });
+                    return entries;
+                }
+            }
+        }
     }
     if let Some(credential) = official_credential(value) {
         let email = text(credential.get("email")).unwrap_or_else(|| "本机 Grok CLI 账号".into());
@@ -500,13 +573,115 @@ fn credentials_from_value(value: &Value, path: &std::path::Path) -> Vec<LocalXai
     entries
 }
 
+fn split_account_line(line: &str) -> Option<Vec<String>> {
+    for separator in ["----", "\t", "|", "::", ";", ","] {
+        let parts = line
+            .split(separator)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        if parts.len() >= 2 {
+            return Some(parts);
+        }
+    }
+    None
+}
+
+fn strip_labeled_value(raw: &str) -> String {
+    let trimmed = raw.trim();
+    for prefix in [
+        "refresh_token=",
+        "refreshToken=",
+        "rt=",
+        "email=",
+        "account=",
+        "password=",
+    ] {
+        if trimmed
+            .get(..prefix.len())
+            .is_some_and(|value| value.eq_ignore_ascii_case(prefix))
+        {
+            return trimmed[prefix.len()..].trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn credentials_from_account_lines(raw: &str, path: &std::path::Path) -> Vec<LocalXaiCredential> {
+    raw.lines()
+        .filter_map(|line| {
+            let line = line.trim().trim_start_matches('\u{feff}');
+            if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+                return None;
+            }
+            let mut parts = split_account_line(line)?;
+            for part in &mut parts {
+                *part = strip_labeled_value(part);
+            }
+            let email_index = parts.iter().position(|value| value.contains('@'))?;
+            let refresh_index = parts
+                .iter()
+                .rposition(|value| {
+                    let lower = value.to_ascii_lowercase();
+                    lower.starts_with("rt_")
+                        || lower.starts_with("refresh_token")
+                        || lower.len() >= 32
+                })
+                .filter(|index| *index != email_index)?;
+            let email = parts[email_index].trim().to_string();
+            let refresh_token = parts[refresh_index].trim().to_string();
+            if email.is_empty() || refresh_token.is_empty() {
+                return None;
+            }
+            let password = parts
+                .iter()
+                .enumerate()
+                .find(|(index, _)| *index != email_index && *index != refresh_index)
+                .map(|(_, value)| value.trim())
+                .filter(|value| !value.is_empty());
+            let mut credential = Map::new();
+            credential.insert("type".into(), Value::String("xai".into()));
+            credential.insert("provider".into(), Value::String("xai".into()));
+            credential.insert("auth_kind".into(), Value::String("oauth".into()));
+            credential.insert("email".into(), Value::String(email.clone()));
+            credential.insert("refresh_token".into(), Value::String(refresh_token));
+            credential.insert(
+                "token_endpoint".into(),
+                Value::String("https://auth.x.ai/oauth2/token".into()),
+            );
+            credential.insert("oidc_issuer".into(), Value::String(OIDC_ISSUER.into()));
+            credential.insert(
+                "oidc_client_id".into(),
+                Value::String(OIDC_CLIENT_ID.into()),
+            );
+            if let Some(password) = password {
+                credential.insert(
+                    "account_password".into(),
+                    Value::String(password.to_string()),
+                );
+            }
+            Some(LocalXaiCredential {
+                email,
+                credential: Value::Object(credential),
+                source_path: path.to_path_buf(),
+            })
+        })
+        .collect()
+}
+
 pub fn import_credentials_json(raw: &str) -> Result<Vec<LocalXaiCredential>, String> {
-    let value: Value =
-        serde_json::from_str(raw).map_err(|error| format!("解析 Grok OAuth JSON 失败: {error}"))?;
     let path = PathBuf::from("imported-grok-auth.json");
-    let credentials = credentials_from_value(&value, &path);
+    let trimmed = raw.trim();
+    let credentials = if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        let value: Value = serde_json::from_str(trimmed)
+            .map_err(|error| format!("解析 Grok OAuth / Sub2API JSON 失败: {error}"))?;
+        credentials_from_value(&value, &path)
+    } else {
+        credentials_from_account_lines(raw, &PathBuf::from("imported-grok-accounts.txt"))
+    };
     if credentials.is_empty() {
-        return Err("未识别 Grok OAuth JSON；请使用官方 ~/.grok/auth.json 或包含 access_token/key 的账号记录".into());
+        return Err("未识别 Grok 账号；支持官方 ~/.grok/auth.json、Sub2API JSON、OAuth Token JSON，以及每行一个“账号----密码----refresh_token”记录".into());
     }
     Ok(credentials)
 }
@@ -804,7 +979,7 @@ pub async fn query_usage(
 
 #[cfg(test)]
 mod tests {
-    use super::{credentials_from_value, percent};
+    use super::{credentials_from_account_lines, credentials_from_value, percent};
     use serde_json::json;
     use std::path::Path;
 
@@ -821,6 +996,38 @@ mod tests {
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].credential["access_token"], "access");
         assert_eq!(values[0].email, "user@example.com");
+    }
+
+    #[test]
+    fn imports_sub2api_nested_refresh_token_and_password() {
+        let input = json!({
+            "type": "sub2api-data",
+            "accounts": [{
+                "name": "user@example.com",
+                "platform": "grok",
+                "type": "oauth",
+                "credentials": {
+                    "refresh_token": "rt_synthetic",
+                    "account_password": "secret"
+                }
+            }]
+        });
+        let values = credentials_from_value(&input, Path::new("sub2api.json"));
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].email, "user@example.com");
+        assert_eq!(values[0].credential["refresh_token"], "rt_synthetic");
+        assert_eq!(values[0].credential["account_password"], "secret");
+    }
+
+    #[test]
+    fn imports_account_password_refresh_token_lines() {
+        let input = "first@example.com----p@ss----rt_synthetic_one\nsecond@example.com|secret|rt_synthetic_two";
+        let values = credentials_from_account_lines(input, Path::new("accounts.txt"));
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0].email, "first@example.com");
+        assert_eq!(values[0].credential["account_password"], "p@ss");
+        assert_eq!(values[1].credential["refresh_token"], "rt_synthetic_two");
+        assert!(values[0].credential.get("access_token").is_none());
     }
 
     #[test]

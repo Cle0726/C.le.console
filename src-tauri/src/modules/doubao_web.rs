@@ -16,6 +16,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tauri::webview::cookie::{time::OffsetDateTime, SameSite};
 use tauri::{AppHandle, Manager, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use url::Url;
 
@@ -27,8 +28,6 @@ use base64::{engine::general_purpose, Engine as _};
 use rusqlite::{Connection, OpenFlags};
 #[cfg(target_os = "windows")]
 use sha2::{Digest, Sha256};
-#[cfg(target_os = "windows")]
-use tauri::webview::cookie::{time::OffsetDateTime, SameSite};
 #[cfg(target_os = "windows")]
 use windows::Win32::{
     Foundation::{LocalFree, HLOCAL},
@@ -157,6 +156,59 @@ pub struct DoubaoDesktopImportResult {
     pub message: String,
 }
 
+const PORTABLE_CREDENTIAL_FORMAT: &str = "cle-doubao-credential";
+const PORTABLE_CREDENTIAL_VERSION: u8 = 1;
+const MAX_PORTABLE_CREDENTIAL_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PortableDoubaoCookie {
+    domain: String,
+    path: String,
+    name: String,
+    value: String,
+    expires_unix: Option<i64>,
+    secure: bool,
+    http_only: bool,
+    same_site: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PortableDoubaoAccount {
+    name: String,
+    #[serde(default)]
+    source_account_id: Option<String>,
+    cookies: Vec<PortableDoubaoCookie>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PortableDoubaoCredentialFile {
+    format: String,
+    version: u8,
+    exported_at: u64,
+    accounts: Vec<PortableDoubaoAccount>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoubaoCredentialExportResult {
+    pub json: String,
+    pub account_count: usize,
+    pub cookie_count: usize,
+    pub skipped_accounts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoubaoCredentialImportResult {
+    pub state: DoubaoWebState,
+    pub imported_account_ids: Vec<String>,
+    pub cookie_count: usize,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DoubaoWebState {
@@ -267,6 +319,113 @@ fn store_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn store_backup_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("doubao-web-accounts.json.bak"))
+}
+
+fn portable_credential_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("doubao-portable-credentials"))
+}
+
+fn portable_credential_path(app: &AppHandle, account_id: &str) -> Result<PathBuf, String> {
+    if !valid_account_id(account_id) {
+        return Err("豆包凭证账号 ID 无效".into());
+    }
+    Ok(portable_credential_dir(app)?.join(format!("{account_id}.json")))
+}
+
+fn normalize_portable_cookie(cookie: &mut PortableDoubaoCookie) -> Result<(), String> {
+    cookie.domain = cookie.domain.trim().to_ascii_lowercase();
+    cookie.path = cookie.path.trim().to_string();
+    cookie.name = cookie.name.trim().to_string();
+    if cookie.path.is_empty() {
+        cookie.path = "/".into();
+    }
+    let host = cookie.domain.trim_start_matches('.');
+    if host != "doubao.com" && !host.ends_with(".doubao.com") {
+        return Err(format!("凭证包含非豆包域 Cookie：{}", cookie.domain));
+    }
+    if cookie.name.is_empty()
+        || cookie.name.len() > 256
+        || cookie.value.is_empty()
+        || cookie.value.len() > 65_536
+        || cookie.path.len() > 2_048
+    {
+        return Err("豆包凭证包含无效或超长 Cookie".into());
+    }
+    cookie.same_site = cookie.same_site.as_deref().and_then(|value| {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "none" => Some("none".to_string()),
+            "lax" => Some("lax".to_string()),
+            "strict" => Some("strict".to_string()),
+            _ => None,
+        }
+    });
+    Ok(())
+}
+
+fn validate_portable_account(account: &mut PortableDoubaoAccount) -> Result<(), String> {
+    account.name = normalized_name(&account.name, "导入的豆包账号");
+    if account.cookies.is_empty() || account.cookies.len() > 512 {
+        return Err(format!("{} 的 Cookie 数量无效", account.name));
+    }
+    for cookie in &mut account.cookies {
+        normalize_portable_cookie(cookie)?;
+    }
+    let now = unix_timestamp() as i64;
+    account
+        .cookies
+        .retain(|cookie| cookie.expires_unix.map_or(true, |expires| expires > now));
+    let mut seen = HashSet::new();
+    account.cookies.retain(|cookie| {
+        seen.insert((
+            cookie.domain.clone(),
+            cookie.path.clone(),
+            cookie.name.clone(),
+        ))
+    });
+    if account.cookies.is_empty() {
+        return Err(format!("{} 的 Cookie 已全部过期", account.name));
+    }
+    Ok(())
+}
+
+fn write_portable_account_file(
+    app: &AppHandle,
+    account_id: &str,
+    account: &PortableDoubaoAccount,
+) -> Result<(), String> {
+    let path = portable_credential_path(app, account_id)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "无法定位豆包凭证目录".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| format!("创建豆包凭证目录失败: {error}"))?;
+    let raw = serde_json::to_vec_pretty(account)
+        .map_err(|error| format!("序列化豆包凭证失败: {error}"))?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, raw).map_err(|error| format!("写入豆包凭证失败: {error}"))?;
+    std::fs::rename(&temporary, &path)
+        .or_else(|_| {
+            std::fs::copy(&temporary, &path).map(|_| ())?;
+            std::fs::remove_file(&temporary)
+        })
+        .map_err(|error| format!("保存豆包凭证失败: {error}"))
+}
+
+fn read_portable_account_file(
+    app: &AppHandle,
+    account_id: &str,
+) -> Result<Option<PortableDoubaoAccount>, String> {
+    let path = portable_credential_path(app, account_id)?;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = std::fs::read(&path).map_err(|error| format!("读取豆包凭证失败: {error}"))?;
+    if raw.len() > MAX_PORTABLE_CREDENTIAL_BYTES {
+        return Err("豆包凭证文件过大".into());
+    }
+    let mut account: PortableDoubaoAccount =
+        serde_json::from_slice(&raw).map_err(|error| format!("解析豆包凭证失败: {error}"))?;
+    validate_portable_account(&mut account)?;
+    Ok(Some(account))
 }
 
 fn default_account() -> DoubaoWebAccountRecord {
@@ -869,6 +1028,27 @@ struct DesktopCookie {
 }
 
 #[cfg(target_os = "windows")]
+impl From<DesktopCookie> for PortableDoubaoCookie {
+    fn from(cookie: DesktopCookie) -> Self {
+        Self {
+            domain: cookie.domain,
+            path: cookie.path,
+            name: cookie.name,
+            value: cookie.value,
+            expires_unix: cookie.expires_unix,
+            secure: cookie.secure,
+            http_only: cookie.http_only,
+            same_site: match cookie.same_site {
+                0 => Some("none".into()),
+                1 => Some("lax".into()),
+                2 => Some("strict".into()),
+                _ => None,
+            },
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn read_desktop_cookies(root: &Path, profile_dir: &str) -> Result<Vec<DesktopCookie>, String> {
     if !valid_desktop_profile_dir(profile_dir) {
         return Err("豆包桌面 Profile 名称无效".into());
@@ -1061,6 +1241,93 @@ fn write_desktop_cookie_to_view(
     }
     view.set_cookie(builder.build())
         .map_err(|error| format!("写入豆包 Cookie 失败: {error}"))
+}
+
+fn write_portable_cookie_to_view(
+    view: &Webview,
+    item: &PortableDoubaoCookie,
+    domain: &str,
+) -> Result<(), String> {
+    let mut builder = tauri::webview::Cookie::build((item.name.clone(), item.value.clone()))
+        .domain(domain.to_string())
+        .path(item.path.clone())
+        .secure(item.secure)
+        .http_only(item.http_only);
+    builder = match item.same_site.as_deref() {
+        Some("none") => builder.same_site(SameSite::None),
+        Some("lax") => builder.same_site(SameSite::Lax),
+        Some("strict") => builder.same_site(SameSite::Strict),
+        _ => builder,
+    };
+    if let Some(expires) = item
+        .expires_unix
+        .and_then(|value| OffsetDateTime::from_unix_timestamp(value).ok())
+    {
+        builder = builder.expires(expires);
+    }
+    view.set_cookie(builder.build())
+        .map_err(|error| format!("写入可迁移豆包 Cookie 失败: {error}"))
+}
+
+pub(crate) fn sync_portable_cookies_to_view(
+    app: &AppHandle,
+    account: &DoubaoWebAccountRecord,
+    view: &Webview,
+) -> Result<Option<DesktopCookieSyncResult>, String> {
+    if account.platform_id != "doubao" {
+        return Ok(None);
+    }
+    let Some(portable) = read_portable_account_file(app, &account.id)? else {
+        return Ok(None);
+    };
+    let cookie_header = portable
+        .cookies
+        .iter()
+        .map(|cookie| format!("{}={}", cookie.name, cookie.value))
+        .collect::<Vec<_>>()
+        .join("; ");
+    for cookie in &portable.cookies {
+        write_portable_cookie_to_view(view, cookie, &cookie.domain)?;
+        if matches!(cookie.domain.as_str(), "doubao.com" | ".doubao.com") {
+            write_portable_cookie_to_view(view, cookie, "www.doubao.com")?;
+        }
+    }
+    update_store(app, |store| {
+        let record = store
+            .accounts
+            .iter_mut()
+            .find(|record| record.id == account.id)
+            .ok_or_else(|| "导入目标账号不存在".to_string())?;
+        record.desktop_cookie_sync_pending = false;
+        record.last_cookie_sync_at = unix_timestamp();
+        record.last_known_logged_in = false;
+        record.last_login_verified_at = 0;
+        record.login_validation_version = 0;
+        record.last_error.clear();
+        Ok(())
+    })?;
+    Ok(Some(DesktopCookieSyncResult {
+        cookie_header: Some(cookie_header),
+        refreshed: true,
+        warning: None,
+    }))
+}
+
+pub(crate) fn finalize_portable_cookie_import(
+    app: &AppHandle,
+    account_id: &str,
+    verified_logged_in: bool,
+) {
+    if !verified_logged_in {
+        return;
+    }
+    // After the destination WebView has persisted and the server has accepted
+    // the session, remove the plaintext bootstrap copy. Future refreshes then
+    // come from the destination browser profile instead of an aging export
+    // file overwriting newer cookies on every open.
+    if let Ok(path) = portable_credential_path(app, account_id) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 pub(crate) fn synced_cookie_header(
@@ -1886,6 +2153,220 @@ async fn build_state(
     })
 }
 
+fn portable_cookies_from_runtime(
+    cookies: Vec<tauri::webview::Cookie<'static>>,
+) -> Vec<PortableDoubaoCookie> {
+    cookies
+        .into_iter()
+        .filter(|cookie| !cookie.name().is_empty() && !cookie.value().is_empty())
+        .map(|cookie| PortableDoubaoCookie {
+            domain: cookie.domain().unwrap_or(".doubao.com").to_string(),
+            path: cookie.path().unwrap_or("/").to_string(),
+            name: cookie.name().to_string(),
+            value: cookie.value().to_string(),
+            expires_unix: cookie
+                .expires_datetime()
+                .map(|value| value.unix_timestamp()),
+            secure: cookie.secure().unwrap_or(true),
+            http_only: cookie.http_only().unwrap_or(false),
+            same_site: match cookie.same_site() {
+                Some(SameSite::None) => Some("none".into()),
+                Some(SameSite::Lax) => Some("lax".into()),
+                Some(SameSite::Strict) => Some("strict".into()),
+                None => None,
+            },
+        })
+        .collect()
+}
+
+async fn export_account_cookies(
+    app: &AppHandle,
+    account: &DoubaoWebAccountRecord,
+) -> Result<Vec<PortableDoubaoCookie>, String> {
+    let creator_label = format!("cle-creator-account-{}", account.id);
+    let live_view = app
+        .get_webview(&creator_label)
+        .or_else(|| app.get_webview(&account_window_label(account)));
+    if let Some(view) = live_view {
+        let url = Url::parse("https://www.doubao.com/").map_err(|error| error.to_string())?;
+        let cookies = tokio::task::spawn_blocking(move || view.cookies_for_url(url))
+            .await
+            .map_err(|error| format!("读取运行中的豆包凭证任务失败: {error}"))?
+            .map_err(|error| format!("读取运行中的豆包凭证失败: {error}"))?;
+        let cookies = portable_cookies_from_runtime(cookies);
+        if !cookies.is_empty() {
+            return Ok(cookies);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(profile_dir) = account.desktop_profile_dir.as_deref() {
+            if let Ok(root) = doubao_desktop_user_data_dir() {
+                if let Ok(cookies) = read_desktop_cookies(&root, profile_dir) {
+                    return Ok(cookies.into_iter().map(Into::into).collect());
+                }
+            }
+        }
+        let root = browser_data_dir(app, account)?.join("EBWebView");
+        if root.join("Local State").is_file() {
+            if let Ok(cookies) = read_desktop_cookies(&root, "Default") {
+                return Ok(cookies.into_iter().map(Into::into).collect());
+            }
+        }
+    }
+
+    if let Some(portable) = read_portable_account_file(app, &account.id)? {
+        return Ok(portable.cookies);
+    }
+    Err("没有可导出的有效登录 Cookie；请先在工作台打开并确认该账号已登录".into())
+}
+
+pub async fn export_credentials(
+    app: AppHandle,
+    account_ids: Option<Vec<String>>,
+) -> Result<DoubaoCredentialExportResult, String> {
+    let store = load_store(&app)?;
+    let selected: HashSet<String> = account_ids.unwrap_or_default().into_iter().collect();
+    let accounts = store
+        .accounts
+        .into_iter()
+        .filter(|account| {
+            account.platform_id == "doubao"
+                && (selected.is_empty() || selected.contains(&account.id))
+        })
+        .collect::<Vec<_>>();
+    if accounts.is_empty() {
+        return Err("没有可导出的豆包账号".into());
+    }
+    let mut exported = Vec::new();
+    let mut skipped_accounts = Vec::new();
+    for account in accounts {
+        match export_account_cookies(&app, &account).await {
+            Ok(mut cookies) => {
+                let mut portable = PortableDoubaoAccount {
+                    name: account.name,
+                    source_account_id: Some(account.id),
+                    cookies: std::mem::take(&mut cookies),
+                };
+                if let Err(error) = validate_portable_account(&mut portable) {
+                    skipped_accounts.push(format!("{}：{error}", portable.name));
+                } else {
+                    exported.push(portable);
+                }
+            }
+            Err(error) => skipped_accounts.push(format!("{}：{error}", account.name)),
+        }
+    }
+    if exported.is_empty() {
+        return Err(format!(
+            "没有成功导出任何豆包账号：{}",
+            skipped_accounts.join("；")
+        ));
+    }
+    let cookie_count = exported.iter().map(|account| account.cookies.len()).sum();
+    let file = PortableDoubaoCredentialFile {
+        format: PORTABLE_CREDENTIAL_FORMAT.into(),
+        version: PORTABLE_CREDENTIAL_VERSION,
+        exported_at: unix_timestamp(),
+        accounts: exported,
+    };
+    let json = serde_json::to_string_pretty(&file)
+        .map_err(|error| format!("生成豆包凭证文件失败: {error}"))?;
+    Ok(DoubaoCredentialExportResult {
+        account_count: file.accounts.len(),
+        cookie_count,
+        json,
+        skipped_accounts,
+    })
+}
+
+pub async fn import_credentials(
+    app: AppHandle,
+    json: String,
+) -> Result<DoubaoCredentialImportResult, String> {
+    if json.len() > MAX_PORTABLE_CREDENTIAL_BYTES {
+        return Err("豆包凭证文件超过 8 MiB 限制".into());
+    }
+    let mut file: PortableDoubaoCredentialFile =
+        serde_json::from_str(&json).map_err(|error| format!("豆包凭证 JSON 格式错误: {error}"))?;
+    if file.format != PORTABLE_CREDENTIAL_FORMAT || file.version != PORTABLE_CREDENTIAL_VERSION {
+        return Err("不是受支持的 C.le 豆包凭证文件（需要 cle-doubao-credential v1）".into());
+    }
+    if file.accounts.is_empty() || file.accounts.len() > 50 {
+        return Err("豆包凭证中的账号数量必须为 1 到 50".into());
+    }
+    for account in &mut file.accounts {
+        validate_portable_account(account)?;
+    }
+    let existing_count = load_store(&app)?.accounts.len();
+    if existing_count + file.accounts.len() > 50 {
+        return Err(format!(
+            "导入后网页创作账号将超过 50 个（当前 {existing_count} 个，待导入 {} 个）",
+            file.accounts.len()
+        ));
+    }
+
+    let prepared = file
+        .accounts
+        .into_iter()
+        .map(|account| (uuid::Uuid::new_v4().simple().to_string(), account))
+        .collect::<Vec<_>>();
+    let mut written_paths = Vec::new();
+    for (account_id, account) in &prepared {
+        if let Err(error) = write_portable_account_file(&app, account_id, account) {
+            for path in written_paths {
+                let _ = std::fs::remove_file(path);
+            }
+            return Err(error);
+        }
+        written_paths.push(portable_credential_path(&app, account_id)?);
+    }
+    let imported_account_ids = prepared
+        .iter()
+        .map(|(account_id, _)| account_id.clone())
+        .collect::<Vec<_>>();
+    let cookie_count = prepared
+        .iter()
+        .map(|(_, account)| account.cookies.len())
+        .sum();
+    if let Err(error) = update_store(&app, |store| {
+        for (account_id, portable) in &prepared {
+            store.accounts.push(DoubaoWebAccountRecord {
+                id: account_id.clone(),
+                name: portable.name.clone(),
+                platform_id: "doubao".into(),
+                enabled: true,
+                last_known_logged_in: false,
+                last_error: String::new(),
+                consecutive_failures: 0,
+                last_used_at: 0,
+                desktop_profile_dir: None,
+                desktop_cookie_sync_pending: true,
+                last_cookie_sync_at: 0,
+                last_login_verified_at: 0,
+                login_validation_version: 0,
+            });
+        }
+        Ok(())
+    }) {
+        for path in written_paths {
+            let _ = std::fs::remove_file(path);
+        }
+        return Err(error);
+    }
+    let state = build_state(&app, imported_account_ids.first().cloned()).await?;
+    Ok(DoubaoCredentialImportResult {
+        message: format!(
+            "已导入 {} 个豆包账号和 {cookie_count} 条 Cookie；首次打开账号时会写入独立工作台并向豆包验证",
+            imported_account_ids.len()
+        ),
+        state,
+        imported_account_ids,
+        cookie_count,
+    })
+}
+
 pub async fn get_state(
     app: AppHandle,
     selected_account_id: Option<String>,
@@ -2000,6 +2481,9 @@ pub async fn remove_account(app: AppHandle, account_id: String) -> Result<Doubao
     if profile_dir.exists() {
         let _ = std::fs::remove_dir_all(profile_dir);
     }
+    if let Ok(path) = portable_credential_path(&app, &removed.id) {
+        let _ = std::fs::remove_file(path);
+    }
     build_state(&app, None).await
 }
 
@@ -2045,6 +2529,12 @@ pub async fn logout(app: AppHandle, account_id: String) -> Result<DoubaoWebState
         }
     }
     update_last_known_login(&app, &account_id, false)?;
+    // Explicit logout must also remove the retained portable bootstrap.
+    // Otherwise reopening the account would silently restore the session that
+    // the user just asked to clear.
+    if let Ok(path) = portable_credential_path(&app, &account_id) {
+        let _ = std::fs::remove_file(path);
+    }
     build_state(&app, Some(account_id)).await
 }
 
@@ -2627,6 +3117,48 @@ mod tests {
                 .map(|(_, value)| value.into_owned()),
             Some("web".into())
         );
+    }
+
+    #[test]
+    fn portable_credentials_only_accept_doubao_cookie_domains() {
+        let mut allowed = PortableDoubaoCookie {
+            domain: ".doubao.com".into(),
+            path: "/".into(),
+            name: "sessionid".into(),
+            value: "redacted-test-value".into(),
+            expires_unix: None,
+            secure: true,
+            http_only: true,
+            same_site: Some("None".into()),
+        };
+        normalize_portable_cookie(&mut allowed).unwrap();
+        assert_eq!(allowed.same_site.as_deref(), Some("none"));
+
+        let mut rejected = allowed.clone();
+        rejected.domain = "example.com".into();
+        assert!(normalize_portable_cookie(&mut rejected).is_err());
+    }
+
+    #[test]
+    fn portable_account_deduplicates_cookie_keys() {
+        let cookie = PortableDoubaoCookie {
+            domain: ".doubao.com".into(),
+            path: "/".into(),
+            name: "sessionid".into(),
+            value: "redacted-test-value".into(),
+            expires_unix: None,
+            secure: true,
+            http_only: true,
+            same_site: Some("lax".into()),
+        };
+        let mut account = PortableDoubaoAccount {
+            name: "  迁移账号  ".into(),
+            source_account_id: None,
+            cookies: vec![cookie.clone(), cookie],
+        };
+        validate_portable_account(&mut account).unwrap();
+        assert_eq!(account.name, "迁移账号");
+        assert_eq!(account.cookies.len(), 1);
     }
 
     #[cfg(target_os = "windows")]

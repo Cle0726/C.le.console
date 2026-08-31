@@ -9,6 +9,8 @@ import type {
   DoubaoWebVideoRequest,
   DoubaoDesktopImportResult,
   DoubaoDesktopScan,
+  DoubaoCredentialExportResult,
+  DoubaoCredentialImportResult,
   WebCreatorAsset,
   WebCreatorBounds,
   WebCreatorDownloadResult,
@@ -86,6 +88,10 @@ export const jimengApiService = {
     invoke<DoubaoDesktopScan>('doubao_desktop_scan'),
   importDoubaoDesktopProfiles: (profileDirs: string[]) =>
     invoke<DoubaoDesktopImportResult>('doubao_desktop_import', { profileDirs }),
+  exportDoubaoCredentials: (accountIds?: string[]) =>
+    invoke<DoubaoCredentialExportResult>('doubao_credentials_export', { accountIds: accountIds?.length ? accountIds : null }),
+  importDoubaoCredentials: (json: string) =>
+    invoke<DoubaoCredentialImportResult>('doubao_credentials_import', { json }),
   setDoubaoWebAccountEnabled: (accountId: string, enabled: boolean) =>
     invoke<DoubaoWebState>('doubao_web_set_account_enabled', { accountId, enabled }),
   renameDoubaoWebAccount: (accountId: string, name: string) =>
