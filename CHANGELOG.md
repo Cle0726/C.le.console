@@ -4,6 +4,18 @@
 
 ## 未发布
 
+## 1.1.23
+
+### 修复
+
+- 修复 Antigravity 账号缺少 `project_id` 且上游网络不可用时，多模型 API sidecar 在读取本地凭据阶段被同步网络请求阻塞，最终报 `runtime startup timeout`、网关无法监听端口的问题。
+- 网关启动时的凭据加载现在严格保持为本地磁盘操作；项目识别和令牌刷新继续由独立账号刷新流程处理，不再拖死整个网关。
+
+### 验证
+
+- 使用两个缺少 `project_id` 的真实 Antigravity 凭据验证 sidecar 可正常启动。
+- `GET /healthz` 返回 `service=cle-cliproxy,status=ok`，`GET /v1/models` 返回 38 个模型。
+
 ## 1.1.22
 
 ### 多模型 API / Grok
