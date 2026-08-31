@@ -1,7 +1,7 @@
 {
   "name": "c-le-console",
   "private": true,
-  "version": "1.1.21",
+  "version": "1.1.22",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-frontend.cjs",

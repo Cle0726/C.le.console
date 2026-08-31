@@ -646,7 +646,8 @@ pub fn run() {
                 }
             });
 
-            if let Err(err) = modules::floating_card_window::show_floating_card_window_on_startup(&app.handle())
+            if let Err(err) =
+                modules::floating_card_window::show_floating_card_window_on_startup(&app.handle())
             {
                 logger::log_warn(&format!("[FloatingCard] 启动时显示悬浮卡片失败: {}", err));
             }
@@ -665,7 +666,9 @@ pub fn run() {
             ));
 
             apply_startup_minimized(&app.handle());
-            if let Err(error) = modules::status_window::install_main_window_minimize_observer(&app.handle()) {
+            if let Err(error) =
+                modules::status_window::install_main_window_minimize_observer(&app.handle())
+            {
                 logger::log_warn(&format!(
                     "[StatusWindow] 安装 macOS 最小化状态窗监听失败: {}",
                     error
@@ -1050,6 +1053,12 @@ pub fn run() {
             commands::multi_model_api::multi_model_api_sync_managed_accounts,
             commands::multi_model_api::multi_model_api_test_chat,
             commands::multi_model_api::multi_model_api_diagnose_and_repair,
+            commands::multi_model_api::multi_model_api_xai_oauth_start,
+            commands::multi_model_api::multi_model_api_xai_oauth_complete,
+            commands::multi_model_api::multi_model_api_xai_oauth_cancel,
+            commands::multi_model_api::multi_model_api_import_local_xai_accounts,
+            commands::multi_model_api::multi_model_api_import_xai_accounts_json,
+            commands::multi_model_api::multi_model_api_refresh_xai_accounts,
             commands::multi_model_api::multi_model_api_generic_oauth_start,
             commands::multi_model_api::multi_model_api_generic_oauth_exchange,
             // Jimeng / Dreamina image and video API service

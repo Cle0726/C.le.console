@@ -1,6 +1,7 @@
 use crate::models::claude::ClaudeAuthMode;
 use crate::models::codex::CodexAuthMode;
 use crate::modules::atomic_write::{parse_json_with_auto_restore, write_string_atomic};
+use crate::modules::multi_model_xai::{self, XaiAccountUsage, XaiOAuthStartResponse};
 use crate::modules::{
     account, claude_account, codex_account, codex_local_access, gemini_account, logger, process,
 };
@@ -21,6 +22,7 @@ use tokio::sync::{oneshot, Mutex};
 use tokio::time::{timeout, Duration};
 
 const STATE_FILE: &str = "multi_model_api_service.json";
+const XAI_USAGE_FILE: &str = "multi_model_xai_usage.json";
 const SIDECAR_DIR: &str = "multi_model_api_service";
 const DEFAULT_PORT: u16 = 1466;
 const CLAUDE_WEB_HELPER_PORT_OFFSET: u16 = 1;
@@ -130,6 +132,7 @@ pub struct MultiModelApiState {
     pub last_error: Option<String>,
     pub catalog: Vec<MultiModelCatalogEntry>,
     pub self_heal: MultiModelSelfHealState,
+    pub xai_accounts: Vec<XaiAccountUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -489,6 +492,27 @@ fn save_config_file(config: &MultiModelApiConfig) -> Result<(), String> {
     let path = state_path()?;
     let raw = serde_json::to_string_pretty(config)
         .map_err(|error| format!("序列化多模型 API 配置失败: {error}"))?;
+    write_string_atomic(&path, &raw)
+}
+
+fn xai_usage_path() -> Result<PathBuf, String> {
+    Ok(data_dir()?.join(XAI_USAGE_FILE))
+}
+
+fn load_xai_usage_cache() -> Vec<XaiAccountUsage> {
+    let Ok(path) = xai_usage_path() else {
+        return Vec::new();
+    };
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+fn save_xai_usage_cache(items: &[XaiAccountUsage]) -> Result<(), String> {
+    let path = xai_usage_path()?;
+    let raw = serde_json::to_string_pretty(items)
+        .map_err(|error| format!("序列化 Grok 额度缓存失败: {error}"))?;
     write_string_atomic(&path, &raw)
 }
 
@@ -1975,6 +1999,7 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
         running,
         last_error,
         self_heal: self_heal_snapshot().await,
+        xai_accounts: load_xai_usage_cache(),
     })
 }
 
@@ -2945,6 +2970,256 @@ pub async fn test_chat(
     result.response = format!("自动测试已依次尝试 {attempted}。最后响应：{detail}");
     result.error = Some(result.response.clone());
     Ok(result)
+}
+
+fn xai_default_models() -> Vec<MultiModelDefinition> {
+    builtin_catalog()
+        .into_iter()
+        .filter(|model| model.provider == "xai")
+        .map(|model| MultiModelDefinition {
+            id: model.id,
+            alias: String::new(),
+            capabilities: model.capabilities,
+            enabled: true,
+        })
+        .collect()
+}
+
+fn credential_identity(credential: &Value) -> Option<String> {
+    ["principal_id", "user_id", "sub", "email"]
+        .into_iter()
+        .find_map(|key| {
+            credential
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_ascii_lowercase())
+        })
+}
+
+fn upsert_xai_credential(
+    config: &mut MultiModelApiConfig,
+    email: &str,
+    credential: Value,
+    source: &str,
+) -> bool {
+    let identity = credential_identity(&credential);
+    let email = email.trim();
+    let existing = config.accounts.iter_mut().find(|account| {
+        if normalize_provider(&account.provider) != "xai" {
+            return false;
+        }
+        let existing_identity = account
+            .credential_json
+            .as_ref()
+            .and_then(credential_identity);
+        match (&identity, existing_identity) {
+            (Some(identity), Some(existing)) => identity == &existing,
+            _ => {
+                !email.is_empty()
+                    && account
+                        .credential_json
+                        .as_ref()
+                        .and_then(|value| value.get("email"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value.eq_ignore_ascii_case(email))
+            }
+        }
+    });
+    if let Some(account) = existing {
+        account.credential_json = Some(normalize_oauth_credential("xai", credential));
+        account.auth_mode = "oauth_json".into();
+        account.api_key.clear();
+        account.enabled = true;
+        account.source = source.to_string();
+        if !email.is_empty() {
+            account.name = format!("Grok · {email}");
+        }
+        if account.models.is_empty() {
+            account.models = xai_default_models();
+        }
+        return false;
+    }
+    config.accounts.push(MultiModelAccount {
+        id: format!("grok-{}", uuid::Uuid::new_v4()),
+        name: if email.is_empty() {
+            "Grok OAuth 账号".into()
+        } else {
+            format!("Grok · {email}")
+        },
+        provider: "xai".into(),
+        auth_mode: "oauth_json".into(),
+        base_url: String::new(),
+        api_key: String::new(),
+        credential_json: Some(normalize_oauth_credential("xai", credential)),
+        proxy_url: String::new(),
+        prefix: String::new(),
+        priority: 0,
+        headers: BTreeMap::new(),
+        models: xai_default_models(),
+        enabled: true,
+        source: source.to_string(),
+    });
+    true
+}
+
+pub async fn xai_oauth_start() -> Result<XaiOAuthStartResponse, String> {
+    let config = load_config()?;
+    let proxy = if config.upstream_proxy.trim().is_empty() {
+        codex_local_access::system_proxy_url_for_target("https://auth.x.ai")
+    } else {
+        Some(config.upstream_proxy.clone())
+    };
+    multi_model_xai::start_oauth(proxy.as_deref()).await
+}
+
+pub async fn xai_oauth_complete(login_id: &str) -> Result<MultiModelApiState, String> {
+    let mut config = load_config()?;
+    let proxy = if config.upstream_proxy.trim().is_empty() {
+        codex_local_access::system_proxy_url_for_target("https://auth.x.ai")
+    } else {
+        Some(config.upstream_proxy.clone())
+    };
+    let result = multi_model_xai::complete_oauth(login_id, proxy.as_deref()).await?;
+    upsert_xai_credential(
+        &mut config,
+        &result.email,
+        result.credential,
+        "grok:device-oauth",
+    );
+    let state = save_config(config).await?;
+    refresh_xai_accounts(false).await.or(Ok(state))
+}
+
+pub fn xai_oauth_cancel(login_id: Option<&str>) -> Result<(), String> {
+    multi_model_xai::cancel_oauth(login_id)
+}
+
+pub async fn import_local_xai_accounts() -> Result<MultiModelApiState, String> {
+    let credentials = multi_model_xai::import_local_credentials()?;
+    let mut config = load_config()?;
+    for item in credentials {
+        let source = format!("grok:local:{}", item.source_path.display());
+        upsert_xai_credential(&mut config, &item.email, item.credential, &source);
+    }
+    save_config(config).await?;
+    refresh_xai_accounts(false).await
+}
+
+pub async fn import_xai_accounts_json(raw: &str) -> Result<MultiModelApiState, String> {
+    let credentials = multi_model_xai::import_credentials_json(raw)?;
+    let mut config = load_config()?;
+    for item in credentials {
+        upsert_xai_credential(
+            &mut config,
+            &item.email,
+            item.credential,
+            "grok:json-import",
+        );
+    }
+    save_config(config).await?;
+    refresh_xai_accounts(false).await
+}
+
+pub async fn refresh_xai_accounts(force_credentials: bool) -> Result<MultiModelApiState, String> {
+    let mut config = load_config()?;
+    let mut credentials_changed = hydrate_persisted_xai_credentials(&mut config)?;
+    credentials_changed |= refresh_xai_credentials(&mut config, force_credentials).await;
+    if credentials_changed {
+        save_config_file(&config)?;
+        // CLIProxyAPI watches the auth directory; rewriting the launch files updates
+        // rotated tokens without stopping the local API service.
+        let _ = write_launch_files(&config)?;
+    }
+
+    let previous = load_xai_usage_cache()
+        .into_iter()
+        .map(|item| (item.account_id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let mut usage = Vec::new();
+    for account in config.accounts.iter().filter(|account| {
+        normalize_provider(&account.provider) == "xai" && account.auth_mode == "oauth_json"
+    }) {
+        let mut cached = previous.get(&account.id).cloned();
+        let Some(credential) = account.credential_json.as_ref() else {
+            usage.push(XaiAccountUsage {
+                account_id: account.id.clone(),
+                email: account.name.clone(),
+                plan: cached.as_ref().and_then(|item| item.plan.clone()),
+                status: "reauth_required".into(),
+                status_reason: Some("缺少 OAuth credential".into()),
+                has_grok_code_access: cached.as_ref().and_then(|item| item.has_grok_code_access),
+                token_expires_at: None,
+                updated_at: chrono::Utc::now().to_rfc3339(),
+                buckets: cached.take().map(|item| item.buckets).unwrap_or_default(),
+            });
+            continue;
+        };
+        if credential.get("status").and_then(Value::as_str) == Some("oauth_pending") {
+            usage.push(XaiAccountUsage {
+                account_id: account.id.clone(),
+                email: credential
+                    .get("email")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&account.name)
+                    .to_string(),
+                plan: None,
+                status: "pending".into(),
+                status_reason: Some("等待完成 xAI Device Flow 授权".into()),
+                has_grok_code_access: None,
+                token_expires_at: None,
+                updated_at: chrono::Utc::now().to_rfc3339(),
+                buckets: Vec::new(),
+            });
+            continue;
+        }
+        let proxy = if !account.proxy_url.trim().is_empty() && account.proxy_url != "direct" {
+            Some(account.proxy_url.clone())
+        } else if !config.upstream_proxy.trim().is_empty() {
+            Some(config.upstream_proxy.clone())
+        } else {
+            codex_local_access::system_proxy_url_for_target("https://cli-chat-proxy.grok.com")
+        };
+        match multi_model_xai::query_usage(&account.id, &account.name, credential, proxy.as_deref())
+            .await
+        {
+            Ok(item) => usage.push(item),
+            Err(error) => {
+                let normalized = error.to_ascii_lowercase();
+                let status = if normalized.contains("401")
+                    || normalized.contains("refresh_token")
+                    || normalized.contains("access_token")
+                {
+                    "reauth_required"
+                } else {
+                    "error"
+                };
+                let mut item = cached.unwrap_or(XaiAccountUsage {
+                    account_id: account.id.clone(),
+                    email: credential
+                        .get("email")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&account.name)
+                        .to_string(),
+                    plan: None,
+                    status: status.into(),
+                    status_reason: None,
+                    has_grok_code_access: None,
+                    token_expires_at: oauth_expiration(credential).map(|value| value.to_rfc3339()),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                    buckets: Vec::new(),
+                });
+                item.status = status.into();
+                item.status_reason = Some(error);
+                item.updated_at = chrono::Utc::now().to_rfc3339();
+                usage.push(item);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    save_xai_usage_cache(&usage)?;
+    get_state().await
 }
 
 pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {

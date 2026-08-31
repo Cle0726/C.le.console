@@ -1,6 +1,7 @@
 use crate::modules::multi_model_api::{
     self, MultiModelApiConfig, MultiModelApiState, MultiModelApiTestResult, MultiModelRepairReport,
 };
+use crate::modules::multi_model_xai::XaiOAuthStartResponse;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -90,6 +91,42 @@ pub async fn multi_model_api_diagnose_and_repair(
 #[tauri::command]
 pub async fn multi_model_api_sync_local_gpt_bridges() -> Result<MultiModelApiState, String> {
     multi_model_api::sync_local_gpt_bridges().await
+}
+
+#[tauri::command]
+pub async fn multi_model_api_xai_oauth_start() -> Result<XaiOAuthStartResponse, String> {
+    multi_model_api::xai_oauth_start().await
+}
+
+#[tauri::command]
+pub async fn multi_model_api_xai_oauth_complete(
+    login_id: String,
+) -> Result<MultiModelApiState, String> {
+    multi_model_api::xai_oauth_complete(&login_id).await
+}
+
+#[tauri::command]
+pub fn multi_model_api_xai_oauth_cancel(login_id: Option<String>) -> Result<(), String> {
+    multi_model_api::xai_oauth_cancel(login_id.as_deref())
+}
+
+#[tauri::command]
+pub async fn multi_model_api_import_local_xai_accounts() -> Result<MultiModelApiState, String> {
+    multi_model_api::import_local_xai_accounts().await
+}
+
+#[tauri::command]
+pub async fn multi_model_api_import_xai_accounts_json(
+    json_content: String,
+) -> Result<MultiModelApiState, String> {
+    multi_model_api::import_xai_accounts_json(&json_content).await
+}
+
+#[tauri::command]
+pub async fn multi_model_api_refresh_xai_accounts(
+    force_credentials: Option<bool>,
+) -> Result<MultiModelApiState, String> {
+    multi_model_api::refresh_xai_accounts(force_credentials.unwrap_or(false)).await
 }
 
 #[tauri::command]

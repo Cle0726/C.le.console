@@ -64,6 +64,38 @@ export interface MultiModelApiState {
   lastError?: string | null;
   catalog: MultiModelCatalogEntry[];
   selfHeal?: MultiModelSelfHealState;
+  xaiAccounts?: XaiAccountUsage[];
+}
+
+export interface XaiQuotaBucket {
+  id: string;
+  label: string;
+  used?: number | null;
+  total?: number | null;
+  remaining?: number | null;
+  usedPercent?: number | null;
+  resetAt?: string | null;
+}
+
+export interface XaiAccountUsage {
+  accountId: string;
+  email: string;
+  plan?: string | null;
+  status: 'normal' | 'pending' | 'reauth_required' | 'error' | string;
+  statusReason?: string | null;
+  hasGrokCodeAccess?: boolean | null;
+  tokenExpiresAt?: string | null;
+  updatedAt: string;
+  buckets: XaiQuotaBucket[];
+}
+
+export interface XaiOAuthStartResponse {
+  loginId: string;
+  verificationUri: string;
+  verificationUriComplete?: string | null;
+  userCode: string;
+  expiresIn: number;
+  intervalSeconds: number;
 }
 
 export interface MultiModelSelfHealState {

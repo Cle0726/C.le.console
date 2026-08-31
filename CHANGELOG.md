@@ -4,6 +4,17 @@
 
 ## 未发布
 
+## 1.1.22
+
+### 多模型 API / Grok
+
+- 新增 Grok CLI/xAI 多账号管理：使用官方 OIDC Device Flow 逐个授权，账号凭据独立保存并接入现有轮询、冷却、重试和故障转移。
+- 支持从本机 `~/.grok/auth.json`、`GROK_HOME/auth.json` 或官方 registry JSON 导入 Grok CLI 登录态，按账号身份去重，不覆盖其他供应商账号。
+- 新增 Grok 账号批量额度刷新，展示套餐、每周额度、产品额度、任务额度、重置时间和 Grok Code 可用状态。
+- xAI access token 到期前自动刷新并保存 refresh-token rotation；额度查询失败时保留上次成功缓存，同时显示需重登或网络错误。
+- Grok OAuth、额度查询沿用程序当前代理配置或只读检测到的系统代理，不修改系统/应用代理设置。
+- 参考 Cockpit Tools 的账号管理交互与数据口径，后端实现保持在 C.le. 现有 CLIProxyAPI 账号池内，不新增第二套网关。
+
 ## 1.1.14
 
 ### 优化

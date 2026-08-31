@@ -20,7 +20,7 @@ import * as geminiService from '../services/geminiService';
 import { multiModelApiService } from '../services/multiModelApiService';
 import type {
   ModelCapability, MultiModelAccount, MultiModelApiConfig, MultiModelApiState,
-  MultiModelDefinition, MultiModelApiTestResult, MultiModelRepairReport,
+  MultiModelDefinition, MultiModelApiTestResult, MultiModelRepairReport, XaiAccountUsage,
 } from '../types/multiModelApi';
 import './MultiModelApiServicePage.css';
 
@@ -239,6 +239,22 @@ export function MultiModelApiServicePage() {
       });
     } catch (error) {
       setNotice({ tone: 'error', text: `同步失败：${String(error)}` });
+    } finally {
+      setOperation(null);
+    }
+  };
+
+  const refreshXaiAccounts = async (forceCredentials = false) => {
+    setOperation('xai-refresh');
+    setNotice({ tone: 'info', text: forceCredentials ? '正在刷新 Grok 登录凭据与全部账号额度…' : '正在刷新 Grok 多账号额度…' });
+    try {
+      const next = await multiModelApiService.refreshXaiAccounts(forceCredentials);
+      setState(next);
+      setDraft(structuredClone(next.config));
+      const healthy = (next.xaiAccounts ?? []).filter((item) => item.status === 'normal').length;
+      setNotice({ tone: healthy ? 'success' : 'info', text: `Grok 账号刷新完成：${healthy}/${next.xaiAccounts?.length ?? 0} 个可用` });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `刷新 Grok 账号失败：${String(error)}` });
     } finally {
       setOperation(null);
     }
@@ -494,13 +510,14 @@ export function MultiModelApiServicePage() {
             <header className="mm-api-panel-head">
               <div><h2>{providerFilter === 'all' ? '多账号池' : `${providerLabel(providerFilter)} 账号`}</h2><p>同一模型可挂多个账号，运行时自动轮询、冷却和故障转移。</p></div>
               <div className="mm-inline-actions">
+                {(providerFilter === 'all' || providerFilter === 'xai') && <button type="button" className="btn btn-secondary" onClick={() => void refreshXaiAccounts()} disabled={busy}><RefreshCw className={operation === 'xai-refresh' ? 'spin' : ''} />刷新 Grok 额度</button>}
                 <button type="button" className="btn btn-secondary" onClick={() => void syncAccounts()} disabled={busy}><RefreshCw className={operation === 'sync' ? 'spin' : ''} />同步 C.le. 账号</button>
                 <button type="button" className="btn btn-primary" onClick={() => openAccount(undefined, providerFilter === 'all' ? 'xai' : providerFilter)} disabled={busy}><Plus />添加账号</button>
               </div>
             </header>
             <div className="mm-account-grid">
               {visibleAccounts.map((account) => (
-                <AccountCard key={account.id} account={account} onEdit={() => openAccount(account)} onToggle={() => void updateAccount({ ...account, enabled: !account.enabled })} onRemove={() => void removeAccount(account)} />
+                <AccountCard key={account.id} account={account} xaiUsage={state.xaiAccounts?.find((item) => item.accountId === account.id)} onEdit={() => openAccount(account)} onToggle={() => void updateAccount({ ...account, enabled: !account.enabled })} onRemove={() => void removeAccount(account)} />
               ))}
               {!visibleAccounts.length && (
                 <Empty icon={<Users />} title={providerFilter === 'all' ? '账号池还是空的' : `尚未配置 ${providerLabel(providerFilter)}`} text="同步已有 OAuth / API Key 账号，或手动添加上游凭证。">
@@ -638,13 +655,28 @@ function Overview({ config, setConfig, onSave, busy, testModel, setTestModel, te
   </div>;
 }
 
-function AccountCard({ account, onEdit, onToggle, onRemove }: { account: MultiModelAccount; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
+function formatQuotaNumber(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function AccountCard({ account, xaiUsage, onEdit, onToggle, onRemove }: { account: MultiModelAccount; xaiUsage?: XaiAccountUsage; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
   const capabilities = new Set(account.models.flatMap((item) => item.capabilities));
   return <article className={`mm-account${account.enabled ? '' : ' disabled'}`}>
-    <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}</p></div><button type="button" className={`mm-account-state${account.enabled ? ' enabled' : ''}`} onClick={onToggle}>{account.enabled ? '可用' : '停用'}</button></div>
+    <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{xaiUsage?.email || account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}{xaiUsage?.plan ? ` · ${xaiUsage.plan}` : ''}</p></div><button type="button" className={`mm-account-state${account.enabled && (!xaiUsage || xaiUsage.status === 'normal') ? ' enabled' : ''}`} onClick={onToggle}>{!account.enabled ? '停用' : xaiUsage?.status === 'reauth_required' ? '需重登' : xaiUsage?.status === 'error' ? '异常' : '可用'}</button></div>
+    {account.provider === 'xai' && account.authMode === 'oauth_json' && <div className="mm-xai-quota">
+      {xaiUsage?.buckets?.length ? xaiUsage.buckets.slice(0, 4).map((bucket) => {
+        const usedPercent = Math.max(0, Math.min(100, bucket.usedPercent ?? (bucket.used != null && bucket.total ? bucket.used / bucket.total * 100 : 0)));
+        return <div className="mm-xai-quota-row" key={bucket.id} title={bucket.resetAt ? `重置：${new Date(bucket.resetAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : undefined}>
+          <span><b>{bucket.label}</b><em>{bucket.remaining != null && bucket.total != null ? `剩 ${formatQuotaNumber(bucket.remaining)} / ${formatQuotaNumber(bucket.total)}` : `${formatQuotaNumber(100 - usedPercent)}% 可用`}</em></span>
+          <i><u style={{ width: `${100 - usedPercent}%` }} /></i>
+        </div>;
+      }) : <p className={xaiUsage?.status === 'error' || xaiUsage?.status === 'reauth_required' ? 'error' : ''}>{xaiUsage?.statusReason || '额度尚未刷新'}</p>}
+      {xaiUsage?.hasGrokCodeAccess != null && <small>Grok Code：{xaiUsage.hasGrokCodeAccess ? '可用' : '未开通'}</small>}
+    </div>}
     <div className="mm-account-models"><strong>{account.models.length || '自动'} 个模型</strong><span>{[...capabilities].map((cap) => <em key={cap}>{cap}</em>)}</span></div>
     <code>{account.baseUrl || 'CLIProxy native endpoint'}</code>
-    <footer><span>{account.source.startsWith('cle:') ? 'C.le. 托管账号' : '手动账号'}</span><button type="button" onClick={onEdit}>编辑</button><button type="button" className="trash" onClick={onRemove} aria-label="删除账号"><Trash2 /></button></footer>
+    <footer><span>{account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span><button type="button" onClick={onEdit}>编辑</button><button type="button" className="trash" onClick={onRemove} aria-label="删除账号"><Trash2 /></button></footer>
   </article>;
 }
 
@@ -757,6 +789,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
   const [secretVisible, setSecretVisible] = useState(false);
   const [modalStatus, setModalStatus] = useState<{ tone: 'success' | 'error' | 'info' | 'loading'; text: string } | null>(null);
   const [oauthUrl, setOauthUrl] = useState('');
+  const [xaiUserCode, setXaiUserCode] = useState('');
   const [oauthUrlCopied, setOauthUrlCopied] = useState(false);
   const [oauthCallbackInput, setOauthCallbackInput] = useState('');
   const [pendingEmail, setPendingEmail] = useState('');
@@ -780,6 +813,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
     if (provider === 'gemini' && loginId) geminiService.cancelGeminiOAuthLogin(loginId).catch(() => {});
     if (provider === 'claude' && loginId) claudeService.claudeOauthLoginCancel(loginId).catch(() => {});
     if (provider === 'antigravity') accountService.cancelOAuthLogin().catch(() => {});
+    if (provider === 'xai') multiModelApiService.cancelXaiOAuth(loginId).catch(() => {});
     oauthLoginIdRef.current = null;
     oauthProviderRef.current = null;
   }, []);
@@ -789,6 +823,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
     const draft = defaultGenericOAuthDraft(account.provider);
     setModalStatus(null);
     setOauthUrl(pending?.provider === account.provider ? pending.authUrl : '');
+    setXaiUserCode('');
     setOauthCallbackInput('');
     setPendingEmail(pending?.provider === account.provider ? pending.email : '');
     setGenericDraft(pending?.provider === account.provider ? {
@@ -874,19 +909,12 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
         setOauthUrl(url || '');
         setModalStatus({ tone: 'info', text: 'Antigravity OAuth 已启动；授权完成后点“我已授权，继续”，或粘贴完整回调地址。' });
       } else if (isXai) {
-        const draft = defaultGenericOAuthDraft('xai');
-        const response = await multiModelApiService.genericOAuthStart({
-          authorizationUrl: draft.authorizationUrl,
-          clientId: draft.clientId,
-          redirectUri: draft.redirectUri,
-          scope: draft.scope,
-          extraAuthorizeParams: parseKeyValueLines(draft.extraAuthorizeParams),
-        });
+        const response = await multiModelApiService.startXaiOAuth();
         oauthProviderRef.current = 'xai';
-        oauthLoginIdRef.current = null;
-        setGenericDraft({ ...draft, state: response.state, codeVerifier: response.codeVerifier });
-        setOauthUrl(response.authUrl);
-        setModalStatus({ tone: 'info', text: 'Grok / xAI OAuth 授权链接已生成；打开浏览器登录后，把完整回调地址或 code 粘贴回来。' });
+        oauthLoginIdRef.current = response.loginId;
+        setXaiUserCode(response.userCode);
+        setOauthUrl(response.verificationUriComplete || response.verificationUri);
+        setModalStatus({ tone: 'info', text: `Grok / xAI 官方 Device Flow 已启动；验证码 ${response.userCode}，浏览器确认后点“我已授权，继续”。` });
       }
     } catch (error) {
       setModalStatus({ tone: 'error', text: `准备 OAuth 授权失败：${String(error).replace(/^Error:\s*/, '')}` });
@@ -966,7 +994,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
     const callbackUrl = oauthCallbackInput.trim();
     const provider = oauthProviderRef.current;
     if (!provider) return;
-    if (!callbackUrl && provider !== 'antigravity') return;
+    if (!callbackUrl && provider !== 'antigravity' && provider !== 'xai') return;
     setLocalBusy(true);
     setModalStatus({ tone: 'loading', text: '正在提交 OAuth 回调并交换令牌...' });
     try {
@@ -1002,22 +1030,12 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
         return;
       }
       if (provider === 'xai') {
-        const credential = await multiModelApiService.genericOAuthExchange({
-          provider: 'xai',
-          tokenUrl: genericDraft.tokenUrl,
-          clientId: genericDraft.clientId,
-          clientSecret: genericDraft.clientSecret,
-          redirectUri: genericDraft.redirectUri,
-          callbackOrCode: callbackUrl,
-          codeVerifier: genericDraft.codeVerifier,
-          expectedState: genericDraft.state,
-          extraTokenParams: parseKeyValueLines(genericDraft.extraTokenParams),
-        });
-        const credentialJson = JSON.stringify(credential, null, 2);
-        setCredentialText(credentialJson);
+        if (!loginId) throw new Error('Grok / xAI Device Flow 会话不存在，请重新生成授权链接');
+        await multiModelApiService.completeXaiOAuth(loginId);
         oauthLoginIdRef.current = null;
         oauthProviderRef.current = null;
-        await onSubmit({ ...account, name: account.name.trim() || pendingEmail.trim() || 'Grok / xAI OAuth', authMode: 'oauth_json', apiKey: '' }, credentialJson);
+        await finishManagedImport('Grok / xAI OAuth 账号已导入 API 账号池并完成额度检测');
+        return;
       }
     } catch (error) {
       setModalStatus({ tone: 'error', text: `OAuth 授权失败：${String(error).replace(/^Error:\s*/, '')}` });
@@ -1036,7 +1054,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
       setModalStatus({ tone: 'error', text: '请输入待授权 Grok / xAI 账号邮箱' });
       return;
     }
-    if (!oauthUrl || !genericDraft.codeVerifier) {
+    if (!oauthUrl || !oauthLoginIdRef.current) {
       setModalStatus({ tone: 'error', text: '请先生成 Grok / xAI OAuth 授权链接' });
       return;
     }
@@ -1047,12 +1065,8 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
       status: 'oauth_pending',
       email,
       auth_url: oauthUrl,
-      state: genericDraft.state,
-      code_verifier: genericDraft.codeVerifier,
-      redirect_uri: genericDraft.redirectUri,
-      token_url: genericDraft.tokenUrl,
-      client_id: genericDraft.clientId,
-      scope: genericDraft.scope,
+      login_id: oauthLoginIdRef.current,
+      user_code: xaiUserCode,
       created_at: new Date().toISOString(),
     }, null, 2);
     await onSubmit({
@@ -1236,6 +1250,19 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
         }
         return;
       }
+      if (isXai) {
+        setLocalBusy(true);
+        setModalStatus({ tone: 'loading', text: '正在导入 Grok CLI OAuth JSON 并检测额度...' });
+        try {
+          await multiModelApiService.importXaiAccountsJson(text);
+          await finishManagedImport('Grok CLI OAuth 账号已导入 API 账号池');
+        } catch (error) {
+          setModalStatus({ tone: 'error', text: `导入 Grok OAuth JSON 失败：${String(error).replace(/^Error:\s*/, '')}` });
+        } finally {
+          setLocalBusy(false);
+        }
+        return;
+      }
       await onSubmit({ ...account, authMode: 'oauth_json', apiKey: '' }, text);
       return;
     }
@@ -1259,6 +1286,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
       else if (isGemini) await geminiService.importGeminiFromLocal();
       else if (isClaude) await claudeService.importClaudeCliFromLocal();
       else if (isAntigravity) await accountService.importFromLocal();
+      else if (isXai) await multiModelApiService.importLocalXaiAccounts();
       else {
         setModalStatus({ tone: 'info', text: '当前供应商没有固定本机登录态路径；请选择 JSON 文件或使用 Token / JSON。' });
         return;
@@ -1286,13 +1314,16 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
       }
       if (isCodex) await codexService.importCodexFromFiles(filePaths);
       else if (isAntigravity) await accountService.importFromFiles(filePaths);
+      else if (isXai) {
+        for (const path of filePaths) await multiModelApiService.importXaiAccountsJson(await readTextFile(path));
+      }
       else {
         const raw = await readTextFile(filePaths[0]);
         if (isGemini) await geminiService.importGeminiFromJson(raw);
         else if (isClaude) await claudeService.importClaudeFromJson(raw);
         else await onSubmit({ ...account, authMode: 'oauth_json', apiKey: '' }, raw);
       }
-      if (isCodex || isGemini || isClaude || isAntigravity) {
+      if (isCodex || isGemini || isClaude || isAntigravity || isXai) {
         await finishManagedImport(`${providerLabel(account.provider)} JSON 文件账号已导入 API 代理账号池`);
       }
     } catch (error) {
@@ -1324,9 +1355,12 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
           <div className="mm-add-section wide">
             {hasNativeOAuth ? <>
               <div className="mm-oauth-draft-card">
-                {isCodex || isXai ? <>
-                  <label><span>待授权账号</span><input type="email" value={pendingEmail} onChange={(event) => setPendingEmail(event.target.value)} placeholder={isXai ? '输入 Grok / xAI 账号邮箱' : '输入 OpenAI 账号邮箱'} disabled={disabled} /></label>
-                  <button type="button" className="btn btn-secondary" onClick={() => void handleSavePendingNativeOAuth()} disabled={disabled || !pendingEmail.trim() || (isXai && (!oauthUrl || !genericDraft.codeVerifier))}><FileText size={16} />保存待授权卡片</button>
+                {isCodex ? <>
+                  <label><span>待授权账号</span><input type="email" value={pendingEmail} onChange={(event) => setPendingEmail(event.target.value)} placeholder="输入 OpenAI 账号邮箱" disabled={disabled} /></label>
+                  <button type="button" className="btn btn-secondary" onClick={() => void handleSavePendingNativeOAuth()} disabled={disabled || !pendingEmail.trim()}><FileText size={16} />保存待授权卡片</button>
+                </> : isXai ? <>
+                  <p className="section-desc">xAI 设备验证码是短时会话，不能保存成跨重启的待授权账号。未完成时请重新生成验证码，不会写入无效凭据。</p>
+                  <button type="button" className="btn btn-secondary" onClick={() => void startNativeOauth(true)} disabled={disabled}><Globe size={16} />重新生成设备验证码</button>
                 </> : isClaude ? <>
                   <label><span>Claude 邮箱备注（可选）</span><input type="email" value={claudeEmailHint} onChange={(event) => setClaudeEmailHint(event.target.value)} placeholder="用于保存账号名称" disabled={disabled} /></label>
                   <button type="button" className="btn btn-secondary" onClick={() => void startNativeOauth(true)} disabled={disabled}><Globe size={16} />重新生成链接</button>
@@ -1338,9 +1372,11 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
               <p className="section-desc">{providerLabel(account.provider)} 已接入真实 OAuth 流程。打开授权链接完成登录，随后自动或手动提交回调并同步到多模型 API 代理账号池。</p>
               {oauthUrl ? <div className="mm-oauth-url-section">
                 <label><span>授权链接</span><div className="mm-oauth-url-box"><input value={oauthUrl} readOnly /><button type="button" onClick={() => void handleCopyOauthUrl()}>{oauthUrlCopied ? <Check size={16} /> : <Copy size={16} />}</button></div></label>
+                {isXai && xaiUserCode && <div className="mm-xai-device-code"><span>设备验证码</span><strong>{xaiUserCode}</strong><button type="button" onClick={() => void copyText(xaiUserCode)}><Copy size={15} />复制</button></div>}
                 <button type="button" className="btn btn-primary btn-full" onClick={() => void handleOpenOauthUrl()} disabled={disabled}><Globe size={16} />在浏览器中打开</button>
-                <label><span>手动输入回调地址 / code</span><div className="mm-oauth-url-box mm-oauth-callback-box"><input value={oauthCallbackInput} onChange={(event) => setOauthCallbackInput(event.target.value)} placeholder="粘贴完整回调地址或授权页面返回的 code" /><button type="button" onClick={() => void handleSubmitOauthCallback()} disabled={disabled || (!oauthCallbackInput.trim() && oauthProviderRef.current !== 'antigravity')}><Check size={16} /><span>我已授权，继续</span></button></div></label>
-                <p className="oauth-hint">Codex/Gemini 支持回调自动更新；Grok / xAI、Claude 通常需要粘贴 code 或完整回调地址；Antigravity 可直接点继续或粘贴回调地址。</p>
+                {!isXai && <label><span>手动输入回调地址 / code</span><div className="mm-oauth-url-box mm-oauth-callback-box"><input value={oauthCallbackInput} onChange={(event) => setOauthCallbackInput(event.target.value)} placeholder="粘贴完整回调地址或授权页面返回的 code" /><button type="button" onClick={() => void handleSubmitOauthCallback()} disabled={disabled || (!oauthCallbackInput.trim() && oauthProviderRef.current !== 'antigravity')}><Check size={16} /><span>我已授权，继续</span></button></div></label>}
+                {isXai && <button type="button" className="btn btn-primary btn-full" onClick={() => void handleSubmitOauthCallback()} disabled={disabled || !oauthLoginIdRef.current}><Check size={16} />我已授权，继续并检测额度</button>}
+                <p className="oauth-hint">{isXai ? '使用 xAI 官方 OIDC Device Flow，不需要粘贴回调地址；完成授权后程序会轮询 token、保存 refresh token 并检测套餐额度。' : 'Codex/Gemini 支持回调自动更新；Claude 通常需要粘贴 code 或完整回调地址；Antigravity 可直接点继续或粘贴回调地址。'}</p>
               </div> : <div className="mm-oauth-loading"><RefreshCw className="spin" />正在准备授权链接...</div>}
             </> : <>
               <p className="section-desc">当前供应商使用通用 OAuth2 Authorization Code + PKCE。填写供应商提供的 Authorization URL、Token URL、Client ID 等参数后生成授权链接，回调交换出来的 credential 会直接写入当前上游账号。</p>

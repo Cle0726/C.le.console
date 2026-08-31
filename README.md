@@ -36,6 +36,14 @@ C.le.控制台将分散在不同 AI 客户端和命令行工具中的账户、�
 - Rust 后端负责配置同步、状态查询、进程管理及桌面应用集成。
 - 新增 Codex agent identity 处理与豆包 Seedance 请求适配。
 
+### 多模型 API 与 Grok CLI 多账号
+
+- 一个本地 OpenAI-compatible API 地址统一路由 Codex、Antigravity、Claude、Gemini、Grok/xAI、Seedance 与自定义兼容服务。
+- Grok/xAI 支持官方 OIDC Device Flow、多账号 OAuth、本机 `~/.grok/auth.json` 导入和 JSON 批量导入。
+- 每个 Grok 账号独立显示套餐、每周/产品/任务额度、重置时间、Grok Code 权限和登录健康状态。
+- access token 自动刷新并保存 refresh-token rotation；账号不可用时由现有 CLIProxyAPI 账号池执行冷却、重试和故障转移。
+- 额度刷新只读取程序现有代理或系统代理配置，不会修改网络代理。
+
 ### 网页创作中心与无限画布
 
 - 原“即梦创作 API”已升级为统一网页创作中心，集中管理豆包、即梦、通义千问、小云雀和抖音。
@@ -67,7 +75,7 @@ C.le.控制台将分散在不同 AI 客户端和命令行工具中的账户、�
 
 1. **无限画布**：新增页面、样式、前端服务和 Rust commands。
 2. **即梦 API**：新增本地服务模块、管理页面、sidecar 构建与冒烟测试脚本。
-3. **Codex 与多模型 API**：完善本地访问、模型路由、媒体端点和身份信息处理。
+3. **Codex 与多模型 API**：新增 Grok CLI 多账号 OAuth、额度监控、本机导入和 token rotation，完善模型路由与媒体端点。
 4. **启动体验**：将开屏层前移到首屏入口，避免等待主应用动态加载时长时间黑屏。
 5. **界面优化**：更新液态玻璃体系、账户页布局、状态窗口和昼夜/简模式适配。
 6. **鱼形鼠标**：增加点击泡泡互动，移除高成本拖尾并接入帧率治理。
