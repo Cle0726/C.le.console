@@ -169,6 +169,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Generate Chinese release notes from CHANGELOG
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, re
+
+          version = json.loads(pathlib.Path('package.json').read_text(encoding='utf-8'))['version']
+          changelog = pathlib.Path('CHANGELOG.md').read_text(encoding='utf-8')
+          section = re.search(
+              rf'(?ms)^## {re.escape(version)}\s*\n(.*?)(?=^## |\Z)',
+              changelog,
+          )
+          if not section or not section.group(1).strip():
+              raise SystemExit(f'CHANGELOG.md 缺少 {version} 的中文更新内容')
+
+          body = section.group(1).strip()
+          notes = (
+              f'# C.le.控制台 v{version}\n\n'
+              '本版本同时提供 **Windows x64** 与 **macOS Apple Silicon（M1/M2/M3/M4）** 安装包。\n\n'
+              f'{body}\n\n'
+              '### 下载说明\n\n'
+              f'- macOS Apple Silicon：下载 `C.le.console_{version}_aarch64.dmg`\n'
+              f'- Windows x64：下载 `C.le.console_{version}_x64_setup.exe`\n'
+              '- `SHA256SUMS.txt` 用于校验安装包完整性\n'
+          )
+          pathlib.Path('release-notes.md').write_text(notes, encoding='utf-8')
+          print(notes)
+          PY
       - uses: actions/download-artifact@v5
         with:
           pattern: desktop-release-*
@@ -212,7 +241,9 @@ jobs:
         run: |
           set -euo pipefail
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --title "C.le.控制台 $GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" --title "C.le.控制台 $GITHUB_REF_NAME" --notes-file release-notes.md
+          else
+            gh release edit "$GITHUB_REF_NAME" --title "C.le.控制台 $GITHUB_REF_NAME" --notes-file release-notes.md
           fi
           gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
 
