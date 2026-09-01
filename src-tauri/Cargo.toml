@@ -1,6 +1,6 @@
 [package]
 name = "cle-console"
-version = "1.1.25"
+version = "1.1.26"
 description = "C.le.控制台"
 authors = ["Cle0726"]
 license = "CC-BY-NC-SA-4.0"

@@ -146,6 +146,7 @@ type accountSpec struct {
 	Priority             int               `json:"priority,omitempty"`
 	PlanRank             *int              `json:"planRank,omitempty"`
 	RemainingQuota       *int              `json:"remainingQuota,omitempty"`
+	ModelQuotas          map[string]int    `json:"modelQuotas,omitempty"`
 	SubscriptionExpiryMS *int64            `json:"subscriptionExpiryMs,omitempty"`
 }
 
@@ -1411,7 +1412,7 @@ type cleSelector struct {
 	manifest *manifest
 	emitter  *eventEmitter
 	mu       sync.Mutex
-	cursor   int
+	cursors  map[string]uint64
 }
 
 func (s *cleSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*coreauth.Auth) (*coreauth.Auth, error) {
@@ -1437,12 +1438,23 @@ func (s *cleSelector) Pick(ctx context.Context, provider, model string, opts cli
 		return nil, fmt.Errorf("no auth available (candidates=%d, scoped_accounts=%d)", len(auths), len(allowedAccounts))
 	}
 
+	// Round-robin cursors must be isolated per provider/model/key pool. A single
+	// process-wide cursor skips uneven candidate sets and repeatedly selects the
+	// same credential when different models are interleaved.
+	selectionKey := strings.ToLower(strings.TrimSpace(provider)) + "::" +
+		strings.ToLower(resolveBaseModelKey(model))
+	if spec, _ := ctx.Value(clientAPIKeyContextKey).(*apiKeySpec); spec != nil {
+		selectionKey += "::" + strings.ToLower(strings.TrimSpace(spec.ID))
+	}
 	s.mu.Lock()
-	start := s.cursor
-	s.cursor++
+	if s.cursors == nil {
+		s.cursors = make(map[string]uint64)
+	}
+	start := int(s.cursors[selectionKey])
+	s.cursors[selectionKey]++
 	s.mu.Unlock()
 
-	ordered := s.orderAuths(available, start)
+	ordered := s.orderAuths(available, model, start)
 	if len(ordered) == 0 {
 		return nil, fmt.Errorf("no auth available")
 	}
@@ -1507,13 +1519,16 @@ func resolveBaseModelKey(model string) string {
 	return model
 }
 
-func (s *cleSelector) orderAuths(auths []*coreauth.Auth, start int) []*coreauth.Auth {
+func (s *cleSelector) orderAuths(auths []*coreauth.Auth, model string, start int) []*coreauth.Auth {
 	if len(auths) <= 1 || s == nil || s.manifest == nil {
 		return auths
 	}
 	strategy := strings.TrimSpace(strings.ToLower(s.manifest.RoutingStrategy))
 	if strategy == "custom" {
 		return s.orderCustom(auths, start)
+	}
+	if strategy == "round-robin" || strategy == "round_robin" {
+		return s.orderRoundRobin(s.preferHealthyModelQuota(auths, model), start)
 	}
 	out := append([]*coreauth.Auth(nil), auths...)
 	sort.SliceStable(out, func(i, j int) bool {
@@ -1525,6 +1540,83 @@ func (s *cleSelector) orderAuths(auths []*coreauth.Auth, start int) []*coreauth.
 		return s.rotatedIndex(left, start) < s.rotatedIndex(right, start)
 	})
 	return out
+}
+
+// orderRoundRobin rotates the actual candidate set, not the full manifest.
+// This matters because each model can be supported by a different subset of
+// credentials. Rotating manifest indexes over a sparse subset is not even.
+func (s *cleSelector) orderRoundRobin(auths []*coreauth.Auth, start int) []*coreauth.Auth {
+	if len(auths) <= 1 {
+		return auths
+	}
+	out := append([]*coreauth.Auth(nil), auths...)
+	sort.SliceStable(out, func(i, j int) bool {
+		left := s.accountForAuth(out[i])
+		right := s.accountForAuth(out[j])
+		leftIndex := 1 << 30
+		rightIndex := 1 << 30
+		if left != nil {
+			if index, ok := s.manifest.originalIndexByID[left.ID]; ok {
+				leftIndex = index
+			}
+		}
+		if right != nil {
+			if index, ok := s.manifest.originalIndexByID[right.ID]; ok {
+				rightIndex = index
+			}
+		}
+		if leftIndex != rightIndex {
+			return leftIndex < rightIndex
+		}
+		return out[i].ID < out[j].ID
+	})
+	offset := start % len(out)
+	return append(append(make([]*coreauth.Auth, 0, len(out)), out[offset:]...), out[:offset]...)
+}
+
+// preferHealthyModelQuota keeps round-robin fair inside the healthiest quota
+// band. A stale/unknown quota never blocks a pool, but when fresh per-model
+// values exist a nearly exhausted credential is not selected while another
+// compatible credential still has substantially more remaining capacity.
+func (s *cleSelector) preferHealthyModelQuota(auths []*coreauth.Auth, model string) []*coreauth.Auth {
+	if len(auths) <= 1 {
+		return auths
+	}
+	model = strings.ToLower(strings.TrimSpace(resolveBaseModelKey(model)))
+	if model == "" {
+		return auths
+	}
+	maxQuota := -1
+	quotas := make(map[*coreauth.Auth]int, len(auths))
+	for _, auth := range auths {
+		account := s.accountForAuth(auth)
+		if account == nil || len(account.ModelQuotas) == 0 {
+			continue
+		}
+		quota, ok := account.ModelQuotas[model]
+		if !ok {
+			continue
+		}
+		quotas[auth] = quota
+		if quota > maxQuota {
+			maxQuota = quota
+		}
+	}
+	if maxQuota < 0 {
+		return auths
+	}
+	const healthyBand = 5
+	minimum := maxQuota - healthyBand
+	filtered := make([]*coreauth.Auth, 0, len(auths))
+	for _, auth := range auths {
+		if quota, ok := quotas[auth]; ok && quota >= minimum {
+			filtered = append(filtered, auth)
+		}
+	}
+	if len(filtered) == 0 {
+		return auths
+	}
+	return filtered
 }
 
 func compareAccountSpecs(left, right *accountSpec, strategy string) int {

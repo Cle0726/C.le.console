@@ -79,6 +79,77 @@ func TestSelectorMapsGeminiVirtualAuthToParentManifestAccount(t *testing.T) {
 	}
 }
 
+func testRoundRobinSelector(accounts []accountSpec) *cleSelector {
+	m := &manifest{
+		RoutingStrategy:   "round-robin",
+		Accounts:          accounts,
+		accountByID:       map[string]*accountSpec{},
+		accountByAuthID:   map[string]*accountSpec{},
+		originalIndexByID: map[string]int{},
+	}
+	for i := range m.Accounts {
+		account := &m.Accounts[i]
+		m.accountByID[account.ID] = account
+		m.accountByAuthID[strings.ToLower(account.AuthID)] = account
+		m.originalIndexByID[account.ID] = i
+	}
+	return &cleSelector{manifest: m}
+}
+
+func TestSelectorRoundRobinRotatesActualSparseCandidatePool(t *testing.T) {
+	selector := testRoundRobinSelector([]accountSpec{
+		{ID: "account-a", AuthID: "a.json"},
+		{ID: "unused-b", AuthID: "b.json"},
+		{ID: "account-c", AuthID: "c.json"},
+		{ID: "unused-d", AuthID: "d.json"},
+		{ID: "account-e", AuthID: "e.json"},
+	})
+	auths := []*coreauth.Auth{{ID: "a.json"}, {ID: "c.json"}, {ID: "e.json"}}
+	want := []string{"a.json", "c.json", "e.json", "a.json"}
+	for i, expected := range want {
+		selected, err := selector.Pick(context.Background(), "antigravity", "claude-sonnet-4-6", cliproxyexecutor.Options{}, auths)
+		if err != nil {
+			t.Fatalf("pick %d failed: %v", i, err)
+		}
+		if selected.ID != expected {
+			t.Fatalf("pick %d = %s, want %s", i, selected.ID, expected)
+		}
+	}
+}
+
+func TestSelectorRoundRobinUsesIndependentModelCursors(t *testing.T) {
+	selector := testRoundRobinSelector([]accountSpec{
+		{ID: "account-a", AuthID: "a.json"},
+		{ID: "account-b", AuthID: "b.json"},
+	})
+	auths := []*coreauth.Auth{{ID: "a.json"}, {ID: "b.json"}}
+	first, _ := selector.Pick(context.Background(), "antigravity", "model-a", cliproxyexecutor.Options{}, auths)
+	second, _ := selector.Pick(context.Background(), "antigravity", "model-a", cliproxyexecutor.Options{}, auths)
+	otherModel, _ := selector.Pick(context.Background(), "antigravity", "model-b", cliproxyexecutor.Options{}, auths)
+	if first.ID != "a.json" || second.ID != "b.json" || otherModel.ID != "a.json" {
+		t.Fatalf("unexpected per-model rotation: %s, %s, %s", first.ID, second.ID, otherModel.ID)
+	}
+}
+
+func TestSelectorRoundRobinAvoidsExhaustedModelQuota(t *testing.T) {
+	selector := testRoundRobinSelector([]accountSpec{
+		{ID: "low", AuthID: "low.json", ModelQuotas: map[string]int{"claude-sonnet-4-6": 7}},
+		{ID: "healthy-a", AuthID: "healthy-a.json", ModelQuotas: map[string]int{"claude-sonnet-4-6": 100}},
+		{ID: "healthy-b", AuthID: "healthy-b.json", ModelQuotas: map[string]int{"claude-sonnet-4-6": 100}},
+	})
+	auths := []*coreauth.Auth{{ID: "low.json"}, {ID: "healthy-a.json"}, {ID: "healthy-b.json"}}
+	want := []string{"healthy-a.json", "healthy-b.json", "healthy-a.json"}
+	for i, expected := range want {
+		selected, err := selector.Pick(context.Background(), "antigravity", "claude-sonnet-4-6", cliproxyexecutor.Options{}, auths)
+		if err != nil {
+			t.Fatalf("pick %d failed: %v", i, err)
+		}
+		if selected.ID != expected {
+			t.Fatalf("pick %d = %s, want %s", i, selected.ID, expected)
+		}
+	}
+}
+
 func TestClaudeWebGatewayForModelUsesLoopbackCompatibilityEntry(t *testing.T) {
 	server := &relayServer{
 		manifest: &manifest{Accounts: []accountSpec{{

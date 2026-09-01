@@ -109,7 +109,7 @@ pub struct MultiModelApiConfig {
     pub upstream_proxy: String,
     #[serde(default = "default_routing")]
     pub routing_strategy: String,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub session_affinity: bool,
     #[serde(default = "default_session_ttl")]
     pub session_affinity_ttl: String,
@@ -278,7 +278,10 @@ fn default_config() -> MultiModelApiConfig {
         access_scope: default_scope(),
         upstream_proxy: String::new(),
         routing_strategy: default_routing(),
-        session_affinity: true,
+        // API requests are stateless and should be spread across the account
+        // pool by default. Users who need a sticky upstream session can still
+        // opt in explicitly from the service settings.
+        session_affinity: false,
         session_affinity_ttl: default_session_ttl(),
         request_retries: default_retries(),
         debug_logs: false,
@@ -318,6 +321,7 @@ fn load_config() -> Result<MultiModelApiConfig, String> {
         let mut config = default_config();
         let migration = migrate_legacy_key_records(&mut config)?;
         normalize_config(&mut config)?;
+        migrate_legacy_round_robin_affinity(&mut config)?;
         save_config_file(&config)?;
         if let Some((marker, marker_payload)) = migration {
             write_string_atomic(&marker, &marker_payload)?;
@@ -329,13 +333,44 @@ fn load_config() -> Result<MultiModelApiConfig, String> {
     let mut config: MultiModelApiConfig = parse_json_with_auto_restore(&path, &raw)
         .map_err(|error| format!("解析多模型 API 配置失败: {error}"))?;
     normalize_config(&mut config)?;
-    if let Some((marker, marker_payload)) = migrate_legacy_key_records(&mut config)? {
+    let affinity_migrated = migrate_legacy_round_robin_affinity(&mut config)?;
+    let legacy_migration = migrate_legacy_key_records(&mut config)?;
+    if affinity_migrated || legacy_migration.is_some() {
         // Normalize again because imported records came from older schemas.
         normalize_config(&mut config)?;
         save_config_file(&config)?;
+    }
+    if let Some((marker, marker_payload)) = legacy_migration {
         write_string_atomic(&marker, &marker_payload)?;
     }
     Ok(config)
+}
+
+/// Older releases enabled one-hour session affinity by default even when the
+/// selected strategy was round-robin. Most API clients send a stable session
+/// identifier, so the affinity wrapper bypassed the round-robin selector after
+/// the first request and exhausted one account. Migrate that old default once;
+/// after the marker exists, an explicit user choice is preserved.
+fn migrate_legacy_round_robin_affinity(config: &mut MultiModelApiConfig) -> Result<bool, String> {
+    let marker = data_dir()?.join(".multi_model_round_robin_affinity_migrated_v1");
+    if marker.exists() {
+        return Ok(false);
+    }
+    let changed = config.routing_strategy == "round-robin" && config.session_affinity;
+    if changed {
+        config.session_affinity = false;
+        // Persist the corrected value before committing the migration marker.
+        // A failed write must remain retryable on the next launch.
+        save_config_file(config)?;
+    }
+    let payload = serde_json::to_string_pretty(&json!({
+        "version": 1,
+        "migratedAt": chrono::Utc::now().to_rfc3339(),
+        "disabledLegacyDefault": changed
+    }))
+    .unwrap_or_else(|_| "{\"version\":1}".into());
+    write_string_atomic(&marker, &payload)?;
+    Ok(changed)
 }
 
 fn migrate_legacy_key_records(
@@ -799,6 +834,28 @@ fn loopback_proxy_is_available(proxy_url: &str) -> Option<bool> {
     )
 }
 
+fn managed_antigravity_model_quotas() -> BTreeMap<String, BTreeMap<String, i32>> {
+    account::list_accounts()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|managed| {
+            let quota = managed.quota?;
+            let models = quota
+                .models
+                .into_iter()
+                .filter(|model| is_routable_antigravity_model(&model.name))
+                .map(|model| {
+                    (
+                        model.name.trim().to_ascii_lowercase(),
+                        model.percentage.clamp(0, 100),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            (!models.is_empty()).then_some((managed.id, models))
+        })
+        .collect()
+}
+
 fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, String> {
     let root = sidecar_dir()?;
     let auths = root.join("auths");
@@ -815,6 +872,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
     let mut manifest_accounts = Vec::new();
     let mut account_auth_ids = BTreeMap::new();
     let mut expected_auth_files = BTreeSet::new();
+    let antigravity_model_quotas = managed_antigravity_model_quotas();
     let effective_upstream_proxy = if config.upstream_proxy.trim().is_empty() {
         let detected = codex_local_access::system_proxy_url_for_target("https://api.openai.com")
             .unwrap_or_default();
@@ -971,6 +1029,12 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
         } else {
             account.id.clone()
         };
+        let model_quotas = account
+            .source
+            .strip_prefix("cle:antigravity:")
+            .and_then(|managed_id| antigravity_model_quotas.get(managed_id))
+            .cloned()
+            .unwrap_or_default();
         account_auth_ids.insert(account.id.clone(), manifest_auth_id.clone());
         manifest_accounts.push(json!({
             "id": account.id,
@@ -982,6 +1046,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "proxyUrl": if account.proxy_url.trim().is_empty() { effective_upstream_proxy.as_str() } else { account.proxy_url.as_str() },
             "headers": account.headers,
             "priority": account.priority,
+            "modelQuotas": model_quotas,
             "models": models.iter().flat_map(|model| {
                 let mut ids = vec![model.id.clone()];
                 if !model.alias.trim().is_empty() {
@@ -3831,6 +3896,13 @@ mod tests {
         excessive.request_retries = u8::MAX;
         normalize_config(&mut excessive).expect("normalize excessive retries");
         assert_eq!(excessive.request_retries, 4);
+    }
+
+    #[test]
+    fn new_multi_model_gateway_does_not_pin_sessions_by_default() {
+        let config = default_config();
+        assert_eq!(config.routing_strategy, "round-robin");
+        assert!(!config.session_affinity);
     }
 
     #[test]

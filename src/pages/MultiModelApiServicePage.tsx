@@ -495,7 +495,7 @@ export function MultiModelApiServicePage() {
         </section>
 
         <section className="mm-api-summary-grid">
-          <Metric label="可用账号" value={summary.accounts} detail="轮询与故障转移" />
+          <Metric label="可用账号" value={summary.accounts} detail="按模型独立分流与故障转移" />
           <Metric label="已接入厂商" value={summary.providers} detail="按模型自动路由" />
           <Metric label="可调用模型" value={summary.models} detail="账号实际声明" />
           <Metric label="下游 Keys" value={summary.keys} detail="一个 Key 调全部" />
@@ -508,7 +508,7 @@ export function MultiModelApiServicePage() {
         {tab === 'accounts' && (
           <section className="mm-api-panel">
             <header className="mm-api-panel-head">
-              <div><h2>{providerFilter === 'all' ? '多账号池' : `${providerLabel(providerFilter)} 账号`}</h2><p>同一模型可挂多个账号，运行时自动轮询、冷却和故障转移。</p></div>
+              <div><h2>{providerFilter === 'all' ? '多账号池' : `${providerLabel(providerFilter)} 账号`}</h2><p>同一模型按独立游标分流；有实时额度时优先健康额度带，并自动冷却、故障转移。</p></div>
               <div className="mm-inline-actions">
                 {(providerFilter === 'all' || providerFilter === 'xai') && <button type="button" className="btn btn-secondary" onClick={() => void refreshXaiAccounts()} disabled={busy}><RefreshCw className={operation === 'xai-refresh' ? 'spin' : ''} />刷新 Grok 额度</button>}
                 <button type="button" className="btn btn-secondary" onClick={() => void syncAccounts()} disabled={busy}><RefreshCw className={operation === 'sync' ? 'spin' : ''} />同步 C.le. 账号</button>
@@ -638,10 +638,10 @@ function Overview({ config, setConfig, onSave, busy, testModel, setTestModel, te
       <div className="mm-form-grid">
         <label><span>监听端口</span><input type="number" min={1024} max={65535} value={config.port} onChange={(event) => setConfig({ ...config, port: Number(event.target.value) })} /><small>默认 1466</small></label>
         <label><span>访问范围</span><select value={config.accessScope} onChange={(event) => setConfig({ ...config, accessScope: event.target.value as 'localhost' | 'lan' })}><option value="localhost">仅本机 127.0.0.1</option><option value="lan">局域网 0.0.0.0</option></select><small>LAN 模式需要系统防火墙放行</small></label>
-        <label><span>路由策略</span><select value={config.routingStrategy} onChange={(event) => setConfig({ ...config, routingStrategy: event.target.value as 'round-robin' | 'fill-first' })}><option value="round-robin">Round Robin 轮询</option><option value="fill-first">Fill First 优先填满</option></select></label>
+        <label><span>路由策略</span><select value={config.routingStrategy} onChange={(event) => setConfig({ ...config, routingStrategy: event.target.value as 'round-robin' | 'fill-first' })}><option value="round-robin">智能轮询（推荐）</option><option value="fill-first">Fill First 优先填满</option></select><small>每个模型独立轮询；自动避开明显低额度账号</small></label>
         <label><span>失败重试</span><input type="number" min={0} max={10} value={config.requestRetries} onChange={(event) => setConfig({ ...config, requestRetries: Number(event.target.value) })} /></label>
         <label className="wide"><span>上游代理</span><input placeholder="http://127.0.0.1:7890（可选）" value={config.upstreamProxy} onChange={(event) => setConfig({ ...config, upstreamProxy: event.target.value })} /></label>
-        <label className="switch-row"><span><b>Session Affinity</b><small>同一会话固定账号，失效后漂移</small></span><input type="checkbox" checked={config.sessionAffinity} onChange={(event) => setConfig({ ...config, sessionAffinity: event.target.checked })} /></label>
+        <label className="switch-row"><span><b>会话固定（默认关闭）</b><small>开启后同一会话会固定一个账号，可能造成单号集中消耗</small></span><input type="checkbox" checked={config.sessionAffinity} onChange={(event) => setConfig({ ...config, sessionAffinity: event.target.checked })} /></label>
         <label className="switch-row"><span><b>Debug Logs</b><small>记录 sidecar 请求诊断信息</small></span><input type="checkbox" checked={config.debugLogs} onChange={(event) => setConfig({ ...config, debugLogs: event.target.checked })} /></label>
       </div>
     </section>
