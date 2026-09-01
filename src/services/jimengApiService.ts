@@ -112,6 +112,8 @@ export const jimengApiService = {
     invoke<WebCreatorWorkspaceState>('web_creator_set_bounds', { bounds }),
   hideWebCreator: () =>
     invoke<WebCreatorWorkspaceState>('web_creator_hide'),
+  detachWebCreatorAccount: (accountId?: string | null) =>
+    invoke<WebCreatorWorkspaceState>('web_creator_detach_account', { accountId: accountId ?? null }),
   navigateWebCreator: (action: 'back' | 'forward' | 'reload') =>
     invoke<WebCreatorWorkspaceState>('web_creator_navigate', { action }),
   navigateWebCreatorTo: (url: string) =>

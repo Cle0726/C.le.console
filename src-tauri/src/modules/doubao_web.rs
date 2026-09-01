@@ -54,6 +54,25 @@ const DESKTOP_PROFILE_DISCOVERY_INTERVAL: Duration = Duration::from_secs(60);
 const DOUBAO_ACCOUNT_INFO_URL: &str =
     "https://www.doubao.com/passport/account/info/v2/?account_sdk_source=web";
 const DOUBAO_LOGIN_VALIDATION_VERSION: u8 = 2;
+pub(crate) const DOUBAO_ORIGINAL_UPLOAD_SCRIPT: &str = r#"
+(() => {
+  if (window.__CLE_DOUBAO_ORIGINAL_UPLOAD__) return;
+  // Doubao's current web uploader compresses Chromium images above 10/15 MiB
+  // to at most 2560 px. Its own Apple WebKit branch keeps the original File
+  // and permits up to 30 MiB. Expose that compatibility marker before any
+  // site bundle executes so dropped reference images follow the lossless path.
+  if (typeof window.webkitConvertPointFromNodeToPage !== 'function') {
+    Object.defineProperty(window, 'webkitConvertPointFromNodeToPage', {
+      configurable: true,
+      value: (_node, point) => point || { x: 0, y: 0 },
+    });
+  }
+  Object.defineProperty(window, '__CLE_DOUBAO_ORIGINAL_UPLOAD__', {
+    configurable: false,
+    value: Object.freeze({ enabled: true, maxBytes: 30 * 1024 * 1024 }),
+  });
+})();
+"#;
 
 #[derive(Debug, Clone)]
 pub(crate) struct DoubaoSessionCheck {
@@ -1934,14 +1953,19 @@ fn ensure_window(
     let platform =
         platform(&account.platform_id).ok_or_else(|| "不支持的网页创作平台".to_string())?;
     let url = Url::parse(platform.home_url).map_err(|error| error.to_string())?;
-    let window = WebviewWindowBuilder::new(app, &window_label, WebviewUrl::External(url))
+    let mut builder = WebviewWindowBuilder::new(app, &window_label, WebviewUrl::External(url))
         .title(format!("{}网页版 · {}", platform.name, account.name))
         .inner_size(1180.0, 820.0)
         .min_inner_size(880.0, 640.0)
         .resizable(true)
         .visible(visible)
         .data_directory(data_dir)
-        .on_navigation(|url| matches!(url.scheme(), "http" | "https"))
+        .disable_drag_drop_handler()
+        .on_navigation(|url| matches!(url.scheme(), "http" | "https"));
+    if account.platform_id == "doubao" {
+        builder = builder.initialization_script(DOUBAO_ORIGINAL_UPLOAD_SCRIPT);
+    }
+    let window = builder
         .build()
         .map_err(|error| format!("无法打开{}网页版: {error}", platform.name))?;
 
@@ -1949,6 +1973,35 @@ fn ensure_window(
         window.set_focus().map_err(|error| error.to_string())?;
     }
     Ok(window)
+}
+
+pub(crate) fn close_independent_window(
+    app: &AppHandle,
+    account: &DoubaoWebAccountRecord,
+) -> Result<bool, String> {
+    let Some(window) = app.get_webview_window(&account_window_label(account)) else {
+        return Ok(false);
+    };
+    window.close().map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+pub(crate) fn open_independent_window(
+    app: &AppHandle,
+    account: &DoubaoWebAccountRecord,
+    target_url: Option<String>,
+) -> Result<(), String> {
+    let window = ensure_window(app, account, true)?;
+    if let Some(url) = target_url {
+        let url = Url::parse(&url).map_err(|error| format!("独立窗口地址无效: {error}"))?;
+        if matches!(url.scheme(), "http" | "https") {
+            window
+                .navigate(url)
+                .map_err(|error| format!("独立窗口打开当前页面失败: {error}"))?;
+        }
+    }
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
 }
 
 async fn inspect_account(

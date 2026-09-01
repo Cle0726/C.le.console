@@ -6,7 +6,7 @@ import { openPath } from '@tauri-apps/plugin-opener';
 import { downloadDir, join } from '@tauri-apps/api/path';
 import {
   Activity, ArrowLeft, ArrowRight, BadgeCheck, CircleAlert, Clipboard, Coins, Copy, Download, Film,
-  FileDown, FileUp, FolderOpen, Gauge, Globe2, HeartPulse, Image as ImageIcon, KeyRound, Layers3,
+  ExternalLink, FileDown, FileUp, FolderOpen, Gauge, Globe2, HeartPulse, Image as ImageIcon, KeyRound, Layers3,
   LoaderCircle, PanelsTopLeft, Plus, Power, RefreshCw, Save, ShieldCheck, Sparkles,
   Trash2, Upload, WandSparkles, X,
 } from 'lucide-react';
@@ -723,6 +723,25 @@ export function JimengApiServicePage({
     }
   };
 
+  const detachWebCreatorAccount = async () => {
+    const accountId = webCreatorWorkspaceState?.activeAccountId;
+    if (!accountId) return;
+    setDoubaoWebBusy(true);
+    try {
+      const next = await jimengApiService.detachWebCreatorAccount(accountId);
+      setWebCreatorWorkspaceState(next);
+      setWebCreatorAssets([]);
+      setNotice({
+        tone: 'success',
+        text: '当前网页已转移到独立窗口；关闭网页创作工作台不会关闭该窗口。',
+      });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `打开账号独立窗口失败：${String(error)}` });
+    } finally {
+      setDoubaoWebBusy(false);
+    }
+  };
+
   const submitWebCreatorAddress = async () => {
     let url = webCreatorAddress.trim();
     if (!url) return;
@@ -1270,6 +1289,7 @@ export function JimengApiServicePage({
                   <input value={webCreatorAddress} aria-label="网页地址" placeholder={selectedWebCreatorPlatform?.homeUrl || 'https://'} onChange={(event) => setWebCreatorAddress(event.target.value)} disabled={!webCreatorWorkspaceState?.activeAccountId} />
                 </form>
                 <button type="button" title="打开下载目录" onClick={() => void openWebCreatorDownloads().catch((error) => setNotice({ tone: 'error', text: `打开下载目录失败：${String(error)}` }))}><FolderOpen size={17} /></button>
+                <button type="button" className="with-label" title="将当前账号网页转移到独立窗口；工作台关闭后仍保持运行" disabled={!webCreatorWorkspaceState?.activeAccountId || doubaoWebBusy} onClick={() => void detachWebCreatorAccount()}><ExternalLink size={17} />独立窗口</button>
                 <button type="button" className="with-label" disabled={!webCreatorAssets.length || !!webCreatorDownloading} onClick={() => void downloadAllWebCreatorAssets()}><Download size={17} />批量下载</button>
               </div>
 
@@ -1285,7 +1305,12 @@ export function JimengApiServicePage({
               </div>
 
               <div className="web-creator-assets-head">
-                <span><strong>素材与无水印导出</strong><small>仅扫描当前网页新增节点，不做全页面高频轮询</small></span>
+                <span>
+                  <strong>素材与无水印导出</strong>
+                  <small>{webCreatorPlatformId === 'doubao'
+                    ? '豆包原图上传保护已启用（图片 ≤30MB 不在客户端重压缩）；素材仅扫描新增节点'
+                    : '仅扫描当前网页新增节点，不做全页面高频轮询'}</small>
+                </span>
                 <button className="btn btn-primary jimeng-button" disabled={!webCreatorWorkspaceState?.activeAccountId || !!webCreatorDownloading} onClick={() => void collectWebCreatorAssets()}>{webCreatorDownloading === 'collect' ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}捕获素材</button>
                 <button className="btn btn-secondary icon-only" title="清空捕获列表" disabled={!webCreatorAssets.length} onClick={() => void clearWebCreatorAssets()}><X size={16} /></button>
               </div>

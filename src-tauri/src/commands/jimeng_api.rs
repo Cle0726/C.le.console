@@ -192,6 +192,14 @@ pub async fn web_creator_hide(app: AppHandle) -> Result<WebCreatorWorkspaceState
 }
 
 #[tauri::command]
+pub async fn web_creator_detach_account(
+    app: AppHandle,
+    account_id: Option<String>,
+) -> Result<WebCreatorWorkspaceState, String> {
+    web_creator_workspace::detach_account(app, account_id).await
+}
+
+#[tauri::command]
 pub async fn web_creator_navigate(
     app: AppHandle,
     action: String,

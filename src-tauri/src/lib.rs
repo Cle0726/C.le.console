@@ -1089,6 +1089,7 @@ pub fn run() {
             commands::jimeng_api::web_creator_open_account,
             commands::jimeng_api::web_creator_set_bounds,
             commands::jimeng_api::web_creator_hide,
+            commands::jimeng_api::web_creator_detach_account,
             commands::jimeng_api::web_creator_navigate,
             commands::jimeng_api::web_creator_navigate_to,
             commands::jimeng_api::web_creator_get_state,

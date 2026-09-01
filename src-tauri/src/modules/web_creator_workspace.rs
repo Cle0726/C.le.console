@@ -318,8 +318,14 @@ fn parse_callback_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T, Str
 
 fn bridge_script(platform_id: &str) -> String {
     let platform_json = serde_json::to_string(platform_id).unwrap_or_else(|_| "\"unknown\"".into());
+    let original_upload = if platform_id == "doubao" {
+        doubao_web::DOUBAO_ORIGINAL_UPLOAD_SCRIPT
+    } else {
+        ""
+    };
     format!(
-        "window.__CLE_WEB_CREATOR_PLATFORM__ = {platform_json};
+        "{original_upload}
+window.__CLE_WEB_CREATOR_PLATFORM__ = {platform_json};
 {CREATOR_BRIDGE}"
     )
 }
@@ -402,6 +408,16 @@ pub async fn open_account(
 ) -> Result<WebCreatorWorkspaceState, String> {
     let account = doubao_web::find_account(&app, &account_id)?;
     let account_for_cookie_sync = account.clone();
+    let close_app = app.clone();
+    let close_account = account.clone();
+    let closed_independent = tokio::task::spawn_blocking(move || {
+        doubao_web::close_independent_window(&close_app, &close_account)
+    })
+    .await
+    .map_err(|error| format!("关闭账号独立窗口任务失败: {error}"))??;
+    if closed_independent {
+        tokio::time::sleep(Duration::from_millis(350)).await;
+    }
     let bounds = bounds_or_default(bounds);
     // Config-created windows are registered as a Window plus a managed
     // Webview on Tauri 2.10. `get_webview_window()` can therefore return None
@@ -502,6 +518,33 @@ pub fn hide(app: &AppHandle) -> Result<WebCreatorWorkspaceState, String> {
     hide_creator_webviews(app);
     CREATOR_VISIBLE.store(false, Ordering::Release);
     Ok(workspace_state(app))
+}
+
+pub async fn detach_account(
+    app: AppHandle,
+    account_id: Option<String>,
+) -> Result<WebCreatorWorkspaceState, String> {
+    let account_id = account_id
+        .or_else(active_account_id)
+        .ok_or_else(|| "还没有打开网页账号".to_string())?;
+    let account = doubao_web::find_account(&app, &account_id)?;
+    let view = app
+        .get_webview(&webview_label(&account_id))
+        .ok_or_else(|| "网页账号视图尚未创建".to_string())?;
+    let current_url = view.url().ok().map(|url| url.to_string());
+    view.close()
+        .map_err(|error| format!("从工作台分离网页失败: {error}"))?;
+    set_active_account_id(None);
+    CREATOR_VISIBLE.store(false, Ordering::Release);
+    tokio::time::sleep(Duration::from_millis(350)).await;
+
+    let open_app = app.clone();
+    tokio::task::spawn_blocking(move || {
+        doubao_web::open_independent_window(&open_app, &account, current_url)
+    })
+    .await
+    .map_err(|error| format!("创建账号独立窗口任务失败: {error}"))??;
+    Ok(workspace_state(&app))
 }
 
 pub fn navigate(app: &AppHandle, action: String) -> Result<WebCreatorWorkspaceState, String> {
@@ -809,5 +852,17 @@ mod tests {
     fn parses_callback_json_string() {
         let value: Vec<WebCreatorAsset> = parse_callback_json("\"[]\"").unwrap();
         assert!(value.is_empty());
+    }
+
+    #[test]
+    fn enables_doubao_original_upload_branch_only_for_doubao() {
+        let doubao = bridge_script("doubao");
+        assert!(doubao.contains("webkitConvertPointFromNodeToPage"));
+        assert!(doubao.contains("30 * 1024 * 1024"));
+        assert!(doubao.contains("__CLE_DOUBAO_ORIGINAL_UPLOAD__"));
+
+        let jimeng = bridge_script("jimeng");
+        assert!(!jimeng.contains("webkitConvertPointFromNodeToPage"));
+        assert!(!jimeng.contains("__CLE_DOUBAO_ORIGINAL_UPLOAD__"));
     }
 }
