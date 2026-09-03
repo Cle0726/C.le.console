@@ -57,6 +57,7 @@ pub mod kiro_oauth;
 pub mod logger;
 pub mod macos_native_menu;
 pub mod multi_model_api;
+pub mod multi_model_api_window;
 pub mod multi_model_xai;
 pub mod network_egress;
 pub mod oauth;

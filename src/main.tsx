@@ -174,6 +174,17 @@ if (visualReviewTarget === "jimeng") {
     );
   });
 } else if (
+  "__TAURI_INTERNALS__" in window
+  && getCurrentWindow().label === "multi-model-api-console"
+) {
+  void import("./pages/MultiModelApiServiceWindow").then(({ MultiModelApiServiceWindow }) => {
+    root.render(
+      <React.StrictMode>
+        <MultiModelApiServiceWindow />
+      </React.StrictMode>,
+    );
+  });
+} else if (
   !("__TAURI_INTERNALS__" in window)
   || ![
     "floating-card",

@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main", "floating-card", "instance-floating-card-*", "status-window", "web-creator-workspace"],
+  "windows": ["main", "floating-card", "instance-floating-card-*", "status-window", "web-creator-workspace", "multi-model-api-console"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

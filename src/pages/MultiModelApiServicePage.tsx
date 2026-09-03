@@ -20,7 +20,8 @@ import * as geminiService from '../services/geminiService';
 import { multiModelApiService } from '../services/multiModelApiService';
 import type {
   ModelCapability, MultiModelAccount, MultiModelApiConfig, MultiModelApiState,
-  MultiModelDefinition, MultiModelApiTestResult, MultiModelRepairReport, XaiAccountUsage,
+  MultiModelDefinition, MultiModelApiTestResult, MultiModelRepairReport,
+  MultiModelAccountUsage, XaiAccountUsage,
 } from '../types/multiModelApi';
 import './MultiModelApiServicePage.css';
 
@@ -33,7 +34,6 @@ const PROVIDERS = [
   { id: 'openai', label: 'OpenAI', short: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
   { id: 'claude', label: 'Claude', short: 'Claude', baseUrl: 'https://api.anthropic.com' },
   { id: 'gemini', label: 'Gemini', short: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com' },
-  { id: 'codex', label: 'Codex', short: 'Codex', baseUrl: '' },
   { id: 'antigravity', label: 'Antigravity', short: 'Antigravity', baseUrl: '' },
   { id: 'doubao-seedance', label: 'Doubao Seedance', short: 'Seedance', baseUrl: 'https://doubao.happieapi.top' },
   { id: 'custom', label: '兼容 API', short: '自定义', baseUrl: '' },
@@ -72,10 +72,6 @@ const PROVIDER_MODELS: Record<string, MultiModelDefinition[]> = {
     ['gemini-3-flash-preview', ['text', 'vision']],
     ['veo-3.1-generate-preview', ['video']],
     ['veo-3.0-generate-preview', ['video']],
-  ].map(([id, capabilities]) => ({ id: id as string, alias: '', capabilities: capabilities as ModelCapability[], enabled: true })),
-  codex: [
-    ['gpt-5.4', ['text', 'vision', 'reasoning']],
-    ['gpt-5.3-codex', ['text', 'vision', 'reasoning']],
   ].map(([id, capabilities]) => ({ id: id as string, alias: '', capabilities: capabilities as ModelCapability[], enabled: true })),
   'doubao-seedance': [
     ['doubao-seedance-1.5-pro', ['video']],
@@ -142,7 +138,7 @@ async function copyText(value: string) {
   }
 }
 
-export function MultiModelApiServicePage() {
+export function MultiModelApiServicePage({ standalone = false }: { standalone?: boolean }) {
   const [state, setState] = useState<MultiModelApiState | null>(null);
   const [draft, setDraft] = useState<MultiModelApiConfig | null>(null);
   const [tab, setTab] = useState<Tab>('accounts');
@@ -173,7 +169,26 @@ export function MultiModelApiServicePage() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!standalone || (document.visibilityState !== 'hidden' && document.hasFocus())) {
+      void load();
+    }
+  }, [load, standalone]);
+
+  useEffect(() => {
+    if (!standalone) return;
+    const refreshWhenActivated = () => {
+      if (document.visibilityState !== 'hidden' && document.hasFocus()) {
+        void load(true);
+      }
+    };
+    window.addEventListener('focus', refreshWhenActivated);
+    document.addEventListener('visibilitychange', refreshWhenActivated);
+    return () => {
+      window.removeEventListener('focus', refreshWhenActivated);
+      document.removeEventListener('visibilitychange', refreshWhenActivated);
+    };
+  }, [load, standalone]);
 
   const copy = async (value: string, id: string) => {
     try {
@@ -401,7 +416,7 @@ export function MultiModelApiServicePage() {
   const busy = operation !== null;
 
   return (
-    <div className="mm-api-page">
+    <div className={`mm-api-page${standalone ? ' mm-api-page-standalone' : ''}`}>
       <div className="page-top-strip">
         <div className="page-top-strip-left">
           <span className="page-top-strip-label">API 服务</span>
@@ -517,7 +532,7 @@ export function MultiModelApiServicePage() {
             </header>
             <div className="mm-account-grid">
               {visibleAccounts.map((account) => (
-                <AccountCard key={account.id} account={account} xaiUsage={state.xaiAccounts?.find((item) => item.accountId === account.id)} onEdit={() => openAccount(account)} onToggle={() => void updateAccount({ ...account, enabled: !account.enabled })} onRemove={() => void removeAccount(account)} />
+                <AccountCard key={account.id} account={account} usage={state.accountUsages?.find((item) => item.accountId === account.id)} xaiUsage={state.xaiAccounts?.find((item) => item.accountId === account.id)} onEdit={() => openAccount(account)} onToggle={() => void updateAccount({ ...account, enabled: !account.enabled })} onRemove={() => void removeAccount(account)} />
               ))}
               {!visibleAccounts.length && (
                 <Empty icon={<Users />} title={providerFilter === 'all' ? '账号池还是空的' : `尚未配置 ${providerLabel(providerFilter)}`} text="同步已有 OAuth / API Key 账号，或手动添加上游凭证。">
@@ -660,7 +675,7 @@ function formatQuotaNumber(value?: number | null) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
-function AccountCard({ account, xaiUsage, onEdit, onToggle, onRemove }: { account: MultiModelAccount; xaiUsage?: XaiAccountUsage; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
+function AccountCard({ account, usage, xaiUsage, onEdit, onToggle, onRemove }: { account: MultiModelAccount; usage?: MultiModelAccountUsage; xaiUsage?: XaiAccountUsage; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
   const capabilities = new Set(account.models.flatMap((item) => item.capabilities));
   return <article className={`mm-account${account.enabled ? '' : ' disabled'}`}>
     <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{xaiUsage?.email || account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}{xaiUsage?.plan ? ` · ${xaiUsage.plan}` : ''}</p></div><button type="button" className={`mm-account-state${account.enabled && (!xaiUsage || xaiUsage.status === 'normal') ? ' enabled' : ''}`} onClick={onToggle}>{!account.enabled ? '停用' : xaiUsage?.status === 'reauth_required' ? '需重登' : xaiUsage?.status === 'error' ? '异常' : '可用'}</button></div>
@@ -668,11 +683,21 @@ function AccountCard({ account, xaiUsage, onEdit, onToggle, onRemove }: { accoun
       {xaiUsage?.buckets?.length ? xaiUsage.buckets.slice(0, 4).map((bucket) => {
         const usedPercent = Math.max(0, Math.min(100, bucket.usedPercent ?? (bucket.used != null && bucket.total ? bucket.used / bucket.total * 100 : 0)));
         return <div className="mm-xai-quota-row" key={bucket.id} title={bucket.resetAt ? `重置：${new Date(bucket.resetAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : undefined}>
-          <span><b>{bucket.label}</b><em>{bucket.remaining != null && bucket.total != null ? `剩 ${formatQuotaNumber(bucket.remaining)} / ${formatQuotaNumber(bucket.total)}` : `${formatQuotaNumber(100 - usedPercent)}% 可用`}</em></span>
+          <span><b>{bucket.label}</b><em>{bucket.remaining != null && bucket.total != null ? `剩 ${formatQuotaNumber(bucket.remaining)} / ${formatQuotaNumber(bucket.total)}` : `剩余 ${formatQuotaNumber(100 - usedPercent)}% · 已用 ${formatQuotaNumber(usedPercent)}%`}</em></span>
           <i><u style={{ width: `${100 - usedPercent}%` }} /></i>
         </div>;
       }) : <p className={xaiUsage?.status === 'error' || xaiUsage?.status === 'reauth_required' ? 'error' : ''}>{xaiUsage?.statusReason || '额度尚未刷新'}</p>}
       {xaiUsage?.hasGrokCodeAccess != null && <small>Grok Code：{xaiUsage.hasGrokCodeAccess ? '可用' : '未开通'}</small>}
+    </div>}
+    {account.provider !== 'xai' && usage && <div className="mm-xai-quota mm-provider-quota">
+      {usage.buckets.length ? usage.buckets.slice(0, 5).map((bucket) => {
+        const remaining = Math.max(0, Math.min(100, bucket.remainingPercent));
+        return <div className="mm-xai-quota-row" key={bucket.id} title={bucket.resetAt ? `北京时间重置：${new Date(bucket.resetAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : undefined}>
+          <span><b>{bucket.label}</b><em>剩余 {remaining}% · 已用 {100 - remaining}%</em></span>
+          <i><u style={{ width: `${remaining}%` }} /></i>
+        </div>;
+      }) : <p>当前账号暂无额度缓存，请先在对应账号页手动刷新。</p>}
+      {usage.updatedAt && <small>更新时间：{new Date(usage.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</small>}
     </div>}
     <div className="mm-account-models"><strong>{account.models.length || '自动'} 个模型</strong><span>{[...capabilities].map((cap) => <em key={cap}>{cap}</em>)}</span></div>
     <code>{account.baseUrl || 'CLIProxy native endpoint'}</code>

@@ -15,6 +15,13 @@
 
 .mm-api-page * { box-sizing: border-box; }
 
+.mm-api-page-standalone {
+  min-height: 100vh;
+  padding: 18px 22px 28px;
+  overflow: auto;
+  background: var(--bg-primary);
+}
+
 .mm-api-content {
   display: flex;
   flex-direction: column;

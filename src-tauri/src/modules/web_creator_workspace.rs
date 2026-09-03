@@ -178,6 +178,13 @@ pub fn show_workspace_window(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+pub fn is_workspace_visible(app: &AppHandle) -> bool {
+    app.get_webview(CREATOR_WORKSPACE_WINDOW_LABEL)
+        .map(|webview| webview.window())
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false)
+}
+
 fn apply_bounds(view: &Webview, bounds: &WebCreatorBounds) -> Result<(), String> {
     view.set_position(tauri::LogicalPosition::new(
         bounds.x.max(0.0),

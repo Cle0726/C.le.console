@@ -69,6 +69,7 @@ import {
 import { runAutoBackupCycle } from './services/scheduledBackupService';
 import { readPerformanceMode } from './utils/performanceMode';
 import { normalizeUiScale, reflectUiScale } from './utils/uiScale';
+import { multiModelApiService } from './services/multiModelApiService';
 
 const DashboardPage = lazy(() =>
   import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })),
@@ -81,9 +82,6 @@ const CodexAccountsPage = lazy(() =>
 );
 const CodexApiServicePage = lazy(() =>
   import('./pages/CodexApiServicePage').then((module) => ({ default: module.CodexApiServicePage })),
-);
-const MultiModelApiServicePage = lazy(() =>
-  import('./pages/MultiModelApiServicePage').then((module) => ({ default: module.MultiModelApiServicePage })),
 );
 const JimengApiServicePage = lazy(() =>
   import('./pages/JimengApiServicePage').then((module) => ({ default: module.JimengApiServicePage })),
@@ -565,6 +563,12 @@ function MainApp({ startupReady }: { startupReady: boolean }) {
   const setPage = useCallback<Dispatch<SetStateAction<Page>>>((nextPage) => {
     const currentPage = pageRef.current;
     const targetPage = typeof nextPage === 'function' ? nextPage(currentPage) : nextPage;
+    if (targetPage === 'multi-model-api-service') {
+      void multiModelApiService.openWindow().catch((error) => {
+        console.error('[MultiModelAPI] 打开独立控制台失败:', error);
+      });
+      return;
+    }
     if (targetPage === currentPage) return;
 
     pageRef.current = targetPage;
@@ -2126,7 +2130,6 @@ function MainApp({ startupReady }: { startupReady: boolean }) {
           {page === 'claude' && <ClaudeAccountsPage subPlatform="desktop" />}
           {page === 'claude-cli' && <ClaudeAccountsPage subPlatform="cli" />}
           {page === 'codex-api-service' && <CodexApiServicePage />}
-          {page === 'multi-model-api-service' && <MultiModelApiServicePage />}
           {page === 'jimeng-api-service' && (
             <JimengApiServicePage onOpenCanvas={() => setPage('jimeng-infinite-canvas')} />
           )}

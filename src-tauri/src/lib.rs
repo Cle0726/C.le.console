@@ -469,6 +469,9 @@ pub fn run() {
             {
                 logger::log_warn(&format!("[WebCreator] 初始化独立工作台失败: {}", err));
             }
+            if let Err(err) = modules::multi_model_api_window::initialize(&app.handle()) {
+                logger::log_warn(&format!("[MultiModelAPI] 初始化独立控制台失败: {}", err));
+            }
 
             // 启动时清理 WebKit LocalStorage WAL，防止无限膨胀
             std::thread::spawn(|| {
@@ -747,7 +750,28 @@ pub fn run() {
                     }
                     return;
                 }
+                if window.label() == modules::multi_model_api_window::MULTI_MODEL_API_WINDOW_LABEL {
+                    api.prevent_close();
+                    if let Err(err) = modules::multi_model_api_window::hide(window.app_handle()) {
+                        logger::log_warn(&format!("[MultiModelAPI] 隐藏独立控制台失败: {}", err));
+                    }
+                    return;
+                }
                 if window.label() != "main" {
+                    return;
+                }
+
+                // The API sidecar and creator workbench have independent
+                // lifecycles. Closing the main console must not terminate an
+                // enabled gateway or another visible workbench.
+                if modules::multi_model_api::should_keep_app_alive()
+                    || modules::multi_model_api_window::is_visible(window.app_handle())
+                    || modules::web_creator_workspace::is_workspace_visible(window.app_handle())
+                {
+                    api.prevent_close();
+                    if let Err(err) = window.hide() {
+                        logger::log_warn(&format!("[Window] 隐藏主窗口失败: {}", err));
+                    }
                     return;
                 }
 
@@ -909,7 +933,6 @@ pub fn run() {
             commands::system::start_chat2api,
             commands::system::start_aurora,
             commands::system::import_local_gpt_accounts,
-            commands::multi_model_api::multi_model_api_sync_local_gpt_bridges,
             // Logs Commands
             commands::logs::logs_get_snapshot,
             commands::logs::logs_open_log_directory,
@@ -1048,6 +1071,7 @@ pub fn run() {
             commands::codex::codex_local_access_chat_test_stream,
             // Multi-model API proxy service
             commands::multi_model_api::multi_model_api_get_state,
+            commands::multi_model_api::multi_model_api_open_window,
             commands::multi_model_api::multi_model_api_save_config,
             commands::multi_model_api::multi_model_api_set_enabled,
             commands::multi_model_api::multi_model_api_sync_managed_accounts,

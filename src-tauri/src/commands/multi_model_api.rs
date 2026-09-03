@@ -8,7 +8,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use tauri::AppHandle;
 use url::Url;
+
+#[tauri::command]
+pub fn multi_model_api_open_window(app: AppHandle) -> Result<(), String> {
+    crate::modules::multi_model_api_window::show(&app)
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,11 +92,6 @@ pub async fn multi_model_api_diagnose_and_repair(
     deep: Option<bool>,
 ) -> Result<MultiModelRepairReport, String> {
     multi_model_api::diagnose_and_repair(deep.unwrap_or(true)).await
-}
-
-#[tauri::command]
-pub async fn multi_model_api_sync_local_gpt_bridges() -> Result<MultiModelApiState, String> {
-    multi_model_api::sync_local_gpt_bridges().await
 }
 
 #[tauri::command]

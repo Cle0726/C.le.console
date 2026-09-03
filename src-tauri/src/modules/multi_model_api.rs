@@ -1,9 +1,8 @@
 use crate::models::claude::ClaudeAuthMode;
-use crate::models::codex::CodexAuthMode;
 use crate::modules::atomic_write::{parse_json_with_auto_restore, write_string_atomic};
 use crate::modules::multi_model_xai::{self, XaiAccountUsage, XaiOAuthStartResponse};
 use crate::modules::{
-    account, claude_account, codex_account, codex_local_access, gemini_account, logger, process,
+    account, claude_account, codex_local_access, gemini_account, logger, process,
 };
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
@@ -133,6 +132,25 @@ pub struct MultiModelApiState {
     pub catalog: Vec<MultiModelCatalogEntry>,
     pub self_heal: MultiModelSelfHealState,
     pub xai_accounts: Vec<XaiAccountUsage>,
+    pub account_usages: Vec<MultiModelAccountUsage>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiModelAccountUsage {
+    pub account_id: String,
+    pub updated_at: Option<String>,
+    pub status: String,
+    pub buckets: Vec<MultiModelUsageBucket>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiModelUsageBucket {
+    pub id: String,
+    pub label: String,
+    pub remaining_percent: i32,
+    pub reset_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -332,10 +350,11 @@ fn load_config() -> Result<MultiModelApiConfig, String> {
         .map_err(|error| format!("读取多模型 API 配置失败: {error}"))?;
     let mut config: MultiModelApiConfig = parse_json_with_auto_restore(&path, &raw)
         .map_err(|error| format!("解析多模型 API 配置失败: {error}"))?;
+    let removed_separated_gpt_accounts = config.accounts.iter().any(is_separated_gpt_account);
     normalize_config(&mut config)?;
     let affinity_migrated = migrate_legacy_round_robin_affinity(&mut config)?;
     let legacy_migration = migrate_legacy_key_records(&mut config)?;
-    if affinity_migrated || legacy_migration.is_some() {
+    if affinity_migrated || legacy_migration.is_some() || removed_separated_gpt_accounts {
         // Normalize again because imported records came from older schemas.
         normalize_config(&mut config)?;
         save_config_file(&config)?;
@@ -583,6 +602,12 @@ fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
             return Err("下游 API Key 不能重复".into());
         }
     }
+    // Codex/GPT desktop credentials belong exclusively to the dedicated Codex
+    // service. Older builds synchronized them into this account pool; purge
+    // those persisted routes before validation and sidecar synthesis.
+    config
+        .accounts
+        .retain(|account| !is_separated_gpt_account(account));
     let mut account_ids = BTreeSet::new();
     for account in &mut config.accounts {
         account.id = account.id.trim().to_string();
@@ -612,7 +637,19 @@ fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
         }
         account.models.retain(|model| !model.id.is_empty());
     }
+    for key in &mut config.api_keys {
+        key.account_ids.retain(|id| account_ids.contains(id));
+    }
     Ok(())
+}
+
+fn is_separated_gpt_account(account: &MultiModelAccount) -> bool {
+    let provider = normalize_provider(&account.provider);
+    provider == "codex"
+        || provider == "chat2api"
+        || provider == "aurora"
+        || account.id == "local-chat2api"
+        || account.id == "local-aurora"
 }
 
 fn normalize_provider(raw: &str) -> String {
@@ -863,7 +900,6 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
         .map_err(|error| format!("创建多模型 API sidecar 目录失败: {error}"))?;
 
     let mut gemini_keys = Vec::new();
-    let mut codex_keys = Vec::new();
     let mut claude_keys = Vec::new();
     let mut compat = Vec::new();
     let mut providers = BTreeSet::new();
@@ -952,10 +988,6 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                     "models": models.iter().map(|item| model_json(item, true)).collect::<Vec<_>>(),
                     "headers": account.headers
                 }));
-            }
-            "codex" if account.auth_mode != "oauth_json" => {
-                providers.insert("codex".to_string());
-                codex_keys.push(common);
             }
             "claude" if account.auth_mode != "oauth_json" => {
                 providers.insert("claude".to_string());
@@ -1156,7 +1188,6 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "session-affinity-ttl": config.session_affinity_ttl
         },
         "gemini-api-key": gemini_keys,
-        "codex-api-key": codex_keys,
         "claude-api-key": claude_keys,
         "openai-compatibility": compat
     });
@@ -2057,6 +2088,7 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
     } else {
         "127.0.0.1"
     };
+    let account_usages = cached_account_usages(&config);
     Ok(MultiModelApiState {
         base_url: format!("http://{host}:{}", config.port),
         catalog: catalog_for_config(&config),
@@ -2065,7 +2097,123 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
         last_error,
         self_heal: self_heal_snapshot().await,
         xai_accounts: load_xai_usage_cache(),
+        account_usages,
     })
+}
+
+fn cached_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccountUsage> {
+    let antigravity = account::list_accounts()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| (item.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let gemini = gemini_account::list_accounts_checked()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| (item.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let claude = claude_account::list_accounts_checked()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| (item.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+
+    config
+        .accounts
+        .iter()
+        .filter_map(|route| {
+            if let Some(id) = route.source.strip_prefix("cle:antigravity:") {
+                let item = antigravity.get(id)?;
+                let quota = item.quota.as_ref()?;
+                return Some(MultiModelAccountUsage {
+                    account_id: route.id.clone(),
+                    updated_at: chrono::DateTime::from_timestamp(quota.last_updated, 0)
+                        .map(|value| value.to_rfc3339()),
+                    status: if quota.is_forbidden {
+                        "forbidden"
+                    } else {
+                        "normal"
+                    }
+                    .into(),
+                    buckets: quota
+                        .models
+                        .iter()
+                        .filter(|model| is_routable_antigravity_model(&model.name))
+                        .map(|model| MultiModelUsageBucket {
+                            id: model.name.clone(),
+                            label: model
+                                .display_name
+                                .clone()
+                                .unwrap_or_else(|| model.name.clone()),
+                            remaining_percent: model.percentage.clamp(0, 100),
+                            reset_at: (!model.reset_time.trim().is_empty())
+                                .then(|| model.reset_time.clone()),
+                        })
+                        .collect(),
+                });
+            }
+            if let Some(id) = route.source.strip_prefix("cle:gemini:") {
+                let item = gemini.get(id)?;
+                return Some(MultiModelAccountUsage {
+                    account_id: route.id.clone(),
+                    updated_at: None,
+                    status: item.status.clone().unwrap_or_else(|| "normal".into()),
+                    buckets: gemini_account::extract_account_model_remaining(item)
+                        .into_iter()
+                        .map(|(model, remaining)| MultiModelUsageBucket {
+                            id: model.clone(),
+                            label: model,
+                            remaining_percent: remaining.clamp(0, 100),
+                            reset_at: None,
+                        })
+                        .collect(),
+                });
+            }
+            if let Some(id) = route.source.strip_prefix("cle:claude:") {
+                let item = claude.get(id)?;
+                let quota = item.quota.as_ref()?;
+                let reset = |timestamp: Option<i64>| {
+                    timestamp
+                        .and_then(|value| chrono::DateTime::from_timestamp(value, 0))
+                        .map(|value| value.to_rfc3339())
+                };
+                let mut buckets = vec![
+                    MultiModelUsageBucket {
+                        id: "five-hour".into(),
+                        label: "5 小时".into(),
+                        // Claude stores API utilization (used percentage), while
+                        // the unified quota card is normalized to remaining.
+                        remaining_percent: (100 - quota.five_hour_percentage).clamp(0, 100),
+                        reset_at: reset(quota.five_hour_reset_time),
+                    },
+                    MultiModelUsageBucket {
+                        id: "seven-day".into(),
+                        label: "7 天".into(),
+                        remaining_percent: (100 - quota.seven_day_percentage).clamp(0, 100),
+                        reset_at: reset(quota.seven_day_reset_time),
+                    },
+                ];
+                if let Some(value) = quota.seven_day_sonnet_percentage {
+                    buckets.push(MultiModelUsageBucket {
+                        id: "seven-day-sonnet".into(),
+                        label: "Sonnet 7 天".into(),
+                        remaining_percent: (100 - value).clamp(0, 100),
+                        reset_at: reset(quota.seven_day_sonnet_reset_time),
+                    });
+                }
+                return Some(MultiModelAccountUsage {
+                    account_id: route.id.clone(),
+                    updated_at: item
+                        .usage_updated_at
+                        .and_then(|value| chrono::DateTime::from_timestamp(value, 0))
+                        .map(|value| value.to_rfc3339()),
+                    status: item.status.clone().unwrap_or_else(|| "normal".into()),
+                    buckets,
+                });
+            }
+            None
+        })
+        .collect()
 }
 
 fn repair_check(
@@ -2187,154 +2335,6 @@ async fn probe_route_contract(config: &MultiModelApiConfig, path: &str) -> Resul
         ));
     }
     Ok(status)
-}
-
-async fn local_bridge_models(
-    base_url: &str,
-    api_key: &str,
-) -> Result<Vec<MultiModelDefinition>, String> {
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(2))
-        .timeout(Duration::from_secs(8))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let mut request = client.get(format!("{}/models", base_url.trim_end_matches('/')));
-    if !api_key.trim().is_empty() {
-        request = request.bearer_auth(api_key.trim());
-    }
-    let response = request.send().await.map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("模型目录返回 HTTP {}", response.status().as_u16()));
-    }
-    let value: Value = response.json().await.map_err(|error| error.to_string())?;
-    let models = value
-        .get("data")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item.get("id").and_then(Value::as_str))
-        .map(|id| model_definition(id.to_string()))
-        .collect::<Vec<_>>();
-    if models.is_empty() {
-        return Err("模型目录为空".to_string());
-    }
-    Ok(models)
-}
-
-fn local_aurora_api_key() -> String {
-    if let Ok(value) = std::env::var("CLE_AURORA_API_KEY") {
-        let value = value.trim();
-        if !value.is_empty() {
-            return value.to_string();
-        }
-    }
-    let mut candidates = Vec::new();
-    if let Ok(path) = std::env::var("CLE_AURORA_PATH") {
-        if let Some(parent) = Path::new(&path).parent() {
-            candidates.push(parent.join("new_api_key.txt"));
-        }
-    }
-    #[cfg(windows)]
-    candidates.push(PathBuf::from(r"F:\自动注册\AuroraProxy\new_api_key.txt"));
-    candidates
-        .into_iter()
-        .find_map(|path| std::fs::read_to_string(path).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "local-aurora".to_string())
-}
-
-fn upsert_local_bridge_account(
-    config: &mut MultiModelApiConfig,
-    id: &str,
-    name: &str,
-    provider: &str,
-    base_url: &str,
-    api_key: &str,
-    models: Vec<MultiModelDefinition>,
-) {
-    let account = MultiModelAccount {
-        id: id.to_string(),
-        name: name.to_string(),
-        provider: provider.to_string(),
-        auth_mode: "api_key".to_string(),
-        base_url: base_url.to_string(),
-        api_key: api_key.to_string(),
-        credential_json: None,
-        proxy_url: "direct".to_string(),
-        prefix: String::new(),
-        priority: 10,
-        headers: BTreeMap::new(),
-        models,
-        enabled: true,
-        source: "cle:local-gpt-bridge".to_string(),
-    };
-    if let Some(existing) = config.accounts.iter_mut().find(|item| item.id == id) {
-        *existing = account;
-    } else {
-        config.accounts.push(account);
-    }
-}
-
-/// Discover the locally managed Chat2API/Aurora services and expose them
-/// through the same stable OpenAI-compatible gateway and downstream keys.
-pub async fn sync_local_gpt_bridges() -> Result<MultiModelApiState, String> {
-    let _repair_guard = repair_lifecycle().lock().await;
-    let mut config = load_config()?;
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(2))
-        .timeout(Duration::from_secs(8))
-        .build()
-        .map_err(|error| error.to_string())?;
-
-    let chat_tokens = client
-        .get("http://127.0.0.1:5005/tokens")
-        .send()
-        .await
-        .map_err(|error| format!("Chat2API 未就绪，请先启动：{error}"))?;
-    if !chat_tokens.status().is_success() {
-        return Err(format!(
-            "Chat2API 账号管理端点返回 HTTP {}",
-            chat_tokens.status().as_u16()
-        ));
-    }
-    upsert_local_bridge_account(
-        &mut config,
-        "local-chat2api",
-        "Chat2API 免费账号池",
-        "chat2api",
-        "http://127.0.0.1:5005/v1",
-        "cle-chat2api-pool",
-        ["gpt-4o", "gpt-4o-mini", "o3-mini", "o1-mini"]
-            .into_iter()
-            .map(|id| model_definition(id.to_string()))
-            .collect(),
-    );
-
-    let aurora_key = local_aurora_api_key();
-    let aurora_models = local_bridge_models("http://127.0.0.1:8080/v1", &aurora_key)
-        .await
-        .map_err(|error| format!("Aurora 未就绪或认证失败：{error}"))?;
-    upsert_local_bridge_account(
-        &mut config,
-        "local-aurora",
-        "Aurora GPT 免费账号池",
-        "aurora",
-        "http://127.0.0.1:8080/v1",
-        &aurora_key,
-        aurora_models,
-    );
-
-    normalize_config(&mut config)?;
-    save_config_file(&config)?;
-    write_launch_files(&config)?;
-    if config.enabled {
-        start_runtime(&config, false).await?;
-        record_health_success(true).await;
-    }
-    get_state().await
 }
 
 pub async fn diagnose_and_repair(deep: bool) -> Result<MultiModelRepairReport, String> {
@@ -2766,8 +2766,7 @@ pub async fn set_enabled(enabled: bool) -> Result<MultiModelApiState, String> {
 
 fn test_provider_priority(provider: &str) -> u8 {
     match provider.trim().to_ascii_lowercase().as_str() {
-        "codex" => 0,
-        "claude-web" => 1,
+        "claude-web" => 0,
         "openai" | "claude" | "custom" => 2,
         "antigravity" => 3,
         "gemini" => 4,
@@ -3377,71 +3376,6 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         }
     }
 
-    if let Ok(accounts) = codex_account::list_accounts_checked() {
-        for account in accounts {
-            if account.requires_reauth
-                || (account.auth_mode == CodexAuthMode::OAuth
-                    && account
-                        .authorization_status
-                        .as_deref()
-                        .is_some_and(|status| {
-                            status.eq_ignore_ascii_case("pending")
-                                || status.eq_ignore_ascii_case("login_required")
-                        }))
-                || account.quota_error.as_ref().is_some_and(|error| {
-                    is_blocking_managed_route_error(
-                        error.code.as_deref(),
-                        Some(error.message.as_str()),
-                    )
-                })
-            {
-                logger::log_warn(&format!(
-                    "[MultiModelAPI] 跳过不可用 Codex 账号: id={}, email={}",
-                    account.id, account.email
-                ));
-                continue;
-            }
-            let (auth_mode, api_key, credential_json) = match account.auth_mode {
-                CodexAuthMode::Apikey => (
-                    "api_key".into(),
-                    account.openai_api_key.unwrap_or_default(),
-                    None,
-                ),
-                CodexAuthMode::OAuth => (
-                    "oauth_json".into(),
-                    String::new(),
-                    Some(json!({
-                        "type": "codex",
-                        "id_token": account.tokens.id_token,
-                        "access_token": account.tokens.access_token,
-                        "refresh_token": account.tokens.refresh_token.unwrap_or_default(),
-                        "account_id": account.account_id.unwrap_or_else(|| account.id.clone()),
-                        "email": account.email.clone()
-                    })),
-                ),
-            };
-            let source = format!("cle:codex:{}", account.id);
-            config.accounts.push(MultiModelAccount {
-                id: format!("cle-codex-{}", account.id),
-                name: format!("Codex · {}", account.email),
-                provider: "codex".into(),
-                auth_mode,
-                base_url: account.api_base_url.unwrap_or_default(),
-                api_key,
-                credential_json,
-                proxy_url: String::new(),
-                prefix: String::new(),
-                priority: 0,
-                headers: BTreeMap::new(),
-                models: models_or_defaults(account.api_model_catalog, DEFAULT_CODEX_MODELS),
-                enabled: previous_managed_enabled
-                    .get(&source)
-                    .copied()
-                    .unwrap_or(true),
-                source,
-            });
-        }
-    }
     if let Ok(accounts) = gemini_account::list_accounts_checked() {
         for account in accounts {
             if is_blocking_managed_account_status(account.status.as_deref()) {
@@ -3581,17 +3515,6 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
     }
     save_config(config).await
 }
-
-const DEFAULT_CODEX_MODELS: &[&str] = &[
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-image-2",
-    "codex-auto-review",
-];
 
 const DEFAULT_ANTIGRAVITY_MODELS: &[&str] = &[
     "claude-opus-4-6-thinking",
@@ -3763,6 +3686,13 @@ pub async fn restore() {
     start_runtime_watchdog();
 }
 
+/// Whether the background gateway owns application lifetime after the main UI
+/// is closed. Reading the persisted flag keeps this check synchronous and does
+/// not depend on the UI window being mounted.
+pub fn should_keep_app_alive() -> bool {
+    load_config().map(|config| config.enabled).unwrap_or(false)
+}
+
 pub fn start_runtime_watchdog() {
     if WATCHDOG_STARTED.swap(true, Ordering::SeqCst) {
         return;
@@ -3875,11 +3805,11 @@ pub async fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::{
-        automatic_chat_test_models, builtin_catalog, catalog_for_config, default_config,
-        is_blocking_managed_account_status, is_blocking_managed_route_error,
-        is_routable_antigravity_model, managed_models_or_previous_selection, model_definition,
-        normalize_config, normalize_oauth_credential, normalize_provider,
-        provider_chat_test_models, watchdog_restart_delay, MultiModelAccount, MultiModelDefinition,
+        builtin_catalog, catalog_for_config, default_config, is_blocking_managed_account_status,
+        is_blocking_managed_route_error, is_routable_antigravity_model,
+        managed_models_or_previous_selection, model_definition, normalize_config,
+        normalize_oauth_credential, normalize_provider, provider_chat_test_models,
+        watchdog_restart_delay, MultiModelAccount, MultiModelDefinition,
         DEFAULT_ANTIGRAVITY_MODELS,
     };
     use serde_json::json;
@@ -4069,47 +3999,32 @@ mod tests {
     }
 
     #[test]
-    fn automatic_chat_test_prefers_stable_codex_text_model_over_first_xai_account() {
-        let model = |id: &str, capabilities: &[&str]| MultiModelDefinition {
-            id: id.to_string(),
-            alias: String::new(),
-            capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
-            enabled: true,
-        };
-        let account = |provider: &str, models: Vec<MultiModelDefinition>| MultiModelAccount {
+    fn normalization_removes_codex_accounts_from_the_multi_model_pool() {
+        let account = |provider: &str| MultiModelAccount {
             id: provider.to_string(),
             name: provider.to_string(),
             provider: provider.to_string(),
             auth_mode: "oauth_json".to_string(),
             base_url: String::new(),
             api_key: String::new(),
-            credential_json: None,
+            credential_json: Some(json!({"access_token": "test"})),
             proxy_url: String::new(),
             prefix: String::new(),
             priority: 0,
             headers: Default::default(),
-            models,
+            models: vec![model_definition("text-model".to_string())],
             enabled: true,
-            source: String::new(),
+            source: format!("cle:{provider}:account"),
         };
         let mut config = default_config();
-        config.accounts = vec![
-            account("xai", vec![model("grok-4.3", &["text"])]),
-            account(
-                "codex",
-                vec![
-                    model("gpt-image-2", &["image"]),
-                    model("codex-auto-review", &["text"]),
-                    model("gpt-5.5", &["text"]),
-                    model("gpt-5.4-mini", &["text"]),
-                ],
-            ),
-        ];
+        config.accounts = vec![account("xai"), account("codex")];
+        config.api_keys[0].account_ids = vec!["xai".into(), "codex".into()];
 
-        let candidates = automatic_chat_test_models(&config);
-        assert_eq!(candidates.first().map(String::as_str), Some("gpt-5.4-mini"));
-        assert!(!candidates.iter().any(|model| model == "gpt-image-2"));
-        assert!(!candidates.iter().any(|model| model == "codex-auto-review"));
+        normalize_config(&mut config).expect("normalize config");
+
+        assert_eq!(config.accounts.len(), 1);
+        assert_eq!(config.accounts[0].provider, "xai");
+        assert_eq!(config.api_keys[0].account_ids, vec!["xai"]);
     }
 
     #[test]
@@ -4139,11 +4054,10 @@ mod tests {
         let mut config = default_config();
         config.accounts = vec![
             account(
-                "codex",
+                "claude",
                 vec![
                     model("shared-chat", &["text"]),
-                    model("gpt-5.4-mini", &["text"]),
-                    model("gpt-image-2", &["image"]),
+                    model("claude-haiku-4-5", &["text"]),
                 ],
             ),
             account(
@@ -4158,7 +4072,7 @@ mod tests {
         assert_eq!(
             provider_chat_test_models(&config),
             vec![
-                ("codex".to_string(), "gpt-5.4-mini".to_string()),
+                ("claude".to_string(), "claude-haiku-4-5".to_string()),
                 ("gemini".to_string(), "gemini-3-flash".to_string()),
             ]
         );

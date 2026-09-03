@@ -65,6 +65,21 @@ export interface MultiModelApiState {
   catalog: MultiModelCatalogEntry[];
   selfHeal?: MultiModelSelfHealState;
   xaiAccounts?: XaiAccountUsage[];
+  accountUsages?: MultiModelAccountUsage[];
+}
+
+export interface MultiModelUsageBucket {
+  id: string;
+  label: string;
+  remainingPercent: number;
+  resetAt?: string | null;
+}
+
+export interface MultiModelAccountUsage {
+  accountId: string;
+  updatedAt?: string | null;
+  status: string;
+  buckets: MultiModelUsageBucket[];
 }
 
 export interface XaiQuotaBucket {

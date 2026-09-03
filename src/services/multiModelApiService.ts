@@ -34,6 +34,7 @@ export interface MultiModelGenericOAuthExchangeRequest {
 }
 
 export const multiModelApiService = {
+  openWindow: () => invoke<void>('multi_model_api_open_window'),
   getState: () => invoke<MultiModelApiState>('multi_model_api_get_state'),
   saveConfig: (config: MultiModelApiConfig) =>
     invoke<MultiModelApiState>('multi_model_api_save_config', { config }),
@@ -45,8 +46,6 @@ export const multiModelApiService = {
     invoke<MultiModelApiTestResult>('multi_model_api_test_chat', { model, prompt }),
   diagnoseAndRepair: (deep = true) =>
     invoke<MultiModelRepairReport>('multi_model_api_diagnose_and_repair', { deep }),
-  syncLocalGptBridges: () =>
-    invoke<MultiModelApiState>('multi_model_api_sync_local_gpt_bridges'),
   startXaiOAuth: () =>
     invoke<XaiOAuthStartResponse>('multi_model_api_xai_oauth_start'),
   completeXaiOAuth: (loginId: string) =>

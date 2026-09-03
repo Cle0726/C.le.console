@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useAccountStore } from '../stores/useAccountStore';
 import { useCodexAccountStore } from '../stores/useCodexAccountStore';
@@ -194,6 +194,9 @@ function getCurrentAccountEmails(): Record<CurrentAccountRefreshPlatform, string
 }
 
 export function useAutoRefresh() {
+  const [windowActive, setWindowActive] = useState(() =>
+    document.visibilityState !== 'hidden' && document.hasFocus(),
+  );
   const refreshAllQuotas = useAccountStore((state) => state.refreshAllQuotas);
   const fetchAccounts = useAccountStore((state) => state.fetchAccounts);
   const fetchCurrentAccount = useAccountStore((state) => state.fetchCurrentAccount);
@@ -280,6 +283,21 @@ export function useAutoRefresh() {
   const stopScheduler = useCallback(() => {
     schedulerRef.current?.stop();
     schedulerRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    const updateActivity = () => {
+      setWindowActive(document.visibilityState !== 'hidden' && document.hasFocus());
+    };
+    window.addEventListener('focus', updateActivity);
+    window.addEventListener('blur', updateActivity);
+    document.addEventListener('visibilitychange', updateActivity);
+    updateActivity();
+    return () => {
+      window.removeEventListener('focus', updateActivity);
+      window.removeEventListener('blur', updateActivity);
+      document.removeEventListener('visibilitychange', updateActivity);
+    };
   }, []);
 
   const executeWithGuard = useCallback(
@@ -836,6 +854,12 @@ export function useAutoRefresh() {
   ]);
 
   useEffect(() => {
+    if (!windowActive) {
+      destroyedRef.current = true;
+      setupPendingRef.current = false;
+      stopScheduler();
+      return;
+    }
     destroyedRef.current = false;
     let startupTimer = window.setTimeout(() => {
       startupTimer = 0;
@@ -865,5 +889,5 @@ export function useAutoRefresh() {
       stopScheduler();
       window.removeEventListener('config-updated', handleConfigUpdate);
     };
-  }, [setupAutoRefresh, stopScheduler]);
+  }, [setupAutoRefresh, stopScheduler, windowActive]);
 }

@@ -46,7 +46,6 @@ import {
 import { getPlatformLabel } from "../utils/platformMeta";
 import { useCodexAccountStore } from "../stores/useCodexAccountStore";
 import * as codexLocalAccessService from "../services/codexLocalAccessService";
-import { multiModelApiService } from "../services/multiModelApiService";
 import {
   getCodexAccountGroups,
   type CodexAccountGroup,
@@ -2620,25 +2619,6 @@ export function CodexApiServicePage() {
             >
               <Power size={14} />
               启动 Aurora
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => {
-                Promise.all([invoke("start_chat2api"), invoke("start_aurora")])
-                  .then(() => multiModelApiService.syncLocalGptBridges())
-                  .then((gateway) => void message(
-                    `已接入 Chat2API 与 Aurora 免费账号池，共发布 ${gateway.catalog.length} 个模型。统一调用地址：${gateway.baseUrl}/v1`,
-                    { title: "GPT 免费账号池已接入", kind: "info" },
-                  ))
-                  .catch((error) => void message(
-                    `接入失败：${String(error)}`,
-                    { title: "免费账号池接入失败", kind: "error" },
-                  ));
-              }}
-            >
-              <Users size={14} />
-              管理 / 接入 GPT 免费账号池
             </button>
             <button
               type="button"
