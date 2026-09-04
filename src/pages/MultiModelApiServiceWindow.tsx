@@ -8,5 +8,9 @@ import { MultiModelApiServicePage } from './MultiModelApiServicePage';
 
 /** Dedicated host: it does not mount the account console or its refresh jobs. */
 export function MultiModelApiServiceWindow() {
-  return <MultiModelApiServicePage standalone />;
+  return (
+    <div className="mm-api-standalone-window">
+      <MultiModelApiServicePage standalone />
+    </div>
+  );
 }

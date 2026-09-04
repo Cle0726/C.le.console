@@ -61,6 +61,23 @@
         "resizable": true,
         "visible": false,
         "backgroundColor": "#0B0C0E"
+      },
+      {
+        "label": "multi-model-api-console",
+        "title": "C.le. 多模型 API 服务",
+        "url": "index.html",
+        "create": false,
+        "width": 1480,
+        "height": 920,
+        "minWidth": 1050,
+        "minHeight": 700,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": true,
+        "center": true,
+        "resizable": true,
+        "visible": false,
+        "backgroundColor": "#0B0C0E"
       }
     ]
   },
