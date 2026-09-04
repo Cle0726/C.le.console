@@ -25,10 +25,15 @@ pub fn initialize(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn show(app: &AppHandle) -> Result<(), String> {
+    // Setup normally creates the hidden window up front. Re-create lazily as a
+    // defensive path for macOS restores and for a click racing setup.
+    if app.get_webview(MULTI_MODEL_API_WINDOW_LABEL).is_none() {
+        initialize(app)?;
+    }
     let window = app
         .get_webview(MULTI_MODEL_API_WINDOW_LABEL)
         .map(|webview| webview.window())
-        .ok_or_else(|| "多模型 API 独立窗口仍在初始化，请稍后重试".to_string())?;
+        .ok_or_else(|| "多模型 API 独立窗口创建失败".to_string())?;
     window.show().map_err(|error| error.to_string())?;
     window.unminimize().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())?;
