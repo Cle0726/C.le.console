@@ -300,6 +300,9 @@
 .mm-account footer button { border: 0; background: transparent; color: var(--primary); font-size: 9.5px; cursor: pointer; }
 .mm-account footer button.trash { display: grid; place-items: center; color: var(--danger); }
 .mm-account footer svg { width: 13px; height: 13px; }
+.mm-account-routing-stat { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; color: var(--text-secondary); font-size: 8.5px; }
+.mm-account-routing-stat b { color: var(--primary); font-size: 10px; }
+.mm-account-routing-stat em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; }
 .mm-xai-quota { display: grid; gap: 6px; margin: 9px 0 7px; padding: 8px; border: 1px solid var(--mm-border-soft); border-radius: 8px; background: color-mix(in srgb, var(--bg-card) 72%, transparent); }
 .mm-xai-quota-row { display: grid; gap: 3px; }
 .mm-xai-quota-row > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }

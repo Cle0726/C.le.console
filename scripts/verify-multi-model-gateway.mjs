@@ -76,10 +76,14 @@ try {
     'api-keys': ['downstream-e2e-key'], 'request-retry': 0,
     debug: false, 'request-log': false, 'passthrough-headers': true,
     'disable-image-generation': false,
-    routing: { strategy: 'round-robin', 'session-affinity': true, 'session-affinity-ttl': '1h' },
+    routing: { strategy: 'round-robin', 'session-affinity': false, 'session-affinity-ttl': '1h' },
     'openai-compatibility': [{
       name: 'xai', 'base-url': `http://127.0.0.1:${upstreamPort}/v1`,
-      'api-key-entries': [{ 'api-key': 'upstream-e2e-key' }],
+      'api-key-entries': [
+        { 'api-key': 'upstream-e2e-key-a' },
+        { 'api-key': 'upstream-e2e-key-b' },
+        { 'api-key': 'upstream-e2e-key-exhausted' },
+      ],
       models: [
         { name: 'grok-4.3', alias: '' },
         { name: 'grok-imagine-image', alias: '', image: true },
@@ -89,7 +93,11 @@ try {
   }, null, 2));
   await writeFile(manifestPath, JSON.stringify({
     apiKeys: [{ id: 'key-e2e', label: 'E2E Key', key: 'downstream-e2e-key', allowedModels: [], excludedModels: [], enabled: true }],
-    accounts: [{ id: 'xai-e2e', email: 'xai-e2e@sandbox.invalid', upstreamApiKey: 'upstream-e2e-key' }],
+    accounts: [
+      { id: 'xai-e2e-a', email: 'xai-a@sandbox.invalid', upstreamApiKey: 'upstream-e2e-key-a', provider: 'xai', models: ['grok-4.3', 'grok-imagine-image', 'grok-imagine-video'], modelQuotas: { 'grok-4.3': 82 } },
+      { id: 'xai-e2e-b', email: 'xai-b@sandbox.invalid', upstreamApiKey: 'upstream-e2e-key-b', provider: 'xai', models: ['grok-4.3', 'grok-imagine-image', 'grok-imagine-video'], modelQuotas: { 'grok-4.3': 17 } },
+      { id: 'xai-e2e-exhausted', email: 'xai-exhausted@sandbox.invalid', upstreamApiKey: 'upstream-e2e-key-exhausted', provider: 'xai', models: ['grok-4.3'], modelQuotas: { 'grok-4.3': 0 } },
+    ],
     modelIds: ['grok-4.3', 'grok-imagine-image', 'grok-imagine-video'],
     modelAliases: [], excludedModels: [], routingStrategy: 'round-robin', providers: ['xai'],
     nativeModelRegistry: true, debugLogs: false,
@@ -129,6 +137,12 @@ try {
   const chat = await requestJson(`${baseUrl}/v1/chat/completions`, {
     method: 'POST', headers, body: JSON.stringify({ model: 'grok-4.3', messages: [{ role: 'user', content: 'Reply gateway-ok' }], stream: false }),
   });
+  const balancingChats = [];
+  for (let index = 0; index < 3; index += 1) {
+    balancingChats.push(await requestJson(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST', headers, body: JSON.stringify({ model: 'grok-4.3', messages: [{ role: 'user', content: `Round robin probe ${index + 2}` }], stream: false }),
+    }));
+  }
   const image = await requestJson(`${baseUrl}/v1/images/generations`, {
     method: 'POST', headers, body: JSON.stringify({ model: 'grok-imagine-image', prompt: 'e2e image' }),
   });
@@ -140,16 +154,26 @@ try {
   assert(models.status === 200, '模型目录请求失败', models);
   assert(JSON.stringify(models.body).includes('grok-4.3'), '模型目录缺少测试模型', models);
   assert(chat.status === 200 && JSON.stringify(chat.body).includes('gateway-ok'), '文本代理链路失败', chat);
+  assert(balancingChats.every((item) => item.status === 200), '轮询测试请求失败', balancingChats);
   assert(image.status === 200 && JSON.stringify(image.body).includes('e2e.png'), '图片代理链路失败', image);
   assert(video.status === 200 && JSON.stringify(video.body).includes('video-e2e'), '视频代理链路失败', video);
   assert(requests.some((item) => item.url?.includes('/chat/completions')), '文本请求没有到达上游', requests);
   assert(requests.some((item) => item.url?.includes('/images/generations')), '图片请求没有到达上游', requests);
   assert(requests.some((item) => item.url?.includes('/videos/generations')), '视频请求没有到达上游', requests);
+  const chatAuthorizations = requests
+    .filter((item) => item.url?.includes('/chat/completions'))
+    .map((item) => item.authorization);
+  assert(JSON.stringify(chatAuthorizations) === JSON.stringify([
+    'Bearer upstream-e2e-key-a',
+    'Bearer upstream-e2e-key-b',
+    'Bearer upstream-e2e-key-a',
+    'Bearer upstream-e2e-key-b',
+  ]), 'Round Robin 没有在正额度账号间严格轮询，或错误调用了明确耗尽账号', chatAuthorizations);
 
-  report = { ok: true, checkedAt: new Date().toISOString(), baseUrl, upstreamPort, gatewayPort, unauthorized, models, chat, image, video, upstreamRequests: requests, sidecarEvents };
+  report = { ok: true, checkedAt: new Date().toISOString(), baseUrl, upstreamPort, gatewayPort, unauthorized, models, chat, balancingChats, image, video, chatAuthorizations, upstreamRequests: requests, sidecarEvents };
   await mkdir(dirname(reportPath), { recursive: true });
   await writeFile(reportPath, JSON.stringify(report, null, 2));
-  console.log(JSON.stringify({ ok: true, reportPath, checks: { unauthorized: unauthorized.status, models: models.status, chat: chat.status, image: image.status, video: video.status }, upstreamRoutes: requests.map((item) => item.url) }, null, 2));
+  console.log(JSON.stringify({ ok: true, reportPath, checks: { unauthorized: unauthorized.status, models: models.status, chat: chat.status, roundRobin: chatAuthorizations, image: image.status, video: video.status }, upstreamRoutes: requests.map((item) => item.url) }, null, 2));
 } catch (error) {
   await mkdir(dirname(reportPath), { recursive: true });
   await writeFile(reportPath, JSON.stringify({ ok: false, checkedAt: new Date().toISOString(), error: String(error), stderr, sidecarEvents, upstreamRequests: requests }, null, 2));

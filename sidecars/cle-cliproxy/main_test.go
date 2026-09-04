@@ -131,14 +131,33 @@ func TestSelectorRoundRobinUsesIndependentModelCursors(t *testing.T) {
 	}
 }
 
-func TestSelectorRoundRobinAvoidsExhaustedModelQuota(t *testing.T) {
+func TestSelectorRoundRobinRotatesAllPositiveQuotaAccounts(t *testing.T) {
 	selector := testRoundRobinSelector([]accountSpec{
 		{ID: "low", AuthID: "low.json", ModelQuotas: map[string]int{"claude-sonnet-4-6": 7}},
 		{ID: "healthy-a", AuthID: "healthy-a.json", ModelQuotas: map[string]int{"claude-sonnet-4-6": 100}},
 		{ID: "healthy-b", AuthID: "healthy-b.json", ModelQuotas: map[string]int{"claude-sonnet-4-6": 100}},
 	})
 	auths := []*coreauth.Auth{{ID: "low.json"}, {ID: "healthy-a.json"}, {ID: "healthy-b.json"}}
-	want := []string{"healthy-a.json", "healthy-b.json", "healthy-a.json"}
+	want := []string{"low.json", "healthy-a.json", "healthy-b.json", "low.json"}
+	for i, expected := range want {
+		selected, err := selector.Pick(context.Background(), "antigravity", "claude-sonnet-4-6", cliproxyexecutor.Options{}, auths)
+		if err != nil {
+			t.Fatalf("pick %d failed: %v", i, err)
+		}
+		if selected.ID != expected {
+			t.Fatalf("pick %d = %s, want %s", i, selected.ID, expected)
+		}
+	}
+}
+
+func TestSelectorRoundRobinSkipsOnlyExplicitlyExhaustedQuota(t *testing.T) {
+	selector := testRoundRobinSelector([]accountSpec{
+		{ID: "exhausted", AuthID: "exhausted.json", ModelQuotas: map[string]int{"claude-sonnet-4-6": 0}},
+		{ID: "positive", AuthID: "positive.json", ModelQuotas: map[string]int{"claude-sonnet-4-6": 12}},
+		{ID: "unknown", AuthID: "unknown.json"},
+	})
+	auths := []*coreauth.Auth{{ID: "exhausted.json"}, {ID: "positive.json"}, {ID: "unknown.json"}}
+	want := []string{"positive.json", "unknown.json", "positive.json"}
 	for i, expected := range want {
 		selected, err := selector.Pick(context.Background(), "antigravity", "claude-sonnet-4-6", cliproxyexecutor.Options{}, auths)
 		if err != nil {

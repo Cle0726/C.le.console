@@ -1528,7 +1528,7 @@ func (s *cleSelector) orderAuths(auths []*coreauth.Auth, model string, start int
 		return s.orderCustom(auths, start)
 	}
 	if strategy == "round-robin" || strategy == "round_robin" {
-		return s.orderRoundRobin(s.preferHealthyModelQuota(auths, model), start)
+		return s.orderRoundRobin(s.excludeExhaustedModelQuota(auths, model), start)
 	}
 	out := append([]*coreauth.Auth(nil), auths...)
 	sort.SliceStable(out, func(i, j int) bool {
@@ -1574,11 +1574,14 @@ func (s *cleSelector) orderRoundRobin(auths []*coreauth.Auth, start int) []*core
 	return append(append(make([]*coreauth.Auth, 0, len(out)), out[offset:]...), out[:offset]...)
 }
 
-// preferHealthyModelQuota keeps round-robin fair inside the healthiest quota
-// band. A stale/unknown quota never blocks a pool, but when fresh per-model
-// values exist a nearly exhausted credential is not selected while another
-// compatible credential still has substantially more remaining capacity.
-func (s *cleSelector) preferHealthyModelQuota(auths []*coreauth.Auth, model string) []*coreauth.Auth {
+// excludeExhaustedModelQuota only removes credentials whose captured quota is
+// explicitly zero.  The manifest quota is a point-in-time snapshot written
+// when the sidecar starts, not a live counter.  The previous "highest quota
+// band" policy could therefore shrink a round-robin pool to one account and
+// keep hammering that account for the whole process lifetime.  Positive and
+// unknown quotas must stay in the rotation; runtime 429 handling remains the
+// authoritative temporary-unavailability signal.
+func (s *cleSelector) excludeExhaustedModelQuota(auths []*coreauth.Auth, model string) []*coreauth.Auth {
 	if len(auths) <= 1 {
 		return auths
 	}
@@ -1586,34 +1589,22 @@ func (s *cleSelector) preferHealthyModelQuota(auths []*coreauth.Auth, model stri
 	if model == "" {
 		return auths
 	}
-	maxQuota := -1
-	quotas := make(map[*coreauth.Auth]int, len(auths))
+	filtered := make([]*coreauth.Auth, 0, len(auths))
 	for _, auth := range auths {
 		account := s.accountForAuth(auth)
 		if account == nil || len(account.ModelQuotas) == 0 {
+			filtered = append(filtered, auth)
 			continue
 		}
 		quota, ok := account.ModelQuotas[model]
-		if !ok {
-			continue
-		}
-		quotas[auth] = quota
-		if quota > maxQuota {
-			maxQuota = quota
-		}
-	}
-	if maxQuota < 0 {
-		return auths
-	}
-	const healthyBand = 5
-	minimum := maxQuota - healthyBand
-	filtered := make([]*coreauth.Auth, 0, len(auths))
-	for _, auth := range auths {
-		if quota, ok := quotas[auth]; ok && quota >= minimum {
+		if !ok || quota > 0 {
 			filtered = append(filtered, auth)
+			continue
 		}
 	}
 	if len(filtered) == 0 {
+		// Every snapshot says zero.  It may be stale, so preserve the SDK's
+		// normal retry/failover path instead of making the model disappear.
 		return auths
 	}
 	return filtered

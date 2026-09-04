@@ -66,6 +66,16 @@ export interface MultiModelApiState {
   selfHeal?: MultiModelSelfHealState;
   xaiAccounts?: XaiAccountUsage[];
   accountUsages?: MultiModelAccountUsage[];
+  routeDispatches?: MultiModelRouteDispatch[];
+}
+
+export interface MultiModelRouteDispatch {
+  accountId: string;
+  selected: number;
+  succeeded: number;
+  failed: number;
+  lastModel: string;
+  lastSelectedAt?: string | null;
 }
 
 export interface MultiModelUsageBucket {

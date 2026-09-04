@@ -21,7 +21,7 @@ import { multiModelApiService } from '../services/multiModelApiService';
 import type {
   ModelCapability, MultiModelAccount, MultiModelApiConfig, MultiModelApiState,
   MultiModelDefinition, MultiModelApiTestResult, MultiModelRepairReport,
-  MultiModelAccountUsage, XaiAccountUsage,
+  MultiModelAccountUsage, MultiModelRouteDispatch, XaiAccountUsage,
 } from '../types/multiModelApi';
 import './MultiModelApiServicePage.css';
 
@@ -189,6 +189,21 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
       document.removeEventListener('visibilitychange', refreshWhenActivated);
     };
   }, [load, standalone]);
+
+  useEffect(() => {
+    if (!standalone) return;
+    const refreshRuntimeCounters = async () => {
+      if (document.visibilityState === 'hidden' || !document.hasFocus()) return;
+      try {
+        const next = await multiModelApiService.getState();
+        setState(next);
+      } catch {
+        // The normal refresh and service controls surface actionable errors.
+      }
+    };
+    const timer = window.setInterval(() => void refreshRuntimeCounters(), 3000);
+    return () => window.clearInterval(timer);
+  }, [standalone]);
 
   const copy = async (value: string, id: string) => {
     try {
@@ -523,7 +538,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         {tab === 'accounts' && (
           <section className="mm-api-panel">
             <header className="mm-api-panel-head">
-              <div><h2>{providerFilter === 'all' ? '多账号池' : `${providerLabel(providerFilter)} 账号`}</h2><p>同一模型按独立游标分流；有实时额度时优先健康额度带，并自动冷却、故障转移。</p></div>
+              <div><h2>{providerFilter === 'all' ? '多账号池' : `${providerLabel(providerFilter)} 账号`}</h2><p>同一模型按独立游标严格轮询；仅跳过明确耗尽、冷却或失败的账号。</p></div>
               <div className="mm-inline-actions">
                 {(providerFilter === 'all' || providerFilter === 'xai') && <button type="button" className="btn btn-secondary" onClick={() => void refreshXaiAccounts()} disabled={busy}><RefreshCw className={operation === 'xai-refresh' ? 'spin' : ''} />刷新 Grok 额度</button>}
                 <button type="button" className="btn btn-secondary" onClick={() => void syncAccounts()} disabled={busy}><RefreshCw className={operation === 'sync' ? 'spin' : ''} />同步 C.le. 账号</button>
@@ -532,7 +547,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             </header>
             <div className="mm-account-grid">
               {visibleAccounts.map((account) => (
-                <AccountCard key={account.id} account={account} usage={state.accountUsages?.find((item) => item.accountId === account.id)} xaiUsage={state.xaiAccounts?.find((item) => item.accountId === account.id)} onEdit={() => openAccount(account)} onToggle={() => void updateAccount({ ...account, enabled: !account.enabled })} onRemove={() => void removeAccount(account)} />
+                <AccountCard key={account.id} account={account} usage={state.accountUsages?.find((item) => item.accountId === account.id)} dispatch={state.routeDispatches?.find((item) => item.accountId === account.id)} xaiUsage={state.xaiAccounts?.find((item) => item.accountId === account.id)} onEdit={() => openAccount(account)} onToggle={() => void updateAccount({ ...account, enabled: !account.enabled })} onRemove={() => void removeAccount(account)} />
               ))}
               {!visibleAccounts.length && (
                 <Empty icon={<Users />} title={providerFilter === 'all' ? '账号池还是空的' : `尚未配置 ${providerLabel(providerFilter)}`} text="同步已有 OAuth / API Key 账号，或手动添加上游凭证。">
@@ -653,7 +668,7 @@ function Overview({ config, setConfig, onSave, busy, testModel, setTestModel, te
       <div className="mm-form-grid">
         <label><span>监听端口</span><input type="number" min={1024} max={65535} value={config.port} onChange={(event) => setConfig({ ...config, port: Number(event.target.value) })} /><small>默认 1466</small></label>
         <label><span>访问范围</span><select value={config.accessScope} onChange={(event) => setConfig({ ...config, accessScope: event.target.value as 'localhost' | 'lan' })}><option value="localhost">仅本机 127.0.0.1</option><option value="lan">局域网 0.0.0.0</option></select><small>LAN 模式需要系统防火墙放行</small></label>
-        <label><span>路由策略</span><select value={config.routingStrategy} onChange={(event) => setConfig({ ...config, routingStrategy: event.target.value as 'round-robin' | 'fill-first' })}><option value="round-robin">智能轮询（推荐）</option><option value="fill-first">Fill First 优先填满</option></select><small>每个模型独立轮询；自动避开明显低额度账号</small></label>
+        <label><span>路由策略</span><select value={config.routingStrategy} onChange={(event) => setConfig({ ...config, routingStrategy: event.target.value as 'round-robin' | 'fill-first' })}><option value="round-robin">严格轮询（推荐）</option><option value="fill-first">Fill First 优先填满</option></select><small>每个模型独立轮询；仅跳过明确耗尽或临时冷却账号</small></label>
         <label><span>失败重试</span><input type="number" min={0} max={10} value={config.requestRetries} onChange={(event) => setConfig({ ...config, requestRetries: Number(event.target.value) })} /></label>
         <label className="wide"><span>上游代理</span><input placeholder="http://127.0.0.1:7890（可选）" value={config.upstreamProxy} onChange={(event) => setConfig({ ...config, upstreamProxy: event.target.value })} /></label>
         <label className="switch-row"><span><b>会话固定（默认关闭）</b><small>开启后同一会话会固定一个账号，可能造成单号集中消耗</small></span><input type="checkbox" checked={config.sessionAffinity} onChange={(event) => setConfig({ ...config, sessionAffinity: event.target.checked })} /></label>
@@ -675,7 +690,7 @@ function formatQuotaNumber(value?: number | null) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
-function AccountCard({ account, usage, xaiUsage, onEdit, onToggle, onRemove }: { account: MultiModelAccount; usage?: MultiModelAccountUsage; xaiUsage?: XaiAccountUsage; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
+function AccountCard({ account, usage, dispatch, xaiUsage, onEdit, onToggle, onRemove }: { account: MultiModelAccount; usage?: MultiModelAccountUsage; dispatch?: MultiModelRouteDispatch; xaiUsage?: XaiAccountUsage; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
   const capabilities = new Set(account.models.flatMap((item) => item.capabilities));
   return <article className={`mm-account${account.enabled ? '' : ' disabled'}`}>
     <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{xaiUsage?.email || account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}{xaiUsage?.plan ? ` · ${xaiUsage.plan}` : ''}</p></div><button type="button" className={`mm-account-state${account.enabled && (!xaiUsage || xaiUsage.status === 'normal') ? ' enabled' : ''}`} onClick={onToggle}>{!account.enabled ? '停用' : xaiUsage?.status === 'reauth_required' ? '需重登' : xaiUsage?.status === 'error' ? '异常' : '可用'}</button></div>
@@ -700,6 +715,10 @@ function AccountCard({ account, usage, xaiUsage, onEdit, onToggle, onRemove }: {
       {usage.updatedAt && <small>更新时间：{new Date(usage.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</small>}
     </div>}
     <div className="mm-account-models"><strong>{account.models.length || '自动'} 个模型</strong><span>{[...capabilities].map((cap) => <em key={cap}>{cap}</em>)}</span></div>
+    <div className="mm-account-routing-stat" title={dispatch?.lastSelectedAt ? `最近调度：${new Date(dispatch.lastSelectedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : undefined}>
+      <span>本次运行调度 <b>{dispatch?.selected ?? 0}</b> 次</span>
+      {dispatch && <em>成功 {dispatch.succeeded} · 失败 {dispatch.failed}{dispatch.lastModel ? ` · ${dispatch.lastModel}` : ''}</em>}
+    </div>
     <code>{account.baseUrl || 'CLIProxy native endpoint'}</code>
     <footer><span>{account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span><button type="button" onClick={onEdit}>编辑</button><button type="button" className="trash" onClick={onRemove} aria-label="删除账号"><Trash2 /></button></footer>
   </article>;

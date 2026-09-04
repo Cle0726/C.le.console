@@ -30,6 +30,8 @@ const WATCHDOG_RESTART_COOLDOWN_SECONDS: u64 = 30;
 const WATCHDOG_MAX_RESTART_COOLDOWN_SECONDS: u64 = 300;
 const WATCHDOG_FAILURE_THRESHOLD: u32 = 3;
 static WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
+static ROUTE_DISPATCHES: OnceLock<StdMutex<BTreeMap<String, MultiModelRouteDispatch>>> =
+    OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -133,6 +135,82 @@ pub struct MultiModelApiState {
     pub self_heal: MultiModelSelfHealState,
     pub xai_accounts: Vec<XaiAccountUsage>,
     pub account_usages: Vec<MultiModelAccountUsage>,
+    pub route_dispatches: Vec<MultiModelRouteDispatch>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiModelRouteDispatch {
+    pub account_id: String,
+    pub selected: u64,
+    pub succeeded: u64,
+    pub failed: u64,
+    pub last_model: String,
+    pub last_selected_at: Option<String>,
+}
+
+fn route_dispatch_store() -> &'static StdMutex<BTreeMap<String, MultiModelRouteDispatch>> {
+    ROUTE_DISPATCHES.get_or_init(|| StdMutex::new(BTreeMap::new()))
+}
+
+fn clear_route_dispatches() {
+    if let Ok(mut store) = route_dispatch_store().lock() {
+        store.clear();
+    }
+}
+
+fn record_route_dispatch(value: &Value) {
+    let event_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(event_type, "auth_selected" | "auth_result") {
+        return;
+    }
+    let account_id = value
+        .get("accountId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if account_id.is_empty() {
+        return;
+    }
+    let model = value
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    let Ok(mut store) = route_dispatch_store().lock() else {
+        return;
+    };
+    let item = store
+        .entry(account_id.to_string())
+        .or_insert_with(|| MultiModelRouteDispatch {
+            account_id: account_id.to_string(),
+            ..Default::default()
+        });
+    if !model.is_empty() {
+        item.last_model = model.to_string();
+    }
+    match event_type {
+        "auth_selected" => {
+            item.selected = item.selected.saturating_add(1);
+            item.last_selected_at = Some(chrono::Utc::now().to_rfc3339());
+        }
+        "auth_result" => match value.get("success").and_then(Value::as_bool) {
+            Some(true) => item.succeeded = item.succeeded.saturating_add(1),
+            Some(false) => item.failed = item.failed.saturating_add(1),
+            None => {}
+        },
+        _ => {}
+    }
+}
+
+fn current_route_dispatches() -> Vec<MultiModelRouteDispatch> {
+    route_dispatch_store()
+        .lock()
+        .map(|store| store.values().cloned().collect())
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1717,6 +1795,7 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
     let startup_stdout = Arc::new(StdMutex::new(Vec::<String>::new()));
     let startup_stderr = Arc::new(StdMutex::new(Vec::<String>::new()));
     let stdout_diagnostics = Arc::clone(&startup_stdout);
+    clear_route_dispatches();
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
         let mut ready_tx = Some(ready_tx);
@@ -1731,6 +1810,7 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
                 }
             }
             if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+                record_route_dispatch(&value);
                 if value.get("type").and_then(Value::as_str) == Some("ready") {
                     if let Some(tx) = ready_tx.take() {
                         let _ = tx.send(());
@@ -2098,6 +2178,7 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
         self_heal: self_heal_snapshot().await,
         xai_accounts: load_xai_usage_cache(),
         account_usages,
+        route_dispatches: current_route_dispatches(),
     })
 }
 
