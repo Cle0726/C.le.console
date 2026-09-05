@@ -324,6 +324,19 @@ type QuotaAlertPlatform =
   | 'trae'
   | 'workbuddy'
   | 'zed';
+
+type CodexUnfinishedSessionPayload = {
+  sessionId: string;
+  cwd: string;
+  rolloutPath: string;
+  lastActiveAt: number;
+  fromAccountId: string;
+  fromEmail: string;
+  toAccountId: string;
+  toEmail: string;
+  capturedAt: number;
+  resumeCommand: string;
+};
 function buildExternalImportDedupeKey(payload: {
   providerId: string;
   page: string;
@@ -1122,6 +1135,78 @@ function MainApp({ startupReady }: { startupReady: boolean }) {
       }
     };
   }, [closeModal, openQuickSettingsForPlatform, showModal, t]);
+
+  // Codex 自动切号后的"未完成会话"提醒：会话文件在本地不受影响，
+  // 用户回到 Codex 桌面端历史会话中点选该会话即可继续
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let disposed = false;
+
+    listen<CodexUnfinishedSessionPayload>('codex:unfinished-session', (event) => {
+      const payload = event.payload;
+      if (!payload || !payload.sessionId) {
+        return;
+      }
+
+      const shortId = payload.sessionId.slice(0, 8);
+      showModal({
+        title: t('codexUnfinishedSession.modal.title', 'Codex 已自动换号'),
+        description: t(
+          'codexUnfinishedSession.modal.desc',
+          '额度耗尽后已自动切换到新账号，会话记录保存在本地，可回到 Codex 继续上次未完成的任务。'
+        ),
+        width: 'md',
+        content: (
+          <div className="quota-alert-modal-content">
+            <div className="quota-alert-modal-row">
+              <span>{t('codexUnfinishedSession.modal.newAccount', '新账号')}</span>
+              <strong>{payload.toEmail}</strong>
+            </div>
+            <div className="quota-alert-modal-row quota-alert-modal-row--stack">
+              <span>{t('codexUnfinishedSession.modal.cwd', '未完成会话目录')}</span>
+              <strong>{payload.cwd || t('codexUnfinishedSession.modal.unknownCwd', '未知目录')}</strong>
+            </div>
+            <div className="quota-alert-modal-row">
+              <span>{t('codexUnfinishedSession.modal.session', '会话 ID')}</span>
+              <strong>{shortId}…</strong>
+            </div>
+          </div>
+        ),
+        actions: [
+          {
+            id: 'codex-unfinished-copy-resume',
+            label: t('codexUnfinishedSession.modal.copyResume', '复制恢复命令'),
+            variant: 'secondary',
+            autoClose: false,
+            onClick: () => {
+              navigator.clipboard.writeText(payload.resumeCommand).catch(() => {});
+            },
+          },
+          {
+            id: 'codex-unfinished-ok',
+            label: t('common.confirm', '知道了'),
+            variant: 'primary',
+            onClick: () => {
+              invoke('dismiss_codex_unfinished_session').catch(() => {});
+            },
+          },
+        ],
+      });
+    }).then((fn) => {
+      if (disposed) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [showModal, t]);
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;

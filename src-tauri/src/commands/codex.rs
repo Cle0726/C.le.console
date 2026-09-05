@@ -13,8 +13,8 @@ use crate::models::codex_local_access::{
 };
 use crate::modules::{
     account, codex_account, codex_local_access, codex_oauth, codex_quota, codex_session_visibility,
-    codex_speed, codex_wakeup, codex_wakeup_scheduler, config, logger, openclaw_auth,
-    opencode_auth, process,
+    codex_speed, codex_unfinished_session, codex_wakeup, codex_wakeup_scheduler, config, logger,
+    openclaw_auth, opencode_auth, process,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -868,15 +868,22 @@ async fn run_codex_post_refresh_checks(app: &AppHandle) {
     match codex_account::pick_auto_switch_target_if_needed() {
         Ok(Some(target)) => {
             let target_id = target.id.clone();
+            // 切号前快照"上次未完成的会话"，切换完成后提醒用户继续
+            codex_unfinished_session::capture_before_auto_switch(&target);
             match switch_codex_account(app.clone(), target_id.clone(), None).await {
                 Ok(switched_account) => {
                     logger::log_info(&format!(
                         "[AutoSwitch][Codex] 自动切号完成: target_id={}, email={}",
                         switched_account.id, switched_account.email
                     ));
+                    codex_unfinished_session::finalize_after_auto_switch(
+                        app,
+                        &switched_account,
+                    );
                     switched = true;
                 }
                 Err(e) => {
+                    codex_unfinished_session::discard_pending();
                     logger::log_warn(&format!(
                         "[AutoSwitch][Codex] 自动切号失败: target_id={}, error={}",
                         target_id, e
@@ -897,6 +904,19 @@ async fn run_codex_post_refresh_checks(app: &AppHandle) {
     }
 
     CODEX_POST_REFRESH_CHECK_IN_PROGRESS.store(false, Ordering::SeqCst);
+}
+
+/// 查询自动切号后记录的"未完成会话"（前端展示提醒用）
+#[tauri::command]
+pub fn get_codex_unfinished_session(
+) -> Option<codex_unfinished_session::CodexUnfinishedSession> {
+    codex_unfinished_session::load_record()
+}
+
+/// 清除"未完成会话"提醒记录（用户已继续或不再关心）
+#[tauri::command]
+pub fn dismiss_codex_unfinished_session() -> Result<(), String> {
+    codex_unfinished_session::clear_record()
 }
 
 /// 删除 Codex 账号

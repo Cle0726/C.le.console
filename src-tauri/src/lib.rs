@@ -977,6 +977,8 @@ pub fn run() {
             commands::codex::update_codex_account_app_speed,
             commands::codex::refresh_codex_account_profile,
             commands::codex::switch_codex_account,
+            commands::codex::get_codex_unfinished_session,
+            commands::codex::dismiss_codex_unfinished_session,
             commands::codex::delete_codex_account,
             commands::codex::delete_codex_accounts,
             commands::codex::start_codex_batch_delete,
