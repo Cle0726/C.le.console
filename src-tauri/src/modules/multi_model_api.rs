@@ -30,8 +30,10 @@ const WATCHDOG_RESTART_COOLDOWN_SECONDS: u64 = 30;
 const WATCHDOG_MAX_RESTART_COOLDOWN_SECONDS: u64 = 300;
 const WATCHDOG_FAILURE_THRESHOLD: u32 = 3;
 static WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
+static ACCOUNT_USAGE_REFRESHING: AtomicBool = AtomicBool::new(false);
 static ROUTE_DISPATCHES: OnceLock<StdMutex<BTreeMap<String, MultiModelRouteDispatch>>> =
     OnceLock::new();
+static ACCOUNT_USAGE_CACHE: OnceLock<StdMutex<Vec<MultiModelAccountUsage>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1081,10 +1083,12 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                     "name": "openai",
                     "priority": account.priority,
                     "prefix": account.prefix,
+
                     "base-url": if account.base_url.trim().is_empty() { "https://api.openai.com/v1" } else { &account.base_url },
                     "api-key-entries": [{"api-key": key, "proxy-url": account.proxy_url}],
                     "models": models.iter().map(|item| model_json(item, true)).collect::<Vec<_>>(),
-                    "headers": account.headers
+                    "headers": account.headers,
+                    "disable-cooling": true
                 }));
             }
             "doubao-seedance" => {
@@ -1115,7 +1119,8 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                     "base-url": account.base_url,
                     "api-key-entries": [{"api-key": key, "proxy-url": account.proxy_url}],
                     "models": models.iter().map(|item| model_json(item, true)).collect::<Vec<_>>(),
-                    "headers": account.headers
+                    "headers": account.headers,
+                    "disable-cooling": true
                 }));
             }
         }
@@ -2100,7 +2105,12 @@ fn watchdog_restart_delay(restart_failures: u32) -> Duration {
 }
 
 async fn self_heal_snapshot() -> MultiModelSelfHealState {
-    let state = self_heal_runtime().lock().await;
+    let Ok(state) = self_heal_runtime().try_lock() else {
+        return MultiModelSelfHealState {
+            status: "recovering".to_string(),
+            ..MultiModelSelfHealState::default()
+        };
+    };
     let status = if state.consecutive_failures == 0 {
         if state.last_success_at.is_some() {
             "healthy"
@@ -2146,43 +2156,88 @@ async fn record_health_failure(error: impl Into<String>) -> u32 {
 
 pub async fn get_state() -> Result<MultiModelApiState, String> {
     let config = load_config()?;
-    let (owned_running, last_error) = {
-        let mut state = runtime().lock().await;
-        let had_child = state.child.is_some();
-        let running = if let Some(child) = state.child.as_mut() {
-            child
-                .try_wait()
-                .map_err(|error| error.to_string())?
-                .is_none()
-        } else {
-            false
-        };
-        if had_child && !running {
-            stop_runtime_locked(&mut state).await;
+    // This is a read-only UI snapshot.  Service startup/restart may briefly own
+    // the runtime lock, so never queue the page behind that lifecycle work.
+    let (owned_running, last_error) = match runtime().try_lock() {
+        Ok(mut state) => {
+            let running = if let Some(child) = state.child.as_mut() {
+                child
+                    .try_wait()
+                    .map_err(|error| error.to_string())?
+                    .is_none()
+            } else {
+                false
+            };
+            let last_error = state.last_error.clone();
+            // Reaping belongs to the lifecycle/watchdog path.  Awaiting child
+            // shutdown here used to hold page rendering for several seconds.
+            (running, last_error)
         }
-        (running, state.last_error.clone())
+        Err(_) => (false, None),
     };
-    let running = owned_running || port_is_listening(config.port).await;
+    let running = owned_running
+        || timeout(Duration::from_millis(400), port_is_listening(config.port))
+            .await
+            .unwrap_or(false);
     let host = if config.access_scope == "lan" {
         "0.0.0.0"
     } else {
         "127.0.0.1"
     };
-    let account_usages = cached_account_usages(&config);
+    // Account stores can perform index repair/migration while loading.  Do not
+    // make the whole service page wait for those disk operations: return the
+    // latest snapshot immediately and refresh it on one blocking worker.
+    let account_usages = cached_account_usages_snapshot(&config);
+    let self_heal = self_heal_snapshot().await;
     Ok(MultiModelApiState {
         base_url: format!("http://{host}:{}", config.port),
         catalog: catalog_for_config(&config),
         config,
         running,
         last_error,
-        self_heal: self_heal_snapshot().await,
+        self_heal,
         xai_accounts: load_xai_usage_cache(),
         account_usages,
         route_dispatches: current_route_dispatches(),
     })
 }
 
-fn cached_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccountUsage> {
+fn account_usage_cache() -> &'static StdMutex<Vec<MultiModelAccountUsage>> {
+    ACCOUNT_USAGE_CACHE.get_or_init(|| StdMutex::new(Vec::new()))
+}
+
+struct AccountUsageRefreshGuard;
+
+impl Drop for AccountUsageRefreshGuard {
+    fn drop(&mut self) {
+        ACCOUNT_USAGE_REFRESHING.store(false, Ordering::Release);
+    }
+}
+
+fn cached_account_usages_snapshot(config: &MultiModelApiConfig) -> Vec<MultiModelAccountUsage> {
+    let snapshot = account_usage_cache()
+        .lock()
+        .map(|items| items.clone())
+        .unwrap_or_default();
+
+    if ACCOUNT_USAGE_REFRESHING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        let config = config.clone();
+        tokio::task::spawn_blocking(move || {
+            let _refresh_guard = AccountUsageRefreshGuard;
+            let usages = collect_account_usages(&config);
+            if let Ok(mut cache) = account_usage_cache().lock() {
+                *cache = usages;
+            }
+        });
+    }
+
+    snapshot
+}
+
+fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccountUsage> {
     let antigravity = account::list_accounts()
         .unwrap_or_default()
         .into_iter()

@@ -154,26 +154,38 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   const [testPrompt, setTestPrompt] = useState('Reply with exactly: gateway-ok');
   const [testResult, setTestResult] = useState<MultiModelApiTestResult | null>(null);
   const [repairReport, setRepairReport] = useState<MultiModelRepairReport | null>(null);
+  const loadInFlight = useRef<Promise<void> | null>(null);
+  const refreshInFlight = useRef(false);
 
-  const load = useCallback(async (quiet = false) => {
-    setOperation('load');
-    if (!quiet) setNotice(null);
-    try {
-      const next = await multiModelApiService.getState();
-      setState(next);
-      setDraft(structuredClone(next.config));
-    } catch (error) {
-      setNotice({ tone: 'error', text: `读取服务状态失败：${String(error)}` });
-    } finally {
-      setOperation(null);
-    }
+  const load = useCallback((quiet = false) => {
+    if (loadInFlight.current) return loadInFlight.current;
+
+    const request = (async () => {
+      setOperation('load');
+      if (!quiet) setNotice(null);
+      try {
+        const next = await multiModelApiService.getState();
+        setState(next);
+        setDraft(structuredClone(next.config));
+      } catch (error) {
+        setNotice({ tone: 'error', text: `读取服务状态失败：${String(error)}` });
+      } finally {
+        setOperation(null);
+      }
+    })();
+    loadInFlight.current = request;
+    void request.finally(() => {
+      if (loadInFlight.current === request) loadInFlight.current = null;
+    });
+    return request;
   }, []);
 
   useEffect(() => {
-    if (!standalone || (document.visibilityState !== 'hidden' && document.hasFocus())) {
-      void load();
-    }
-  }, [load, standalone]);
+    // A newly created standalone WebView can mount just before macOS grants it
+    // focus. Skipping this first request leaves the loading view up forever if
+    // the focus event has already fired by the time the listener is attached.
+    void load();
+  }, [load]);
 
   useEffect(() => {
     if (!standalone) return;
@@ -193,12 +205,20 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   useEffect(() => {
     if (!standalone) return;
     const refreshRuntimeCounters = async () => {
-      if (document.visibilityState === 'hidden' || !document.hasFocus()) return;
+      if (
+        document.visibilityState === 'hidden'
+        || !document.hasFocus()
+        || loadInFlight.current
+        || refreshInFlight.current
+      ) return;
+      refreshInFlight.current = true;
       try {
         const next = await multiModelApiService.getState();
         setState(next);
       } catch {
         // The normal refresh and service controls surface actionable errors.
+      } finally {
+        refreshInFlight.current = false;
       }
     };
     const timer = window.setInterval(() => void refreshRuntimeCounters(), 3000);
@@ -422,13 +442,26 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     keys: draft?.apiKeys.filter((item) => item.enabled).length ?? 0,
   }), [accounts, availableModels, configuredProviders, draft]);
 
+  const busy = operation !== null;
+
   if (!draft || !state) {
+    if (notice?.tone === 'error') {
+      return (
+        <div className="mm-api-loading mm-api-load-error" role="alert">
+          <CircleAlert />
+          <div>
+            <strong>多模型 API 页面启动失败</strong>
+            <p>{notice.text}</p>
+          </div>
+          <button type="button" className="btn" onClick={() => void load()} disabled={busy}>重试</button>
+        </div>
+      );
+    }
     return <div className="mm-api-loading"><RefreshCw className="spin" />正在读取多模型网关状态…</div>;
   }
 
   const baseUrl = state.baseUrl.replace('0.0.0.0', '127.0.0.1');
   const firstKey = draft.apiKeys.find((item) => item.enabled)?.key ?? 'YOUR_API_KEY';
-  const busy = operation !== null;
 
   return (
     <div className={`mm-api-page${standalone ? ' mm-api-page-standalone' : ''}`}>

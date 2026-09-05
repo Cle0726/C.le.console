@@ -39,14 +39,26 @@ pub fn apply_to_main_window(app: &AppHandle) {
         return;
     };
 
-    match apply_liquid_glass_to_webview(&window) {
-        Ok(()) => logger::log_info("[LiquidGlass] 已启用 macOS 原生 Liquid Glass"),
+    apply_to_webview_window(&window, "主窗口");
+}
+
+/// Apply the same native material used by the dashboard to an auxiliary
+/// WebView window. Independent feature windows otherwise remain backed by
+/// AppKit's opaque black surface, so transparent CSS can only reveal black.
+pub fn apply_to_webview_window(window: &WebviewWindow, window_name: &str) {
+    let log_name = window_name.to_string();
+
+    match apply_liquid_glass_to_webview(window) {
+        Ok(()) => logger::log_info(&format!(
+            "[LiquidGlass] {}已启用 macOS 原生 Liquid Glass",
+            log_name
+        )),
         Err(error) => {
             logger::log_warn(&format!(
-                "[LiquidGlass] 原生 Liquid Glass 不可用，改用 macOS 磨砂材质: {}",
-                error
+                "[LiquidGlass] {}原生 Liquid Glass 不可用，改用 macOS 磨砂材质: {}",
+                log_name, error
             ));
-            apply_vibrancy_fallback(&window);
+            apply_vibrancy_fallback(window, &log_name);
         }
     }
 }
@@ -127,15 +139,21 @@ fn apply_liquid_glass_to_webview(window: &WebviewWindow) -> Result<(), String> {
     result
 }
 
-fn apply_vibrancy_fallback(window: &WebviewWindow) {
+fn apply_vibrancy_fallback(window: &WebviewWindow, window_name: &str) {
     if let Err(error) = apply_vibrancy(
         window,
         NSVisualEffectMaterial::HudWindow,
         Some(NSVisualEffectState::FollowsWindowActiveState),
         Some(WINDOW_CORNER_RADIUS),
     ) {
-        logger::log_warn(&format!("[LiquidGlass] macOS 磨砂材质初始化失败: {}", error));
+        logger::log_warn(&format!(
+            "[LiquidGlass] {}macOS 磨砂材质初始化失败: {}",
+            window_name, error
+        ));
     } else {
-        logger::log_info("[LiquidGlass] 已启用 macOS 磨砂降级材质");
+        logger::log_info(&format!(
+            "[LiquidGlass] {}已启用 macOS 磨砂降级材质",
+            window_name
+        ));
     }
 }

@@ -415,6 +415,11 @@
 
 .mm-api-loading { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 60vh; color: var(--text-secondary); font-size: 12px; }
 .mm-api-loading svg { width: 16px; height: 16px; }
+.mm-api-load-error { flex-wrap: wrap; text-align: left; }
+.mm-api-load-error > div { max-width: min(620px, 72vw); }
+.mm-api-load-error strong { display: block; color: var(--text-primary); font-size: 13px; }
+.mm-api-load-error p { margin: 4px 0 0; color: var(--text-secondary); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.mm-api-load-error .btn { min-height: 30px; padding: 0 12px; font-size: 11px; }
 .mm-repair-trigger { min-width: 156px; }
 .mm-repair-report {
   overflow: hidden;
@@ -487,4 +492,90 @@
 
 @media (prefers-reduced-motion: reduce) {
   .mm-repair-report { animation: none; }
+}
+
+/* --------------------------------------------------------------------------
+ * Liquid Glass material bridge
+ *
+ * This page is also mounted in its own Tauri window, where its feature sheet
+ * is injected after the shared material sheets.  Keep the page-specific
+ * surfaces on the same three tiers as the dashboard instead of allowing the
+ * legacy `--mm-surface` colours to paint an opaque panel over the wallpaper.
+ * The extra root scope intentionally wins over lazy-loaded feature styles.
+ * -------------------------------------------------------------------------- */
+html[data-mm-api-standalone='true'],
+html[data-mm-api-standalone='true'] body,
+html[data-mm-api-standalone='true'] body #root,
+html[data-mm-api-standalone='true'] body #root .mm-api-standalone-window,
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+html body #root .mm-api-page {
+  --mm-surface: var(--lg-1-fill, rgba(16, 20, 26, 0.2));
+  --mm-surface-strong: color-mix(in srgb, var(--lg-2-fill, rgba(16, 20, 26, 0.24)) 72%, transparent);
+  --mm-border: var(--lg-1-edge, rgba(255, 255, 255, 0.2));
+  --mm-border-soft: color-mix(in srgb, var(--mm-border) 62%, transparent);
+  --mm-shadow: var(--lg-1-shadow, 0 12px 34px rgba(0, 0, 0, 0.2));
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+html body #root .mm-api-page :is(
+  .mm-api-hero,
+  .mm-api-panel,
+  .mm-api-summary-card,
+  .mm-provider-strip,
+  .mm-repair-report
+) {
+  background-color: var(--lg-1-fill, rgba(16, 20, 26, 0.2)) !important;
+  background-image: var(--lg-1-sheen, linear-gradient(145deg, rgba(255, 255, 255, 0.09), transparent 34%)) !important;
+  border-color: var(--lg-1-edge, rgba(255, 255, 255, 0.2)) !important;
+  border-radius: var(--lg-r-panel, 24px) !important;
+  box-shadow: var(--lg-1-shadow, 0 12px 34px rgba(0, 0, 0, 0.2)) !important;
+  -webkit-backdrop-filter: var(--lg-1-blur, blur(12px) saturate(120%)) !important;
+  backdrop-filter: var(--lg-1-blur, blur(12px) saturate(120%)) !important;
+}
+
+html body #root .mm-api-page :is(
+  .mm-account,
+  .mm-model-table,
+  .mm-key,
+  .mm-route,
+  .mm-add-section,
+  .mm-xai-quota,
+  .mm-empty,
+  .mm-oauth-draft-card,
+  .mm-test-result,
+  .mm-api-message,
+  .mm-repair-check
+) {
+  background-color: var(--lg-recess-soft, rgba(4, 6, 9, 0.16)) !important;
+  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.055), transparent 42%) !important;
+  border-color: var(--lg-recess-edge, rgba(255, 255, 255, 0.14)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+html body #root .mm-api-page :is(.mm-model-table .head, .mm-route pre) {
+  background-color: var(--lg-recess, rgba(4, 6, 9, 0.3)) !important;
+}
+
+html body #root .mm-api-page .mm-modal {
+  background-color: var(--lg-3-fill, rgba(14, 15, 18, 0.88)) !important;
+  background-image: var(--lg-3-specular, linear-gradient(145deg, rgba(255, 255, 255, 0.12), transparent 34%)) !important;
+  border-color: var(--lg-3-edge, rgba(255, 255, 255, 0.34)) !important;
+  border-radius: var(--lg-r-panel, 26px) !important;
+  box-shadow: var(--lg-3-shadow, 0 36px 88px rgba(0, 0, 0, 0.45)) !important;
+  -webkit-backdrop-filter: var(--lg-3-blur, blur(28px) saturate(145%)) !important;
+  backdrop-filter: var(--lg-3-blur, blur(28px) saturate(145%)) !important;
+}
+
+/* Inputs remain recessed glass, including the standalone console window. */
+html body #root .mm-api-page :is(input, textarea, select) {
+  background-color: var(--lg-recess, rgba(4, 6, 9, 0.3)) !important;
+  border-color: var(--lg-recess-edge, rgba(255, 255, 255, 0.14)) !important;
+  color: var(--lg-ink, var(--text-primary)) !important;
 }

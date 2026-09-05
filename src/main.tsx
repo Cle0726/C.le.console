@@ -177,6 +177,11 @@ if (visualReviewTarget === "jimeng") {
   "__TAURI_INTERNALS__" in window
   && getCurrentWindow().label === "multi-model-api-console"
 ) {
+  // The dedicated console is a separate WKWebView. Mark its complete canvas
+  // explicitly so transparency does not depend on user-agent platform hints
+  // or the timing of the shared theme initializer.
+  document.documentElement.setAttribute("data-native-liquid-glass", "true");
+  document.documentElement.setAttribute("data-mm-api-standalone", "true");
   void import("./pages/MultiModelApiServiceWindow").then(({ MultiModelApiServiceWindow }) => {
     root.render(
       <React.StrictMode>
