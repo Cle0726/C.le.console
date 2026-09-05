@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { normalizeUiScale, reflectUiScale } from '../utils/uiScale';
@@ -83,6 +83,33 @@ import './settings/Settings.css';
 import { 
   Save, FolderOpen, AlertCircle, RefreshCw
 } from 'lucide-react';
+
+type UpdateDownloadEvent =
+  | { event: 'Started'; data: { contentLength?: number | null } }
+  | { event: 'Progress'; data: { chunkLength: number } }
+  | { event: 'Finished'; data?: null };
+
+type GitHubReleaseSummary = {
+  tag_name?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+};
+
+const LATEST_RELEASE_API = 'https://api.github.com/repos/Cle0726/C.le.console/releases/latest';
+
+const normalizeVersion = (version: string) => version.trim().replace(/^v/i, '').split('+', 1)[0];
+
+const isNewerVersion = (candidate: string, current: string) => {
+  const left = normalizeVersion(candidate).split('-', 1)[0].split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const right = normalizeVersion(current).split('-', 1)[0].split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = left[index] ?? 0;
+    const rightPart = right[index] ?? 0;
+    if (leftPart !== rightPart) return leftPart > rightPart;
+  }
+  return false;
+};
 
 
 
@@ -572,6 +599,9 @@ export function SettingsPage() {
   const currentAccountRefreshPersistReadyRef = useRef(false);
   
   const [appVersion, setAppVersion] = useState('');
+  const [manualUpdateChecking, setManualUpdateChecking] = useState(false);
+  const [manualUpdateMessage, setManualUpdateMessage] = useState('');
+  const [manualUpdateError, setManualUpdateError] = useState('');
   const [antigravityAccounts, setAntigravityAccounts] = useState<Account[]>([]);
   const [antigravityAccountGroups, setAntigravityAccountGroups] = useState<AccountGroup[]>([]);
   const [codexAccounts, setCodexAccounts] = useState<CodexAccount[]>([]);
@@ -2585,6 +2615,52 @@ export function SettingsPage() {
       }
       return next;
     });
+  };
+
+  const handleManualUpdate = async () => {
+    if (manualUpdateChecking) return;
+    setManualUpdateChecking(true);
+    setManualUpdateMessage('正在检查最新版本…');
+    setManualUpdateError('');
+    try {
+      const [installedVersion, response] = await Promise.all([
+        getVersion(),
+        fetch(LATEST_RELEASE_API, {
+          headers: { Accept: 'application/vnd.github+json' },
+          cache: 'no-store',
+        }),
+      ]);
+      if (!response.ok) throw new Error(`更新服务器返回 HTTP ${response.status}`);
+      const release = (await response.json()) as GitHubReleaseSummary;
+      const candidate = release.tag_name || '';
+      if (
+        !candidate
+        || release.draft
+        || release.prerelease
+        || !isNewerVersion(candidate, installedVersion)
+      ) {
+        setManualUpdateMessage(`当前已是最新版本 v${normalizeVersion(installedVersion)}`);
+        return;
+      }
+
+      setManualUpdateMessage(`发现 v${normalizeVersion(candidate)}，正在下载并安装…`);
+      const onEvent = new Channel<UpdateDownloadEvent>();
+      onEvent.onmessage = (event) => {
+        if (event.event === 'Started') {
+          setManualUpdateMessage('正在下载并验证更新包…');
+        } else if (event.event === 'Finished') {
+          setManualUpdateMessage('下载完成，正在安装，程序会自动重启…');
+        }
+      };
+      await invoke('install_app_update', { onEvent });
+      setManualUpdateMessage('更新已安装，正在重启…');
+    } catch (error) {
+      console.error('[Update] 手动更新失败:', error);
+      setManualUpdateError(String(error));
+      setManualUpdateMessage('');
+    } finally {
+      setManualUpdateChecking(false);
+    }
   };
 
   return (
@@ -6486,6 +6562,35 @@ export function SettingsPage() {
               <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
                 {t('settings.about.slogan')}
               </p>
+            </div>
+            <div className="settings-group" style={{ marginTop: '20px' }}>
+              <div className="settings-row">
+                <div className="row-label">
+                  <div className="row-title">软件更新</div>
+                  <div className="row-desc">主动检查 GitHub 上的正式版本，发现更新后下载并安装。</div>
+                </div>
+                <div className="row-control" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => void handleManualUpdate()}
+                    disabled={manualUpdateChecking}
+                  >
+                    <RefreshCw size={16} className={manualUpdateChecking ? 'update-notifier-spin' : undefined} />
+                    {manualUpdateChecking ? '检查中…' : '检查更新'}
+                  </button>
+                  {manualUpdateMessage && (
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '12px', textAlign: 'right' }}>
+                      {manualUpdateMessage}
+                    </span>
+                  )}
+                  {manualUpdateError && (
+                    <span style={{ color: 'var(--danger, #ef4444)', fontSize: '12px', maxWidth: '360px', textAlign: 'right' }} role="alert">
+                      更新失败：{manualUpdateError}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
             <AboutContactSection />
           </div>
