@@ -31,10 +31,33 @@
    shell intentionally clips its root, so relying on document scrolling leaves
    this window visually stuck at the top on WKWebView. */
 .mm-api-standalone-window {
+  position: relative;
   width: 100%;
   height: 100vh;
   min-height: 0;
   overflow: hidden;
+}
+
+/* The standalone window has no shared app shell to provide a title-bar drag
+ * surface. Keep the native traffic-light area untouched and make the rest of
+ * the top strip draggable, while the page itself remains interactive. */
+.mm-api-window-drag-region {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 76px;
+  z-index: 100;
+  height: 44px;
+  -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.mm-api-page-standalone {
+  position: relative;
+  z-index: 1;
+  -webkit-app-region: no-drag;
 }
 
 .mm-api-standalone-window > .mm-api-page-standalone {
@@ -492,6 +515,103 @@
 
 @media (prefers-reduced-motion: reduce) {
   .mm-repair-report { animation: none; }
+}
+
+/* Standalone API console typography and interaction safety. The old page was
+ * tuned for a dense embedded panel, which made secondary labels too small in
+ * a full-size window and allowed a drag gesture over copy to select everything.
+ * Keep code and form fields selectable for copying/editing; chrome text is not
+ * selectable so window movement and button clicks feel native. */
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone {
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei UI", sans-serif);
+  font-size: 13px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
+  button, a, h1, h2, h3, h4, p, span, small, label, strong, em, b, i, svg
+) {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
+  input, textarea, select, pre, code
+) {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-app-region: no-drag;
+}
+
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone .page-top-strip-label {
+  font-size: clamp(20px, 1.8vw, 25px) !important;
+  line-height: 1.2 !important;
+  letter-spacing: -.025em !important;
+}
+
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
+  .mm-api-context-label,
+  .mm-api-title-line h1,
+  .mm-api-panel-head h2,
+  .mm-modal h2,
+  .mm-empty h3
+) {
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
+  .mm-provider-strip b,
+  .mm-api-summary-card span,
+  .mm-api-panel-head p,
+  .mm-test-panel label > span,
+  .mm-form-grid label,
+  .mm-modal-provider-grid b,
+  .mm-add-section .oauth-hint,
+  .mm-add-status,
+  .mm-api-message,
+  .mm-api-loading
+) {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
+  .mm-provider-strip small,
+  .mm-api-summary-card small,
+  .mm-account-top p,
+  .mm-account footer span,
+  .mm-account-routing-stat,
+  .mm-xai-quota p,
+  .mm-xai-quota > small,
+  .mm-model-table .head,
+  .mm-model-actions em,
+  .mm-key small,
+  .mm-key code,
+  .mm-route header code,
+  .mm-route > button,
+  .mm-modal header p,
+  .mm-repair-report header p,
+  .mm-repair-check p
+) {
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
+  .mm-account-top h3,
+  .mm-account-models strong,
+  .mm-xai-quota-row b,
+  .mm-model-table .row code,
+  .mm-key strong,
+  .mm-route h3
+) {
+  font-size: 12px;
 }
 
 /* --------------------------------------------------------------------------
