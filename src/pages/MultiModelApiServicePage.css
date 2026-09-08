@@ -532,6 +532,51 @@ html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone {
   -webkit-app-region: no-drag;
 }
 
+/* The native NSVisualEffectView already supplies the real wallpaper blur. Do
+ * not stack WebKit backdrop filters on every persistent surface: on a large
+ * account list that creates many extra GPU layers and drops scroll frames. */
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
+  .mm-api-hero,
+  .mm-api-panel,
+  .mm-api-summary-card,
+  .mm-provider-strip,
+  .mm-repair-report,
+  .mm-account,
+  .mm-model-table,
+  .mm-key,
+  .mm-route,
+  .mm-add-section,
+  .mm-xai-quota,
+  .mm-empty,
+  .mm-oauth-draft-card,
+  .mm-test-result,
+  .mm-api-message,
+  .mm-repair-check
+) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
+  .mm-account,
+  .mm-model-table,
+  .mm-key,
+  .mm-route,
+  .mm-add-section,
+  .mm-xai-quota,
+  .mm-empty,
+  .mm-oauth-draft-card,
+  .mm-test-result,
+  .mm-api-message,
+  .mm-repair-check
+) {
+  contain: layout paint;
+}
+
+html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone {
+  animation: none;
+}
+
 html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
   button, a, h1, h2, h3, h4, p, span, small, label, strong, em, b, i, svg
 ) {

@@ -156,6 +156,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   const [repairReport, setRepairReport] = useState<MultiModelRepairReport | null>(null);
   const loadInFlight = useRef<Promise<void> | null>(null);
   const refreshInFlight = useRef(false);
+  const runtimeSnapshotRef = useRef('');
 
   const load = useCallback((quiet = false) => {
     if (loadInFlight.current) return loadInFlight.current;
@@ -214,14 +215,36 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
       refreshInFlight.current = true;
       try {
         const next = await multiModelApiService.getState();
-        setState(next);
+        // Runtime counters refresh independently of the configuration. Avoid
+        // replacing the whole state tree when nothing visible changed; doing
+        // so forced every account card and its glass filters to repaint.
+        const runtimeSnapshot = JSON.stringify({
+          running: next.running,
+          lastError: next.lastError,
+          selfHeal: next.selfHeal,
+          accountUsages: next.accountUsages,
+          routeDispatches: next.routeDispatches,
+          xaiAccounts: next.xaiAccounts,
+        });
+        if (runtimeSnapshot !== runtimeSnapshotRef.current) {
+          runtimeSnapshotRef.current = runtimeSnapshot;
+          setState((previous) => previous ? {
+            ...previous,
+            running: next.running,
+            lastError: next.lastError,
+            selfHeal: next.selfHeal,
+            accountUsages: next.accountUsages,
+            routeDispatches: next.routeDispatches,
+            xaiAccounts: next.xaiAccounts,
+          } : next);
+        }
       } catch {
         // The normal refresh and service controls surface actionable errors.
       } finally {
         refreshInFlight.current = false;
       }
     };
-    const timer = window.setInterval(() => void refreshRuntimeCounters(), 3000);
+    const timer = window.setInterval(() => void refreshRuntimeCounters(), 8000);
     return () => window.clearInterval(timer);
   }, [standalone]);
 
