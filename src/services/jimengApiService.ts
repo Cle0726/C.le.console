@@ -92,6 +92,13 @@ export const jimengApiService = {
     invoke<DoubaoCredentialExportResult>('doubao_credentials_export', { accountIds: accountIds?.length ? accountIds : null }),
   importDoubaoCredentials: (json: string) =>
     invoke<DoubaoCredentialImportResult>('doubao_credentials_import', { json }),
+  exportDoubaoCredentialsToFile: (path: string, accountIds?: string[]) =>
+    invoke<DoubaoCredentialExportResult>('doubao_credentials_export_file', {
+      path,
+      accountIds: accountIds?.length ? accountIds : null,
+    }),
+  importDoubaoCredentialsFromFile: (path: string) =>
+    invoke<DoubaoCredentialImportResult>('doubao_credentials_import_file', { path }),
   setDoubaoWebAccountEnabled: (accountId: string, enabled: boolean) =>
     invoke<DoubaoWebState>('doubao_web_set_account_enabled', { accountId, enabled }),
   renameDoubaoWebAccount: (accountId: string, name: string) =>

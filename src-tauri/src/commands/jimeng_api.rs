@@ -115,6 +115,52 @@ pub async fn doubao_credentials_import(
 }
 
 #[tauri::command]
+pub async fn doubao_credentials_export_file(
+    app: AppHandle,
+    account_ids: Option<Vec<String>>,
+    path: String,
+) -> Result<doubao_web::DoubaoCredentialExportResult, String> {
+    let result = doubao_web::export_credentials(app, account_ids).await?;
+    let destination = std::path::PathBuf::from(path.trim());
+    if destination.as_os_str().is_empty() {
+        return Err("未选择豆包凭证保存位置".into());
+    }
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("创建凭证保存目录失败: {error}"))?;
+    }
+    let temporary = destination.with_extension("json.tmp");
+    std::fs::write(&temporary, result.json.as_bytes())
+        .map_err(|error| format!("写入豆包凭证文件失败: {error}"))?;
+    std::fs::rename(&temporary, &destination)
+        .or_else(|_| {
+            std::fs::copy(&temporary, &destination).map(|_| ())?;
+            std::fs::remove_file(&temporary)
+        })
+        .map_err(|error| format!("保存豆包凭证文件失败: {error}"))?;
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn doubao_credentials_import_file(
+    app: AppHandle,
+    path: String,
+) -> Result<doubao_web::DoubaoCredentialImportResult, String> {
+    let source = std::path::PathBuf::from(path.trim());
+    if source.as_os_str().is_empty() {
+        return Err("未选择豆包凭证文件".into());
+    }
+    let metadata =
+        std::fs::metadata(&source).map_err(|error| format!("读取豆包凭证文件失败: {error}"))?;
+    if metadata.len() > 8 * 1024 * 1024 {
+        return Err("豆包凭证文件超过 8 MiB 限制".into());
+    }
+    let json = std::fs::read_to_string(&source)
+        .map_err(|error| format!("读取豆包凭证文件失败: {error}"))?;
+    doubao_web::import_credentials(app, json).await
+}
+
+#[tauri::command]
 pub async fn doubao_web_set_account_enabled(
     app: AppHandle,
     account_id: String,

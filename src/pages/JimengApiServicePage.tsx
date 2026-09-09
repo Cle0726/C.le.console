@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { open, save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { openPath } from '@tauri-apps/plugin-opener';
 import { downloadDir, join } from '@tauri-apps/api/path';
 import {
@@ -667,14 +666,13 @@ export function JimengApiServicePage({
     if (!window.confirm('导出的凭证文件包含豆包登录 Cookie，拿到文件的人可以登录这些账号。请只保存到可信位置，是否继续？')) return;
     setDoubaoWebBusy(true);
     try {
-      const result = await jimengApiService.exportDoubaoCredentials(accountIds);
       const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
       const path = await saveDialog({
         defaultPath: `C.le-豆包账号凭证-${day}.json`,
         filters: [{ name: 'C.le 豆包凭证', extensions: ['json'] }],
       });
       if (!path) return;
-      await writeTextFile(path, result.json);
+      const result = await jimengApiService.exportDoubaoCredentialsToFile(path, accountIds);
       setNotice({
         tone: result.skippedAccounts.length ? 'info' : 'success',
         text: `已导出 ${result.accountCount} 个豆包账号、${result.cookieCount} 条 Cookie。${result.skippedAccounts.length ? `未导出：${result.skippedAccounts.join('；')}` : '请妥善保管凭证文件。'}`,
@@ -697,7 +695,7 @@ export function JimengApiServicePage({
     if (!window.confirm('将从该文件导入豆包登录凭证。请仅导入由你自己导出且来源可信的文件，是否继续？')) return;
     setDoubaoWebBusy(true);
     try {
-      const result = await jimengApiService.importDoubaoCredentials(await readTextFile(path));
+      const result = await jimengApiService.importDoubaoCredentialsFromFile(path);
       applyDoubaoWebState(result.state);
       const firstAccountId = result.importedAccountIds[0];
       if (firstAccountId) {
