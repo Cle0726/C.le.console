@@ -4,6 +4,21 @@
 
 ## 未发布
 
+## 1.1.33
+
+### 豆包桌面账号自动识别与导入
+
+- 豆包桌面账号自动发现、扫描和首次打开时的登录凭证同步扩展到 macOS；识别 `~/Library/Application Support/Doubao`、兼容旧版 `User Data` 目录、沙盒容器及运行进程声明的自定义数据目录。
+- macOS 支持读取 Chromium Cookie 数据库并通过系统钥匙串解密 `v10/v11` Cookie；数据库被占用、密钥不可读或新加密格式无法离线解密时，自动回退到豆包 `Local State` 中对应 Profile 的多账号会话，不要求重新登录。
+- 自动发现不再只依赖 `Network/Cookies`：兼容旧版 Profile 根目录 Cookie 数据库，并从 `Local State` 的 Profile 信息补齐账号名称和无 Cookie 数据库但仍有有效多账号会话的账号。
+- Windows 与 macOS 统一使用“Cookie → 多账号会话 → 工作台既有凭证”的容错顺序；后台每分钟识别新桌面账号，登记过程保持幂等，不重复创建账号，也不修改系统网络代理。
+- 修复桌面插件在 `setup` 阶段延迟注册造成的启动竞态；前端启动较快时读取“开机启动”状态不再触发 `AutoLaunchManager` 尚未注册的崩溃。
+
+### 验证
+
+- Windows 环境实测识别本机豆包桌面版 8 个 Profile、8 个 Cookie 数据库和 7 个可回退多账号会话。
+- Rust 编译检查和豆包模块 13 项单元测试通过；Apple Silicon 交叉检查已进入 macOS 平台依赖编译阶段，最终 `.app/.dmg` 由 GitHub macOS runner 原生构建验证。
+
 ## 1.1.32
 
 ### Codex 自动切号后提醒上次未完成会话

@@ -418,6 +418,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
+        // Register desktop managers before the first WebView can invoke a
+        // command. Installing them from `setup` races the React bootstrap and
+        // can panic when the UI reads the autostart state immediately.
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None::<Vec<&'static str>>,
+        ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -492,17 +500,6 @@ pub fn run() {
                     )),
                 }
             });
-
-            // 初始化桌面进程与自动启动插件
-            #[cfg(desktop)]
-            {
-                app.handle().plugin(tauri_plugin_process::init())?;
-                app.handle().plugin(tauri_plugin_autostart::init(
-                    tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-                    None::<Vec<&'static str>>,
-                ))?;
-                info!("[Desktop] Process + Autostart 插件已初始化");
-            }
 
             // 启动时同步设置合并（移至后台线程，不阻塞窗口显示）
             std::thread::spawn(|| {

@@ -20,13 +20,21 @@ use tauri::webview::cookie::{time::OffsetDateTime, SameSite};
 use tauri::{AppHandle, Manager, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use url::Url;
 
+#[cfg(target_os = "macos")]
+use aes::Aes128;
 #[cfg(target_os = "windows")]
 use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
 #[cfg(target_os = "windows")]
 use base64::{engine::general_purpose, Engine as _};
-#[cfg(target_os = "windows")]
+#[cfg(target_os = "macos")]
+use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+#[cfg(target_os = "macos")]
+use pbkdf2::pbkdf2_hmac;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use rusqlite::{Connection, OpenFlags};
-#[cfg(target_os = "windows")]
+#[cfg(target_os = "macos")]
+use sha1::Sha1;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "windows")]
 use windows::Win32::{
@@ -642,9 +650,101 @@ fn doubao_desktop_user_data_dir() -> Result<PathBuf, String> {
     Ok(local_app_data.join("Doubao").join("User Data"))
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn doubao_desktop_user_data_dir() -> Result<PathBuf, String> {
-    Err("从豆包桌面版导入 Cookie 当前仅支持 Windows".into())
+    let home = dirs::home_dir().ok_or_else(|| "无法定位 macOS 用户目录".to_string())?;
+    let app_support = home.join("Library").join("Application Support");
+    let mut candidates = vec![
+        app_support.join("Doubao"),
+        app_support.join("Doubao").join("User Data"),
+        app_support.join("豆包"),
+        app_support.join("com.bytedance.doubao"),
+        app_support.join("com.larksuite.doubao"),
+        home.join(
+            "Library/Containers/com.bytedance.doubao/Data/Library/Application Support/Doubao",
+        ),
+        home.join(
+            "Library/Containers/com.larksuite.doubao/Data/Library/Application Support/Doubao",
+        ),
+    ];
+    if let Some(root) = candidates
+        .iter()
+        .flat_map(|path| [path.clone(), path.join("User Data")])
+        .find(|path| path.join("Local State").is_file())
+    {
+        return Ok(root);
+    }
+    // Doubao has used more than one bundle identifier/distribution channel on
+    // macOS. Only inspect the first directory level and only accept a Chromium
+    // root with Local State, rather than hard-coding a single package name.
+    if let Ok(entries) = std::fs::read_dir(&app_support) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let normalized = name.to_ascii_lowercase();
+            if normalized.contains("doubao") || name.contains("豆包") {
+                candidates.push(entry.path());
+                candidates.push(entry.path().join("User Data"));
+            }
+        }
+    }
+    let containers = home.join("Library").join("Containers");
+    if let Ok(entries) = std::fs::read_dir(&containers) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let normalized = name.to_ascii_lowercase();
+            if normalized.contains("doubao") || name.contains("豆包") {
+                let support = entry
+                    .path()
+                    .join("Data")
+                    .join("Library")
+                    .join("Application Support");
+                candidates.push(support.clone());
+                candidates.push(support.join("Doubao"));
+            }
+        }
+    }
+    // Electron/Chromium exposes the authoritative profile root in its process
+    // arguments. This also covers renamed, beta and Setapp builds without
+    // guessing their bundle identifier.
+    let mut system = sysinfo::System::new_all();
+    system.refresh_all();
+    for process in system.processes().values() {
+        let name = process.name().to_string_lossy().to_ascii_lowercase();
+        let command = process
+            .cmd()
+            .iter()
+            .map(|part| part.to_string_lossy())
+            .collect::<Vec<_>>();
+        if !name.contains("doubao")
+            && !process.name().to_string_lossy().contains("豆包")
+            && !command
+                .iter()
+                .any(|part| part.to_ascii_lowercase().contains("doubao") || part.contains("豆包"))
+        {
+            continue;
+        }
+        for (index, part) in command.iter().enumerate() {
+            if let Some(value) = part.strip_prefix("--user-data-dir=") {
+                candidates.insert(0, PathBuf::from(value));
+            } else if part == "--user-data-dir" {
+                if let Some(value) = command.get(index + 1) {
+                    candidates.insert(0, PathBuf::from(value.to_string()));
+                }
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .flat_map(|path| [path.clone(), path.join("User Data")])
+        .filter(|path| seen.insert(path.clone()))
+        .find(|path| path.join("Local State").is_file())
+        .ok_or_else(|| "未发现 macOS 豆包桌面版用户数据；请先启动并登录一次豆包桌面版".to_string())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn doubao_desktop_user_data_dir() -> Result<PathBuf, String> {
+    Err("当前系统暂不支持读取豆包桌面版账号".into())
 }
 
 #[cfg(target_os = "windows")]
@@ -655,6 +755,16 @@ fn doubao_install_path() -> Option<PathBuf> {
     ]
     .into_iter()
     .find(|path| path.is_file())
+}
+
+#[cfg(target_os = "macos")]
+fn doubao_install_path() -> Option<PathBuf> {
+    let home = dirs::home_dir();
+    let mut candidates = vec![PathBuf::from("/Applications/Doubao.app")];
+    if let Some(home) = home {
+        candidates.push(home.join("Applications/Doubao.app"));
+    }
+    candidates.into_iter().find(|path| path.is_dir())
 }
 
 #[cfg(target_os = "windows")]
@@ -669,7 +779,27 @@ fn doubao_is_running() -> bool {
     })
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(target_os = "macos")]
+fn doubao_is_running() -> bool {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_all();
+    system.processes().values().any(|process| {
+        let name = process.name().to_string_lossy();
+        name.to_ascii_lowercase().contains("doubao") || name.contains("豆包")
+    })
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn doubao_install_path() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn doubao_is_running() -> bool {
+    false
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn profile_display_names(root: &Path) -> HashMap<String, String> {
     let Ok(raw) = std::fs::read_to_string(root.join("Local State")) else {
         return HashMap::new();
@@ -696,7 +826,17 @@ fn profile_display_names(root: &Path) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn desktop_cookie_db_path(root: &Path, profile_dir: &str) -> Option<PathBuf> {
+    [
+        root.join(profile_dir).join("Network").join("Cookies"),
+        root.join(profile_dir).join("Cookies"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn open_desktop_cookie_db(path: &Path) -> Result<Connection, String> {
     match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
         Ok(connection) => Ok(connection),
@@ -723,12 +863,10 @@ fn open_desktop_cookie_db(path: &Path) -> Result<Connection, String> {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn desktop_cookie_count(root: &Path, profile_dir: &str) -> Result<usize, String> {
-    let path = root.join(profile_dir).join("Network").join("Cookies");
-    if !path.is_file() {
-        return Err("未找到 Cookie 数据库".into());
-    }
+    let path = desktop_cookie_db_path(root, profile_dir)
+        .ok_or_else(|| "未找到 Cookie 数据库".to_string())?;
     let connection = open_desktop_cookie_db(&path)?;
     connection
         .query_row(
@@ -741,13 +879,13 @@ fn desktop_cookie_count(root: &Path, profile_dir: &str) -> Result<usize, String>
 }
 
 pub fn scan_desktop_profiles(app: &AppHandle) -> Result<DoubaoDesktopScan, String> {
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = app;
-        return Err("从豆包桌面版导入 Cookie 当前仅支持 Windows".into());
+        return Err("当前系统暂不支持从豆包桌面版导入账号".into());
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         let root = doubao_desktop_user_data_dir()?;
         if !root.is_dir() {
@@ -765,7 +903,7 @@ pub fn scan_desktop_profiles(app: &AppHandle) -> Result<DoubaoDesktopScan, Strin
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 if valid_desktop_profile_dir(&name)
-                    && entry.path().join("Network").join("Cookies").is_file()
+                    && desktop_cookie_db_path(&root, &name).is_some()
                 {
                     profile_dirs.insert(name);
                 }
@@ -794,18 +932,17 @@ pub fn scan_desktop_profiles(app: &AppHandle) -> Result<DoubaoDesktopScan, Strin
         let profiles = profile_dirs
             .into_iter()
             .map(|profile_dir| {
-                let has_cookie_database = root
-                    .join(&profile_dir)
-                    .join("Network")
-                    .join("Cookies")
-                    .is_file();
+                let has_cookie_database = desktop_cookie_db_path(&root, &profile_dir).is_some();
                 let result = desktop_cookie_count(&root, &profile_dir);
                 let cookie_count = result.as_ref().copied().unwrap_or(0);
-                let ready = cookie_count > 0;
+                let multi_sid_ready = desktop_multi_sid(&root, &profile_dir).is_ok();
+                let ready = cookie_count > 0 || multi_sid_ready;
                 let account_id = imported.get(&profile_dir).cloned();
                 let message = match result {
+                    Ok(0) if multi_sid_ready => "检测到豆包多账号会话，可直接导入".into(),
                     Ok(0) => "未检测到 doubao.com 登录 Cookie".into(),
                     Ok(count) => format!("检测到 {count} 条豆包 Cookie，可直接导入"),
+                    Err(_) if multi_sid_ready => "检测到豆包多账号会话，可直接导入".into(),
                     Err(error) => error,
                 };
                 DoubaoDesktopProfile {
@@ -842,7 +979,7 @@ pub fn scan_desktop_profiles(app: &AppHandle) -> Result<DoubaoDesktopScan, Strin
 /// Doubao desktop profiles. This only registers profile metadata; Cookie bytes
 /// are copied lazily when that account is opened, so a running/locked desktop
 /// profile cannot stall the whole workspace during startup.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn reconcile_desktop_profile_records(app: &AppHandle) -> Result<usize, String> {
     let root = doubao_desktop_user_data_dir()?;
     if !root.is_dir() {
@@ -850,12 +987,19 @@ fn reconcile_desktop_profile_records(app: &AppHandle) -> Result<usize, String> {
     }
 
     let names = profile_display_names(&root);
-    let mut profiles = HashSet::new();
+    let mut profiles = names
+        .keys()
+        .filter(|profile_dir| {
+            desktop_cookie_db_path(&root, profile_dir).is_some()
+                || desktop_multi_sid(&root, profile_dir).is_ok()
+        })
+        .cloned()
+        .collect::<HashSet<_>>();
     if let Ok(entries) = std::fs::read_dir(&root) {
         for entry in entries.flatten() {
             let profile_dir = entry.file_name().to_string_lossy().into_owned();
             if valid_desktop_profile_dir(&profile_dir)
-                && entry.path().join("Network").join("Cookies").is_file()
+                && desktop_cookie_db_path(&root, &profile_dir).is_some()
             {
                 profiles.insert(profile_dir);
             }
@@ -961,7 +1105,7 @@ fn reconcile_desktop_profile_records(app: &AppHandle) -> Result<usize, String> {
     })
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn reconcile_desktop_profile_records(_app: &AppHandle) -> Result<usize, String> {
     Ok(0)
 }
@@ -1034,7 +1178,7 @@ fn decrypt_desktop_cookie(
     String::from_utf8(plaintext.to_vec()).map_err(|_| "Cookie 内容不是有效 UTF-8".into())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 struct DesktopCookie {
     domain: String,
     path: String,
@@ -1046,7 +1190,7 @@ struct DesktopCookie {
     same_site: i64,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl From<DesktopCookie> for PortableDoubaoCookie {
     fn from(cookie: DesktopCookie) -> Self {
         Self {
@@ -1067,14 +1211,79 @@ impl From<DesktopCookie> for PortableDoubaoCookie {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(target_os = "macos")]
+fn macos_safe_storage_password() -> Result<String, String> {
+    use std::process::Command;
+    let candidates = [
+        ("Doubao Safe Storage", Some("Doubao")),
+        ("Doubao Safe Storage", Some("豆包")),
+        ("Doubao Safe Storage", None),
+        ("豆包 Safe Storage", None),
+        ("doubao Safe Storage", None),
+        ("Electron Safe Storage", None),
+    ];
+    for (service, account) in candidates {
+        let mut command = Command::new("/usr/bin/security");
+        command.args(["find-generic-password", "-w", "-s", service]);
+        if let Some(account) = account {
+            command.args(["-a", account]);
+        }
+        if let Ok(output) = command.output() {
+            if output.status.success() {
+                let password = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !password.is_empty() {
+                    return Ok(password);
+                }
+            }
+        }
+    }
+    Err("未找到豆包 Safe Storage 钥匙串密钥；请允许 C.le.控制台访问钥匙串后重试".into())
+}
+
+#[cfg(target_os = "macos")]
+fn decrypt_desktop_cookie(
+    key: &[u8],
+    domain: &str,
+    encrypted: &[u8],
+    database_version: i64,
+) -> Result<String, String> {
+    if encrypted.len() <= 3 || (&encrypted[..3] != b"v10" && &encrypted[..3] != b"v11") {
+        return Err("Cookie 不是当前支持的 Chromium v10/v11 格式".into());
+    }
+    type Aes128CbcDec = cbc::Decryptor<Aes128>;
+    let mut payload = encrypted[3..].to_vec();
+    let plaintext = Aes128CbcDec::new_from_slices(key, &[b' '; 16])
+        .map_err(|error| format!("初始化 macOS Cookie 解密器失败: {error}"))?
+        .decrypt_padded_mut::<Pkcs7>(&mut payload)
+        .map_err(|_| "macOS Cookie AES-CBC 解密失败".to_string())?;
+    let plaintext = if database_version >= 24 {
+        let digest = Sha256::digest(domain.as_bytes());
+        plaintext
+            .strip_prefix(digest.as_slice())
+            .unwrap_or(plaintext)
+    } else {
+        plaintext
+    };
+    String::from_utf8(plaintext.to_vec()).map_err(|_| "Cookie 内容不是有效 UTF-8".into())
+}
+
+#[cfg(target_os = "macos")]
+fn desktop_cookie_key(_root: &Path) -> Result<Vec<u8>, String> {
+    let password = macos_safe_storage_password()?;
+    let mut key = [0u8; 16];
+    pbkdf2_hmac::<Sha1>(password.as_bytes(), b"saltysalt", 1003, &mut key);
+    Ok(key.to_vec())
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn read_desktop_cookies(root: &Path, profile_dir: &str) -> Result<Vec<DesktopCookie>, String> {
     if !valid_desktop_profile_dir(profile_dir) {
         return Err("豆包桌面 Profile 名称无效".into());
     }
-    let key = desktop_cookie_key(root)?;
-    let connection =
-        open_desktop_cookie_db(&root.join(profile_dir).join("Network").join("Cookies"))?;
+    let mut key = None;
+    let cookie_path = desktop_cookie_db_path(root, profile_dir)
+        .ok_or_else(|| format!("{profile_dir} 未找到 Cookie 数据库"))?;
+    let connection = open_desktop_cookie_db(&cookie_path)?;
     let database_version = connection
         .query_row("select value from meta where key = 'version'", [], |row| {
             row.get::<_, String>(0)
@@ -1115,7 +1324,16 @@ fn read_desktop_cookies(root: &Path, profile_dir: &str) -> Result<Vec<DesktopCoo
         let value = if !plain.is_empty() {
             plain
         } else if !encrypted.is_empty() {
-            decrypt_desktop_cookie(&key, &domain, &encrypted, database_version)?
+            if key.is_none() {
+                key = Some(desktop_cookie_key(root)?);
+            }
+            decrypt_desktop_cookie(
+                key.as_deref()
+                    .ok_or_else(|| "Cookie 解密密钥不可用".to_string())?,
+                &domain,
+                &encrypted,
+                database_version,
+            )?
         } else {
             continue;
         };
@@ -1139,7 +1357,7 @@ fn read_desktop_cookies(root: &Path, profile_dir: &str) -> Result<Vec<DesktopCoo
     Ok(cookies)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn desktop_cookie_header(cookies: &[DesktopCookie]) -> String {
     cookies
         .iter()
@@ -1148,7 +1366,7 @@ fn desktop_cookie_header(cookies: &[DesktopCookie]) -> String {
         .join("; ")
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn multi_sid_from_local_state(
     local_state: &Value,
     profile_dir: &str,
@@ -1183,7 +1401,7 @@ fn multi_sid_from_local_state(
     Ok((sid.to_string(), encoded_multi_sids.to_string()))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn desktop_multi_sid(root: &Path, profile_dir: &str) -> Result<(String, String), String> {
     let raw = std::fs::read_to_string(root.join("Local State"))
         .map_err(|error| format!("读取豆包 Local State 失败: {error}"))?;
@@ -1192,7 +1410,15 @@ fn desktop_multi_sid(root: &Path, profile_dir: &str) -> Result<(String, String),
     multi_sid_from_local_state(&local_state, profile_dir)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn multi_sid_cookie_header(root: &Path, profile_dir: &str) -> Result<String, String> {
+    let (sid, multi_sids) = desktop_multi_sid(root, profile_dir)?;
+    Ok(format!(
+        "sessionid={sid}; sessionid_ss={sid}; sid_tt={sid}; sid_ucp_v1={sid}; ssid_ucp_v1={sid}; multi_sids={multi_sids}"
+    ))
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn sync_multi_sid_to_view(
     root: &Path,
     profile_dir: &str,
@@ -1230,12 +1456,10 @@ fn sync_multi_sid_to_view(
         view.set_cookie(cookie)
             .map_err(|error| format!("写入豆包多账号列表失败: {error}"))?;
     }
-    Ok(format!(
-        "sessionid={sid}; sessionid_ss={sid}; sid_tt={sid}; sid_ucp_v1={sid}; ssid_ucp_v1={sid}; multi_sids={multi_sids}"
-    ))
+    multi_sid_cookie_header(root, profile_dir)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn write_desktop_cookie_to_view(
     view: &Webview,
     item: &DesktopCookie,
@@ -1356,12 +1580,12 @@ pub(crate) fn synced_cookie_header(
     if account.platform_id != "doubao" || account.last_cookie_sync_at == 0 {
         return Ok(None);
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (app, account);
         Ok(None)
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         let root = browser_data_dir(app, account)?.join("EBWebView");
         if !root.join("Local State").is_file() {
@@ -1379,13 +1603,13 @@ pub(crate) fn sync_desktop_cookies_to_view(
     let Some(profile_dir) = account.desktop_profile_dir.as_deref() else {
         return Ok(None);
     };
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (app, profile_dir, view);
-        return Err("从豆包桌面版导入 Cookie 当前仅支持 Windows".into());
+        return Err("当前系统暂不支持从豆包桌面版导入 Cookie".into());
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         let root = doubao_desktop_user_data_dir()?;
         // Always refresh on an explicit account open. Besides picking up a
@@ -1687,18 +1911,13 @@ fn keepalive_cookie_header(
     app: &AppHandle,
     account: &DoubaoWebAccountRecord,
 ) -> Result<Option<String>, String> {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     if let Some(profile_dir) = account.desktop_profile_dir.as_deref() {
         let root = doubao_desktop_user_data_dir()?;
         match read_desktop_cookies(&root, profile_dir) {
             Ok(cookies) => return Ok(Some(desktop_cookie_header(&cookies))),
-            Err(cookie_error) => match desktop_multi_sid(&root, profile_dir) {
-                Ok((sid, multi_sids)) => {
-                    return Ok(Some(format!(
-                        "sessionid={sid}; sessionid_ss={sid}; sid_tt={sid}; \
-                         sid_ucp_v1={sid}; ssid_ucp_v1={sid}; multi_sids={multi_sids}"
-                    )));
-                }
+            Err(cookie_error) => match multi_sid_cookie_header(&root, profile_dir) {
+                Ok(cookie_header) => return Ok(Some(cookie_header)),
                 Err(multi_sid_error) => {
                     if let Some(cookie_header) = synced_cookie_header(app, account)? {
                         return Ok(Some(cookie_header));
@@ -1841,7 +2060,7 @@ pub async fn import_desktop_profiles(
         .into_iter()
         .filter(|profile| unique.insert(profile.clone()))
         .collect();
-    if profile_dirs.len() > 20
+    if profile_dirs.len() > 50
         || profile_dirs
             .iter()
             .any(|profile| !valid_desktop_profile_dir(profile))
@@ -1860,9 +2079,9 @@ pub async fn import_desktop_profiles(
         })
         .collect::<Result<_, _>>()?;
     for profile in &selected {
-        if !profile.has_cookie_database {
+        if !profile.ready {
             return Err(format!(
-                "{} 没有 Cookie 数据库，不能登记：{}",
+                "{} 没有可用 Cookie 或多账号会话，不能登记：{}",
                 profile.display_name, profile.message
             ));
         }
@@ -1883,7 +2102,7 @@ pub async fn import_desktop_profiles(
             if let Some(account) = store.accounts.iter_mut().find(|account| {
                 account.desktop_profile_dir.as_deref() == Some(profile.profile_dir.as_str())
             }) {
-                account.desktop_cookie_sync_pending = profile.has_cookie_database;
+                account.desktop_cookie_sync_pending = profile.ready;
                 account.enabled = true;
                 account.last_known_logged_in = false;
                 account.last_login_verified_at = 0;
@@ -1910,7 +2129,7 @@ pub async fn import_desktop_profiles(
                 consecutive_failures: 0,
                 last_used_at: 0,
                 desktop_profile_dir: Some(profile.profile_dir.clone()),
-                desktop_cookie_sync_pending: profile.has_cookie_database,
+                desktop_cookie_sync_pending: profile.ready,
                 last_cookie_sync_at: 0,
                 last_login_verified_at: 0,
                 login_validation_version: 0,
@@ -2252,7 +2471,7 @@ async fn export_account_cookies(
         }
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         if let Some(profile_dir) = account.desktop_profile_dir.as_deref() {
             if let Ok(root) = doubao_desktop_user_data_dir() {
@@ -2261,10 +2480,13 @@ async fn export_account_cookies(
                 }
             }
         }
-        let root = browser_data_dir(app, account)?.join("EBWebView");
-        if root.join("Local State").is_file() {
-            if let Ok(cookies) = read_desktop_cookies(&root, "Default") {
-                return Ok(cookies.into_iter().map(Into::into).collect());
+        #[cfg(target_os = "windows")]
+        {
+            let root = browser_data_dir(app, account)?.join("EBWebView");
+            if root.join("Local State").is_file() {
+                if let Ok(cookies) = read_desktop_cookies(&root, "Default") {
+                    return Ok(cookies.into_iter().map(Into::into).collect());
+                }
             }
         }
     }
@@ -3214,7 +3436,7 @@ mod tests {
         assert_eq!(account.cookies.len(), 1);
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     #[test]
     fn locked_profile_can_use_doubao_multi_account_session() {
         let local_state = serde_json::json!({
