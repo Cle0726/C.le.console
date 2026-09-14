@@ -18,6 +18,10 @@ struct OAuthFlowState {
 
 static OAUTH_FLOW_STATE: OnceLock<Mutex<Option<OAuthFlowState>>> = OnceLock::new();
 const OAUTH_CALLBACK_PATH: &str = "/oauth-callback";
+// Antigravity/CLIProxyAPI 使用的 Google Desktop OAuth 回调端口是固定的。
+// Google OAuth 的 redirect_uri 会参与 token 交换，生成随机端口会导致
+// 已在 Google 客户端注册的回调地址不一致，从而出现“授权完成但无法换 token”。
+const OAUTH_CALLBACK_PORT: u16 = 51121;
 const MAX_HTTP_REQUEST_BYTES: usize = 32 * 1024;
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5);
 const OAUTH_FLOW_WAIT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -269,9 +273,14 @@ async fn ensure_oauth_flow_prepared(app_handle: &tauri::AppHandle) -> Result<Str
         }
     }
 
-    let listener = TcpListener::bind("127.0.0.1:0")
+    let listener = TcpListener::bind(("127.0.0.1", OAUTH_CALLBACK_PORT))
         .await
-        .map_err(|e| format!("无法绑定本地端口: {}", e))?;
+        .map_err(|e| {
+            format!(
+                "无法绑定 OAuth 回调端口 {}（请关闭占用该端口的程序后重试）: {}",
+                OAUTH_CALLBACK_PORT, e
+            )
+        })?;
 
     let port = listener
         .local_addr()
