@@ -16,3 +16,17 @@ Copyright 2026 carzygod/doubao2api contributors.
 
 The full Apache License 2.0 text is available at
 <https://www.apache.org/licenses/LICENSE-2.0>.
+
+## Cockpit Tools WorkBuddy management reference
+
+The WorkBuddy multi-account daily-credit status flow, automatic check-in
+scheduler, configuration dialog, and history presentation are adapted from
+[`jlcodes99/cockpit-tools`](https://github.com/jlcodes99/cockpit-tools), with
+changes for C.le. console's shared storage, independent API window, and fixed
+Beijing time (UTC+8) scheduling.
+
+Cockpit Tools is licensed under CC BY-NC-SA 4.0. C.le. console is distributed
+under the same license. Copyright remains with the Cockpit Tools contributors.
+
+The full CC BY-NC-SA 4.0 legal code is available at
+<https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode>.

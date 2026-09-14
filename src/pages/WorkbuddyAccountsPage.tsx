@@ -74,7 +74,7 @@ const workbuddyPlatformConfig: CodebuddySuiteAccountsPlatformConfig<WorkbuddyAcc
   CheckinModal: WorkbuddyCheckinModal,
 };
 
-export function WorkbuddyAccountsPage() {
+export function WorkbuddyAccountsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [activeTab, setActiveTab] = useState<PlatformOverviewTab>('overview');
   const store = useWorkbuddyAccountStore();
 
@@ -127,13 +127,15 @@ export function WorkbuddyAccountsPage() {
   );
 
   return (
-    <div className={`ghcp-accounts-page ${workbuddyPlatformConfig.pageClassName}`}>
-      <PlatformOverviewTabsHeader
-        platform="workbuddy"
-        active={activeTab}
-        onTabChange={setActiveTab}
-      />
-      {activeTab === 'instances' ? (
+    <div className={`ghcp-accounts-page ${workbuddyPlatformConfig.pageClassName}${embedded ? ' workbuddy-accounts-embedded' : ''}`}>
+      {!embedded && (
+        <PlatformOverviewTabsHeader
+          platform="workbuddy"
+          active={activeTab}
+          onTabChange={setActiveTab}
+        />
+      )}
+      {!embedded && activeTab === 'instances' ? (
         <WorkbuddyInstancesContent accountsForSelect={accountsForInstances} />
       ) : (
         <CodebuddySuiteAccountsSharedView

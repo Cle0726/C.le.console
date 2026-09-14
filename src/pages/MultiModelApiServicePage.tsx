@@ -18,6 +18,7 @@ import * as claudeService from '../services/claudeService';
 import * as codexService from '../services/codexService';
 import * as geminiService from '../services/geminiService';
 import { multiModelApiService } from '../services/multiModelApiService';
+import { WorkbuddyAccountsPage } from './WorkbuddyAccountsPage';
 import type {
   ModelCapability, MultiModelAccount, MultiModelApiConfig, MultiModelApiState,
   MultiModelDefinition, MultiModelApiTestResult, MultiModelRepairReport,
@@ -25,7 +26,7 @@ import type {
 } from '../types/multiModelApi';
 import './MultiModelApiServicePage.css';
 
-type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes';
+type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'workbuddy';
 type AccountAddMode = 'oauth' | 'token' | 'api_key' | 'import';
 type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
 
@@ -502,7 +503,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         <div className="page-tabs filter-tabs">
           {([
             ['overview', Settings2, '服务'], ['accounts', Users, '账号池'], ['models', Boxes, '模型'],
-            ['keys', KeyRound, 'API Keys'], ['routes', Route, '路线'],
+            ['keys', KeyRound, 'API Keys'], ['routes', Route, '路线'], ['workbuddy', Sparkles, 'WorkBuddy 积分'],
           ] as const).map(([id, Icon, label]) => (
             <button key={id} type="button" className={`filter-tab${tab === id ? ' active' : ''}`} onClick={() => setTab(id)}>
               <Icon /><span>{label}</span>
@@ -512,6 +513,18 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
       </div>
 
       <main className="mm-api-content">
+        {tab === 'workbuddy' ? (
+          <section className="mm-workbuddy-host" aria-label="WorkBuddy 多账号与每日积分">
+            <header className="mm-api-panel-head mm-workbuddy-heading">
+              <div>
+                <h1>WorkBuddy 多账号与每日积分</h1>
+                <p>统一管理账号、刷新积分、批量领取每日奖励，并设置北京时间自动领取。</p>
+              </div>
+            </header>
+            <WorkbuddyAccountsPage embedded />
+          </section>
+        ) : (
+          <>
         <section className="mm-api-hero">
           <div className="mm-api-hero-main">
             <span className="mm-api-title-icon"><Network /></span>
@@ -652,6 +665,8 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         )}
 
         {tab === 'routes' && <Routes baseUrl={baseUrl} apiKey={firstKey} copied={copied} copy={copy} />}
+          </>
+        )}
       </main>
 
       {editing && createPortal(

@@ -556,6 +556,7 @@ pub fn run() {
 
             modules::provider_token_keeper::ensure_started(app.handle().clone());
             modules::doubao_web::ensure_keepalive_started(app.handle().clone());
+            modules::workbuddy_auto_checkin::start_auto_checkin_scheduler(app.handle().clone());
             modules::wakeup_scheduler::restore_state_from_disk();
             modules::wakeup_scheduler::ensure_started(app.handle().clone());
             modules::codex_wakeup_scheduler::ensure_started(app.handle().clone());
@@ -1238,6 +1239,12 @@ pub fn run() {
             commands::workbuddy::sync_workbuddy_to_codebuddy_cn,
             commands::workbuddy::get_checkin_status_workbuddy,
             commands::workbuddy::checkin_workbuddy,
+            commands::workbuddy::get_workbuddy_auto_checkin_config,
+            commands::workbuddy::migrate_workbuddy_auto_checkin_config,
+            commands::workbuddy::save_workbuddy_auto_checkin_config,
+            commands::workbuddy::get_workbuddy_auto_checkin_logs,
+            commands::workbuddy::clear_workbuddy_auto_checkin_logs,
+            commands::workbuddy::run_workbuddy_auto_checkin_now,
             // WorkBuddy Instance Commands
             commands::workbuddy_instance::workbuddy_get_instance_defaults,
             commands::workbuddy_instance::workbuddy_list_instances,

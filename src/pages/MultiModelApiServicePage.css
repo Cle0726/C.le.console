@@ -744,3 +744,51 @@ html body #root .mm-api-page :is(input, textarea, select) {
   border-color: var(--lg-recess-edge, rgba(255, 255, 255, 0.14)) !important;
   color: var(--lg-ink, var(--text-primary)) !important;
 }
+
+/* WorkBuddy stays inside the independent API console so account management and
+ * daily credit collection do not require reopening the main dashboard. */
+.mm-workbuddy-host {
+  min-width: 0;
+  padding: clamp(14px, 2vw, 24px);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--lg-r-panel, 24px);
+  background: var(--lg-1-fill, rgba(16, 20, 26, 0.2));
+  box-shadow: var(--mm-shadow);
+}
+
+.mm-workbuddy-heading {
+  margin-bottom: 16px;
+}
+
+.mm-workbuddy-heading h1 {
+  margin: 0;
+  font-size: clamp(18px, 2vw, 26px);
+}
+
+.mm-workbuddy-heading p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+}
+
+.mm-workbuddy-host .workbuddy-accounts-embedded {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  gap: 14px;
+}
+
+.mm-workbuddy-host .workbuddy-accounts-embedded::after {
+  display: none;
+}
+
+.mm-workbuddy-host .workbuddy-accounts-embedded > .toolbar,
+.mm-workbuddy-host .workbuddy-accounts-embedded .toolbar-block {
+  top: 0;
+}
+
+@media (max-width: 900px) {
+  .mm-workbuddy-host {
+    padding: 12px;
+  }
+}
