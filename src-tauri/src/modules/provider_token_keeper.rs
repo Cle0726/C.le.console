@@ -717,10 +717,18 @@ async fn refresh_due_workbuddy_accounts() -> bool {
     let mut attempted_refreshes = 0usize;
 
     for account in accounts {
+        if account.status.as_deref() == Some("login_required") {
+            continue;
+        }
         if reached_platform_refresh_limit(attempted_refreshes) {
             break;
         }
-        if !expires_at_seconds_due(account.expires_at) {
+        let expires_at = crate::modules::workbuddy_oauth::token_expires_at(
+            &serde_json::json!({"expiresAt": account.expires_at}),
+            &account.access_token,
+            now_ts(),
+        );
+        if !expires_at_seconds_due(expires_at) {
             continue;
         }
 
@@ -730,8 +738,19 @@ async fn refresh_due_workbuddy_accounts() -> bool {
         }
 
         attempted_refreshes += 1;
-        match workbuddy_account::refresh_account_token(&account.id).await {
-            Ok(updated) => {
+        match workbuddy_account::refresh_account_detailed(&account.id).await {
+            Ok((updated, diagnostics)) => {
+                if !diagnostics.token_refreshed {
+                    mark_attempt_failure(&key);
+                    logger::log_warn(&format!(
+                        "[TokenKeeper][WorkBuddy] 凭证未刷新，进入退避: account_id={}, error={}",
+                        updated.id,
+                        diagnostics
+                            .error_message()
+                            .unwrap_or_else(|| "未返回刷新凭证".to_string())
+                    ));
+                    continue;
+                }
                 clear_attempt_backoff(&key);
                 refreshed_any = true;
                 if current_id.as_deref() == Some(updated.id.as_str()) {
@@ -744,8 +763,8 @@ async fn refresh_due_workbuddy_accounts() -> bool {
                     }
                 }
                 logger::log_info(&format!(
-                    "[TokenKeeper][WorkBuddy] Token 保活成功: account_id={}, email={}",
-                    updated.id, updated.email
+                    "[TokenKeeper][WorkBuddy] 凭证刷新成功: account_id={}, email={}, quota_refreshed={}",
+                    updated.id, updated.email, diagnostics.quota_refreshed
                 ));
             }
             Err(err) => {

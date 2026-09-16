@@ -39,6 +39,9 @@ export interface CodebuddySuiteAccountBase {
   status_reason?: string | null;
   quota_query_last_error?: string | null;
   quota_query_last_error_at?: number | null;
+  token_refresh_last_error?: string | null;
+  token_refreshed_at?: number | null;
+  usage_updated_at?: number | null;
 
   created_at: number;
   last_used: number;

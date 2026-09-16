@@ -4,6 +4,50 @@ use crate::models::InstanceProfileView;
 use crate::modules;
 
 const DEFAULT_INSTANCE_ID: &str = "__default__";
+static WORKBUDDY_START_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn ensure_shared_auth_switch_safe(
+    target_instance_id: &str,
+    target_account_id: Option<&str>,
+) -> Result<(), String> {
+    let Some(target) = target_account_id else {
+        return Ok(());
+    };
+    let store = modules::workbuddy_instance::load_instance_store()?;
+    let entries = modules::process::collect_workbuddy_process_entries();
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let local_id = modules::workbuddy_account::resolve_current_account_id(
+        &modules::workbuddy_account::list_accounts_checked()?,
+    );
+    let is_conflicting = |binding: Option<&str>| binding.or(local_id.as_deref()) != Some(target);
+    if target_instance_id != DEFAULT_INSTANCE_ID
+        && modules::process::resolve_workbuddy_pid_from_entries(
+            store.default_settings.last_pid,
+            None,
+            &entries,
+        )
+        .is_some()
+        && is_conflicting(store.default_settings.bind_account_id.as_deref())
+    {
+        return Err("WorkBuddy 桌面版共用本机认证文件，其他账号的默认窗口仍在运行。请先关闭它，避免覆盖登录状态或串号。".to_string());
+    }
+    for instance in store.instances {
+        if instance.id != target_instance_id
+            && modules::process::resolve_workbuddy_pid_from_entries(
+                instance.last_pid,
+                Some(&instance.user_data_dir),
+                &entries,
+            )
+            .is_some()
+            && is_conflicting(instance.bind_account_id.as_deref())
+        {
+            return Err("WorkBuddy 桌面版共用本机认证文件，其他账号实例仍在运行。请先关闭其他实例；当前没有写入任何登录凭证。".to_string());
+        }
+    }
+    Ok(())
+}
 
 fn inject_bound_account_for_instance_start(
     user_data_dir: &str,
@@ -186,12 +230,14 @@ pub async fn workbuddy_delete_instance(instance_id: String) -> Result<(), String
 
 #[tauri::command]
 pub async fn workbuddy_start_instance(instance_id: String) -> Result<InstanceProfileView, String> {
+    let _start_guard = WORKBUDDY_START_LOCK.lock().await;
     modules::process::ensure_workbuddy_launch_path_configured()?;
 
     if instance_id == DEFAULT_INSTANCE_ID {
         let default_dir = modules::workbuddy_instance::get_default_workbuddy_user_data_dir()?;
         let default_dir_str = default_dir.to_string_lossy().to_string();
         let default_settings = modules::workbuddy_instance::load_default_settings()?;
+        ensure_shared_auth_switch_safe(&instance_id, default_settings.bind_account_id.as_deref())?;
 
         if let Some(pid) = resolve_running_pid(default_settings.last_pid, None) {
             modules::process::close_pid(pid, 20)?;
@@ -234,6 +280,7 @@ pub async fn workbuddy_start_instance(instance_id: String) -> Result<InstancePro
         .into_iter()
         .find(|item| item.id == instance_id)
         .ok_or("实例不存在")?;
+    ensure_shared_auth_switch_safe(&instance_id, instance.bind_account_id.as_deref())?;
 
     if let Some(pid) = resolve_running_pid(instance.last_pid, Some(&instance.user_data_dir)) {
         modules::process::close_pid(pid, 20)?;

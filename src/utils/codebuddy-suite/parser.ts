@@ -105,6 +105,11 @@ export function extractResourceAccounts(account: CodebuddySuiteAccountBase): Arr
  * 获取账号配额更新时间（毫秒）
  */
 export function getAccountQuotaUpdatedAtMs(account: CodebuddySuiteAccountBase): number | null {
+  if (typeof account.usage_updated_at === 'number' && account.usage_updated_at > 0) {
+    return Math.trunc(account.usage_updated_at * 1000);
+  }
+  // A failed query did not refresh the cached quota, regardless of last_used.
+  if (account.quota_query_last_error?.trim()) return null;
   const lastUsed = account.last_used;
   if (typeof lastUsed !== 'number' || !Number.isFinite(lastUsed) || lastUsed <= 0) return null;
   return Math.trunc(lastUsed * 1000);

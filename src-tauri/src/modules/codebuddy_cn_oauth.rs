@@ -42,6 +42,12 @@ fn generate_login_id() -> String {
 
 fn build_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
+        .user_agent(concat!(
+            "CodeBuddy/",
+            env!("CARGO_PKG_VERSION"),
+            " C.le.console/",
+            env!("CARGO_PKG_VERSION")
+        ))
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
@@ -1047,23 +1053,91 @@ pub async fn build_payload_from_token(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CheckinStatusResponse {
+    #[serde(default, alias = "todayCheckedIn")]
     pub today_checked_in: bool,
+    #[serde(default = "default_checkin_active", alias = "Active")]
     pub active: bool,
+    #[serde(default, alias = "streakDays")]
     pub streak_days: i64,
-    #[serde(default)]
+    #[serde(default, alias = "dailyCredit")]
     pub daily_credit: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "todayCredit",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub today_credit: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "nextStreakDay",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub next_streak_day: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "isStreakDay",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub is_streak_day: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "checkinDates",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub checkin_dates: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "streakBonusDays",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub streak_bonus_days: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "streakBonusCredit",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub streak_bonus_credit: Option<i64>,
+}
+
+const CHECKIN_ACTIVITY_STATUS_PATH: &str = "/v2/billing/meter/checkin-activity-status";
+
+fn default_checkin_active() -> bool {
+    true
+}
+
+fn parse_checkin_status_data(data: &Value) -> Result<CheckinStatusResponse, String> {
+    if !data.is_object()
+        || (data.get("today_checked_in").is_none() && data.get("todayCheckedIn").is_none())
+    {
+        return Err("官方领取状态响应缺少今日领取标识，不能判定活动关闭或领取成功".to_string());
+    }
+    let mut normalized = data.clone();
+    for (snake, camel) in [
+        ("today_checked_in", "todayCheckedIn"),
+        ("active", "Active"),
+        ("is_streak_day", "isStreakDay"),
+    ] {
+        if let Some(raw) = data.get(snake).or_else(|| data.get(camel)) {
+            let value = match raw {
+                Value::Bool(value) => Some(*value),
+                Value::Number(value) => value
+                    .as_i64()
+                    .filter(|n| *n == 0 || *n == 1)
+                    .map(|n| n == 1),
+                Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+                    "true" | "1" => Some(true),
+                    "false" | "0" => Some(false),
+                    _ => None,
+                },
+                Value::Null if snake == "is_streak_day" => continue,
+                _ => None,
+            }
+            .ok_or_else(|| format!("官方领取状态字段 {} 无效", snake))?;
+            normalized.as_object_mut().unwrap().remove(camel);
+            normalized[snake] = Value::Bool(value);
+        }
+    }
+    serde_json::from_value(normalized).map_err(|error| format!("解析官方领取状态失败: {}", error))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1092,7 +1166,9 @@ pub async fn get_checkin_status(
     domain: Option<&str>,
 ) -> Result<CheckinStatusResponse, String> {
     let client = build_client()?;
-    let url = format!("{}/v2/billing/meter/checkin-status", CODEBUDDY_API_ENDPOINT);
+    // WorkBuddy's current daily reward is exposed by the activity endpoint.
+    // The legacy checkin-status endpoint can return inactive while daily rewards are available.
+    let url = format!("{}{}", CODEBUDDY_API_ENDPOINT, CHECKIN_ACTIVITY_STATUS_PATH);
 
     let mut req = client
         .post(&url)
@@ -1112,6 +1188,7 @@ pub async fn get_checkin_status(
     }
 
     let resp = req
+        .json(&json!({}))
         .send()
         .await
         .map_err(|e| format!("请求 checkin-status 失败: {}", e))?;
@@ -1152,8 +1229,7 @@ pub async fn get_checkin_status(
         .get("data")
         .ok_or_else(|| "checkin-status 响应缺少 data 字段".to_string())?;
 
-    let status: CheckinStatusResponse = serde_json::from_value(data.clone())
-        .map_err(|e| format!("解析 checkin-status data 失败: {}", e))?;
+    let status = parse_checkin_status_data(data)?;
 
     Ok(status)
 }
@@ -1164,6 +1240,18 @@ pub async fn perform_checkin(
     enterprise_id: Option<&str>,
     domain: Option<&str>,
 ) -> Result<CheckinResponse, String> {
+    let before = get_checkin_status(access_token, uid, enterprise_id, domain).await?;
+    if before.today_checked_in {
+        return Ok(CheckinResponse {
+            success: false,
+            message: Some("今日已领取".to_string()),
+            reward: None,
+            credit: None,
+            streak_days: Some(before.streak_days),
+            is_streak_day: before.is_streak_day,
+            next_checkin_in: None,
+        });
+    }
     let client = build_client()?;
     let url = format!("{}/v2/billing/meter/daily-checkin", CODEBUDDY_API_ENDPOINT);
 
@@ -1234,24 +1322,37 @@ pub async fn perform_checkin(
         .get("data")
         .ok_or_else(|| "daily-checkin 响应缺少 data 字段".to_string())?;
 
-    let success = data
-        .get("success")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true); // code==0 时默认成功
+    let confirmed = get_checkin_status(access_token, uid, enterprise_id, domain)
+        .await
+        .map_err(|error| {
+            format!(
+                "领取请求已提交，但官方领取状态确认失败，请刷新状态：{}",
+                error
+            )
+        })?;
+    let success =
+        data.get("success").and_then(Value::as_bool) != Some(false) && confirmed.today_checked_in;
 
-    let message = data
-        .get("message")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let message = if success {
+        data.get("message")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    } else {
+        Some("官方尚未确认今日积分已领取，请刷新领取状态；未标记为领取成功。".to_string())
+    };
 
     let reward = data.get("reward").cloned();
 
     let credit = data
         .get("credit")
         .or_else(|| data.get("today_credit"))
-        .and_then(|v| v.as_i64());
+        .and_then(|v| v.as_i64())
+        .or(confirmed.today_credit);
 
-    let streak_days = data.get("streak_days").and_then(|v| v.as_i64());
+    let streak_days = data
+        .get("streak_days")
+        .and_then(|v| v.as_i64())
+        .or(Some(confirmed.streak_days));
 
     let is_streak_day = data.get("is_streak_day").and_then(|v| v.as_bool());
 
@@ -1269,4 +1370,114 @@ pub async fn perform_checkin(
         is_streak_day,
         next_checkin_in,
     })
+}
+
+#[cfg(test)]
+mod workbuddy_checkin_tests {
+    use super::*;
+
+    #[test]
+    fn status_queries_current_activity_not_retired_checkin() {
+        assert_eq!(
+            CHECKIN_ACTIVITY_STATUS_PATH,
+            "/v2/billing/meter/checkin-activity-status"
+        );
+    }
+
+    #[test]
+    fn activity_data_supports_current_and_camel_case_fields() {
+        let status = parse_checkin_status_data(&json!({
+            "active": true, "today_checked_in": false, "daily_credit": 100,
+            "today_credit": 100, "streak_days": 0
+        }))
+        .unwrap();
+        assert!(status.active);
+        assert!(!status.today_checked_in);
+        assert_eq!(status.daily_credit, 100);
+        let status = parse_checkin_status_data(&json!({
+            "Active": "1", "todayCheckedIn": 1, "dailyCredit": 100,
+            "todayCredit": 100, "streakDays": 1, "isStreakDay": "false"
+        }))
+        .unwrap();
+        assert!(status.active);
+        assert!(status.today_checked_in);
+        assert_eq!(status.today_credit, Some(100));
+        assert_eq!(status.streak_days, 1);
+    }
+
+    #[test]
+    fn missing_active_does_not_invent_activity_shutdown() {
+        assert!(
+            parse_checkin_status_data(&json!({"today_checked_in": false}))
+                .unwrap()
+                .active
+        );
+        assert!(
+            !parse_checkin_status_data(&json!({"active": false, "today_checked_in": false}))
+                .unwrap()
+                .active
+        );
+    }
+
+    #[test]
+    fn missing_or_invalid_claim_identity_is_not_success_or_inactive() {
+        for data in [
+            Value::Null,
+            json!({}),
+            json!({"active": false}),
+            json!({"todayCheckedIn": "unknown"}),
+        ] {
+            assert!(parse_checkin_status_data(&data).is_err());
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "live daily claim: explicitly set WORKBUDDY_LIVE_ACCOUNT_FILE and WORKBUDDY_LIVE_CLAIM=1"]
+    async fn live_workbuddy_daily_claim_is_confirmed_by_activity_status() {
+        assert_eq!(std::env::var("WORKBUDDY_LIVE_CLAIM").as_deref(), Ok("1"));
+        let account: crate::models::workbuddy::WorkbuddyAccount = serde_json::from_slice(
+            &std::fs::read(
+                std::env::var("WORKBUDDY_LIVE_ACCOUNT_FILE")
+                    .expect("explicit account path required"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let before = get_checkin_status(
+            &account.access_token,
+            account.uid.as_deref(),
+            account.enterprise_id.as_deref(),
+            account.domain.as_deref(),
+        )
+        .await
+        .unwrap();
+        println!(
+            "official activity before: active={}, claimed={}, daily_credit={}, today_credit={:?}",
+            before.active, before.today_checked_in, before.daily_credit, before.today_credit
+        );
+        let result = perform_checkin(
+            &account.access_token,
+            account.uid.as_deref(),
+            account.enterprise_id.as_deref(),
+            account.domain.as_deref(),
+        )
+        .await
+        .unwrap();
+        let after = get_checkin_status(
+            &account.access_token,
+            account.uid.as_deref(),
+            account.enterprise_id.as_deref(),
+            account.domain.as_deref(),
+        )
+        .await
+        .unwrap();
+        if !before.today_checked_in {
+            assert!(result.success, "claim not confirmed: {:?}", result.message);
+        }
+        assert!(
+            after.today_checked_in,
+            "official activity has not confirmed today's claim"
+        );
+        println!("official activity after: claimed={}, today_credit={:?}, response_credit={:?}, success={}", after.today_checked_in, after.today_credit, result.credit, result.success);
+    }
 }

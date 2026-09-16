@@ -310,6 +310,12 @@ export function CodebuddySuiteAccountsSharedView<TAccount extends CodebuddySuite
           <div className={`quota-header ${platformConfig.usagePrefix}-quota-header`}>
             <span className="quota-name">{t(`${platformConfig.quotaPrefix}.quotaQuery.sectionTitle`, '配额查询')}</span>
           </div>
+          {(refreshFailed || account.token_refresh_last_error) && (
+            <div className="quota-empty" role="status" title={account.quota_query_last_error || account.token_refresh_last_error || undefined}>
+              {refreshFailed ? '额度查询失败，以下为上次缓存，不代表实时额度。' : '额度已查询，但凭证刷新失败。'}
+              {account.usage_updated_at ? ` 上次额度更新：${new Date(account.usage_updated_at * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}（北京时间）` : ''}
+            </div>
+          )}
           {shouldShowQuota ? (
             renderResourceQuotaItems(account, variant)
           ) : (
@@ -335,7 +341,7 @@ export function CodebuddySuiteAccountsSharedView<TAccount extends CodebuddySuite
         account.status_reason,
         account.quota_query_last_error,
       );
-      const hasStatusError = isAccountRefreshError(account.status) || requiresLogin;
+      const hasStatusError = isAccountRefreshError(account.status) || requiresLogin || !!(account.quota_query_last_error || account.token_refresh_last_error);
       const statusTitle = account.status_reason || account.quota_query_last_error || undefined;
       return (
         <div key={groupKey ? `${groupKey}-${account.id}` : account.id}
@@ -396,7 +402,7 @@ export function CodebuddySuiteAccountsSharedView<TAccount extends CodebuddySuite
         account.status_reason,
         account.quota_query_last_error,
       );
-      const hasStatusError = isAccountRefreshError(account.status) || requiresLogin;
+      const hasStatusError = isAccountRefreshError(account.status) || requiresLogin || !!(account.quota_query_last_error || account.token_refresh_last_error);
       const statusTitle = account.status_reason || account.quota_query_last_error || undefined;
       return (
         <tr key={account.id} className={`${isCurrent ? 'current-row' : ''} ${isSelected ? 'selected-row' : ''}`}>

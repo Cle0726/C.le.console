@@ -2841,6 +2841,17 @@ fn detect_workbuddy_exec_path() -> Option<std::path::PathBuf> {
                 return Some(candidate);
             }
         }
+        // A custom installation drive is common; use registered WorkBuddy metadata,
+        // not a recursive filesystem scan or a hard-coded user installation path.
+        if let Some(path) = detect_windows_exec_path_by_signatures(
+            "WorkBuddy",
+            &["WorkBuddy.exe"],
+            &["workbuddy"],
+            &["workbuddy"],
+            &["workbuddy"],
+        ) {
+            return Some(path);
+        }
     }
 
     #[cfg(target_os = "linux")]

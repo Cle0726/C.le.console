@@ -3,19 +3,32 @@ use std::time::Instant;
 use crate::modules::codebuddy_cn_oauth;
 use tauri::{AppHandle, Emitter};
 
-use crate::models::workbuddy::{WorkbuddyAccount, WorkbuddyOAuthStartResponse};
+use crate::models::workbuddy::{
+    WorkbuddyAccount, WorkbuddyBatchRefreshItem, WorkbuddyBatchRefreshResult,
+    WorkbuddyOAuthStartResponse,
+};
 use crate::modules::{logger, workbuddy_account, workbuddy_oauth};
+
+static WORKBUDDY_SWITCH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn refresh_workbuddy_account_after_login(account: WorkbuddyAccount) -> WorkbuddyAccount {
     let account_id = account.id.clone();
-    match workbuddy_account::refresh_account_token(&account_id).await {
-        Ok(refreshed) => refreshed,
+    match workbuddy_account::refresh_account_detailed(&account_id).await {
+        Ok((refreshed, diagnostics)) => {
+            if let Some(error) = diagnostics.error_message() {
+                logger::log_warn(&format!(
+                    "[WorkBuddy OAuth] 登录已保存，后续刷新部分失败：{}",
+                    error
+                ));
+            }
+            refreshed
+        }
         Err(e) => {
             logger::log_warn(&format!(
                 "[WorkBuddy OAuth] 登录后刷新失败，保留原账号信息：account_id={}, error={}",
                 account_id, e
             ));
-            account
+            workbuddy_account::load_account(&account_id).unwrap_or(account)
         }
     }
 }
@@ -160,7 +173,9 @@ pub async fn refresh_workbuddy_token(
 }
 
 #[tauri::command]
-pub async fn refresh_all_workbuddy_tokens(app: AppHandle) -> Result<i32, String> {
+pub async fn refresh_all_workbuddy_tokens(
+    app: AppHandle,
+) -> Result<WorkbuddyBatchRefreshResult, String> {
     let started_at = Instant::now();
     logger::log_info("[WorkBuddy Command] 手动批量刷新开始");
 
@@ -185,7 +200,24 @@ pub async fn refresh_all_workbuddy_tokens(app: AppHandle) -> Result<i32, String>
     }
 
     let _ = crate::modules::tray::update_tray_menu(&app);
-    Ok(success_count as i32)
+    Ok(WorkbuddyBatchRefreshResult {
+        success_count,
+        failed_count,
+        results: results
+            .into_iter()
+            .map(|(account_id, result)| {
+                let email = workbuddy_account::load_account(&account_id)
+                    .map(|account| account.email)
+                    .unwrap_or_else(|| account_id.clone());
+                WorkbuddyBatchRefreshItem {
+                    account_id,
+                    email,
+                    success: result.is_ok(),
+                    error: result.err(),
+                }
+            })
+            .collect(),
+    })
 }
 
 #[tauri::command]
@@ -273,6 +305,9 @@ pub async fn inject_workbuddy_to_vscode(
     app: AppHandle,
     account_id: String,
 ) -> Result<String, String> {
+    let _switch_guard = WORKBUDDY_SWITCH_LOCK.lock().await;
+    // A missing app path must fail before changing credentials or the selected account.
+    crate::modules::process::ensure_workbuddy_launch_path_configured()?;
     let started_at = Instant::now();
     logger::log_info(&format!(
         "[WorkBuddy Switch] 开始切换账号：account_id={}",
@@ -282,18 +317,11 @@ pub async fn inject_workbuddy_to_vscode(
     let account = workbuddy_account::load_account(&account_id)
         .ok_or_else(|| format!("WorkBuddy account not found: {}", account_id))?;
 
-    workbuddy_account::write_account_to_default_client(&account)?;
-
-    if let Err(err) = crate::modules::workbuddy_instance::update_default_settings(
+    let previous_settings = crate::modules::workbuddy_instance::load_default_settings()?;
+    crate::modules::workbuddy_instance::update_default_settings(
         Some(Some(account_id.clone())),
         None,
         Some(false),
-    ) {
-        logger::log_warn(&format!("更新 WorkBuddy 默认实例绑定账号失败：{}", err));
-    }
-    crate::modules::provider_current_state::set_current_account_id(
-        "workbuddy",
-        Some(account_id.as_str()),
     )?;
 
     let launch_warning = match crate::commands::workbuddy_instance::workbuddy_start_instance(
@@ -301,7 +329,8 @@ pub async fn inject_workbuddy_to_vscode(
     )
     .await
     {
-        Ok(_) => None,
+        Ok(instance) if instance.running => None,
+        Ok(_) => Some("WorkBuddy 进程未启动，不能确认切换成功".to_string()),
         Err(err) => {
             if err.starts_with("APP_PATH_NOT_FOUND:") || err.contains("启动 WorkBuddy 失败") {
                 logger::log_warn(&format!("WorkBuddy 默认实例启动失败：{}", err));
@@ -313,7 +342,7 @@ pub async fn inject_workbuddy_to_vscode(
                 }
                 Some(err)
             } else {
-                return Err(err);
+                Some(err)
             }
         }
     };
@@ -321,6 +350,11 @@ pub async fn inject_workbuddy_to_vscode(
     let _ = crate::modules::tray::update_tray_menu(&app);
 
     if let Some(err) = launch_warning {
+        let _ = crate::modules::workbuddy_instance::update_default_settings(
+            Some(previous_settings.bind_account_id),
+            None,
+            Some(previous_settings.follow_local_account),
+        );
         logger::log_warn(&format!(
             "[WorkBuddy Switch] 切号完成但启动失败：account_id={}, email={}, elapsed={}ms, error={}",
             account.id,
@@ -328,15 +362,20 @@ pub async fn inject_workbuddy_to_vscode(
             started_at.elapsed().as_millis(),
             err
         ));
-        Ok(format!("切换完成，但 WorkBuddy 启动失败：{}", err))
+        Err(format!("WorkBuddy 切换未完成：{}", err))
     } else {
+        workbuddy_account::verify_default_client_credentials(&account)?;
+        crate::modules::provider_current_state::set_current_account_id(
+            "workbuddy",
+            Some(account_id.as_str()),
+        )?;
         logger::log_info(&format!(
             "[WorkBuddy Switch] 切号成功：account_id={}, email={}, elapsed={}ms",
             account.id,
             account.email,
             started_at.elapsed().as_millis()
         ));
-        Ok(format!("切换完成：{}", account.email))
+        Ok("已写入目标账号凭证并启动 WorkBuddy。请在客户端确认当前账号；尚未验证客户端实际加载身份。".to_string())
     }
 }
 

@@ -54,6 +54,10 @@ pub struct WorkbuddyAccount {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quota_query_last_error_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_refresh_last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_refreshed_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_updated_at: Option<i64>,
 
     // 签到相关字段
@@ -99,6 +103,21 @@ impl Default for WorkbuddyAccountIndex {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkbuddyBatchRefreshItem {
+    pub account_id: String,
+    pub email: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkbuddyBatchRefreshResult {
+    pub success_count: usize,
+    pub failed_count: usize,
+    pub results: Vec<WorkbuddyBatchRefreshItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

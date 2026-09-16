@@ -4499,9 +4499,9 @@
     },
     "flowNotice": {
       "title": "WorkBuddy 账号管理说明（点击展开/收起）",
-      "desc": "切换账号会按新版 WorkBuddy 官方客户端规则写入本机登录文件；本机导入读取同一登录文件，数据仅在本地处理。",
-      "permission": "权限范围：读取并写入 WorkBuddy 登录文件（CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info），用于本机导入与账号切换；不再读取或修改旧版 state.vscdb。",
-      "network": "网络范围：OAuth 授权登录与 Token 刷新需联网请求 WorkBuddy；配额查询需调用计费 API。不上传本地登录文件或凭证原文。"
+      "desc": "账号独立保存；切换时写入本机 WorkBuddy 登录文件并重启客户端。凭证刷新、额度查询和客户端启动分别校验。",
+      "permission": "权限范围：读取和写入 WorkBuddy 本机登录文件（CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info）。桌面版共用此文件，不能据此保证不同账号同时登录；不会修改网络代理。",
+      "network": "网络范围：仅向官方服务发送 OAuth、凭证刷新和额度查询请求。每日积分是否可领以官方活动状态为准。"
     },
     "nickname": "昵称",
     "enterprise": "企业",

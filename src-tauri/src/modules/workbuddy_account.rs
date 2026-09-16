@@ -15,11 +15,14 @@ const ACCOUNTS_INDEX_FILE: &str = "workbuddy_accounts.json";
 const ACCOUNTS_DIR: &str = "workbuddy_accounts";
 const WORKBUDDY_QUOTA_ALERT_COOLDOWN_SECONDS: i64 = 10 * 60;
 const WORKBUDDY_AUTH_FILE_NAME: &str = "workbuddy-desktop.info";
+const WORKBUDDY_SECRET_EXTENSION_ID: &str = "tencent-cloud.coding-copilot";
+const WORKBUDDY_SECRET_KEY: &str = "planning-genie.new.accessTokencn";
 const LOGIN_REQUIRED_STATUS: &str = "login_required";
 
 lazy_static::lazy_static! {
     static ref WORKBUDDY_ACCOUNT_INDEX_LOCK: Mutex<()> = Mutex::new(());
     static ref WORKBUDDY_QUOTA_ALERT_LAST_SENT: Mutex<HashMap<String, i64>> = Mutex::new(HashMap::new());
+    static ref WORKBUDDY_REFRESH_LOCKS: Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>> = Mutex::new(HashMap::new());
 }
 
 fn now_ts() -> i64 {
@@ -40,7 +43,8 @@ fn is_login_required_error(message: &str) -> bool {
         "重新登录",
         "会话已过期",
         "http 401",
-        "http 403",
+        "http=401",
+        "code=401",
     ]
     .iter()
     .any(|marker| normalized.contains(marker))
@@ -569,15 +573,35 @@ fn apply_payload(account: &mut WorkbuddyAccount, payload: WorkbuddyOAuthComplete
     if !incoming_email.is_empty() {
         account.email = incoming_email;
     }
-    account.uid = payload.uid;
-    account.nickname = payload.nickname;
-    account.enterprise_id = payload.enterprise_id;
-    account.enterprise_name = payload.enterprise_name;
+    if payload.uid.is_some() {
+        account.uid = payload.uid;
+    }
+    if payload.nickname.is_some() {
+        account.nickname = payload.nickname;
+    }
+    if payload.enterprise_id.is_some() {
+        account.enterprise_id = payload.enterprise_id;
+    }
+    if payload.enterprise_name.is_some() {
+        account.enterprise_name = payload.enterprise_name;
+    }
     account.access_token = payload.access_token;
-    account.refresh_token = payload.refresh_token;
-    account.token_type = payload.token_type;
-    account.expires_at = payload.expires_at;
-    account.domain = payload.domain;
+    if payload
+        .refresh_token
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        account.refresh_token = payload.refresh_token;
+    }
+    if payload.token_type.is_some() {
+        account.token_type = payload.token_type;
+    }
+    if payload.expires_at.is_some() {
+        account.expires_at = payload.expires_at;
+    }
+    if payload.domain.is_some() {
+        account.domain = payload.domain;
+    }
     if payload.plan_type.is_some() {
         account.plan_type = payload.plan_type;
     }
@@ -596,7 +620,9 @@ fn apply_payload(account: &mut WorkbuddyAccount, payload: WorkbuddyOAuthComplete
     if payload.quota_raw.is_some() {
         account.quota_raw = payload.quota_raw;
     }
-    account.auth_raw = payload.auth_raw;
+    if payload.auth_raw.is_some() {
+        account.auth_raw = payload.auth_raw;
+    }
     if payload.profile_raw.is_some() {
         account.profile_raw = payload.profile_raw;
     }
@@ -609,6 +635,7 @@ fn apply_payload(account: &mut WorkbuddyAccount, payload: WorkbuddyOAuthComplete
 }
 
 pub fn upsert_account(payload: WorkbuddyOAuthCompletePayload) -> Result<WorkbuddyAccount, String> {
+    validate_payload_identity(&payload)?;
     let _lock = WORKBUDDY_ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|_| "获取 WorkBuddy 账号锁失败".to_string())?;
@@ -672,6 +699,8 @@ pub fn upsert_account(payload: WorkbuddyOAuthCompletePayload) -> Result<Workbudd
         status_reason: payload.status_reason.clone(),
         quota_query_last_error: None,
         quota_query_last_error_at: None,
+        token_refresh_last_error: None,
+        token_refreshed_at: None,
         usage_updated_at: None,
         last_checkin_time: None,
         checkin_streak: None,
@@ -696,27 +725,22 @@ pub fn upsert_account(payload: WorkbuddyOAuthCompletePayload) -> Result<Workbudd
     Ok(account)
 }
 
-async fn refresh_account_token_once(account_id: &str) -> Result<WorkbuddyAccount, String> {
-    let started_at = Instant::now();
-    let mut account = load_account(account_id).ok_or_else(|| "账号不存在".to_string())?;
-    logger::log_info(&format!(
-        "[WorkBuddy Refresh] 开始刷新账号:id={}, email={}",
-        account.id, account.email
-    ));
-
-    let (payload, quota_refresh_error) =
-        workbuddy_oauth::refresh_payload_for_account(&account).await?;
-    let usage_refreshed = quota_refresh_error.is_none()
-        && (payload.quota_raw.is_some() || payload.usage_raw.is_some());
+fn apply_refresh_result(
+    account: &mut WorkbuddyAccount,
+    payload: WorkbuddyOAuthCompletePayload,
+    diagnostics: &workbuddy_oauth::RefreshDiagnostics,
+    refreshed_at: i64,
+) {
     let tags = account.tags.clone();
     let created_at = account.created_at;
-    apply_payload(&mut account, payload);
-    if let Some(err) = quota_refresh_error {
-        if is_login_required_error(&err) {
+    apply_payload(account, payload);
+    account.token_refresh_last_error = diagnostics.token_error.clone();
+    if let Some(err) = &diagnostics.quota_error {
+        if is_login_required_error(err) {
             account.status = Some(LOGIN_REQUIRED_STATUS.to_string());
             account.status_reason = Some("WorkBuddy 登录已失效，请重新登录".to_string());
         }
-        account.quota_query_last_error = Some(err);
+        account.quota_query_last_error = Some(err.clone());
         account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
     } else {
         account.quota_query_last_error = None;
@@ -724,37 +748,60 @@ async fn refresh_account_token_once(account_id: &str) -> Result<WorkbuddyAccount
     }
     account.tags = tags;
     account.created_at = created_at;
-    let refreshed_at = now_ts();
-    if usage_refreshed {
+    if diagnostics.quota_refreshed {
         account.usage_updated_at = Some(refreshed_at);
+        account.status = Some("normal".to_string());
+        account.status_reason = None;
+    }
+    if diagnostics.token_refreshed {
+        account.token_refreshed_at = Some(refreshed_at);
     }
     account.last_used = refreshed_at;
+}
+
+async fn refresh_account_token_once(
+    account_id: &str,
+) -> Result<(WorkbuddyAccount, workbuddy_oauth::RefreshDiagnostics), String> {
+    let started_at = Instant::now();
+    let mut account = load_account(account_id).ok_or_else(|| "账号不存在".to_string())?;
+    logger::log_info(&format!(
+        "[WorkBuddy Refresh] 开始刷新账号:id={}, email={}",
+        account.id, account.email
+    ));
+
+    let (payload, diagnostics) = workbuddy_oauth::refresh_payload_for_account(&account).await?;
+    let latest =
+        load_account(account_id).ok_or_else(|| "刷新期间账号已删除，未重新创建账号".to_string())?;
+    if latest.access_token != account.access_token || latest.refresh_token != account.refresh_token
+    {
+        return Err("刷新期间登录凭证已被更新，已丢弃旧刷新结果；请重试".to_string());
+    }
+    account = latest;
+    apply_refresh_result(&mut account, payload, &diagnostics, now_ts());
 
     let updated = account.clone();
     upsert_account_record(account)?;
     logger::log_info(&format!(
-        "[WorkBuddy Refresh] 刷新完成:id={}, email={}, elapsed={}ms",
+        "[WorkBuddy Refresh] 刷新结果:id={}, email={}, elapsed={}ms, token_refreshed={}, quota_refreshed={}",
         updated.id,
         updated.email,
-        started_at.elapsed().as_millis()
+        started_at.elapsed().as_millis(),
+        diagnostics.token_refreshed,
+        diagnostics.quota_refreshed
     ));
-    Ok(updated)
+    Ok((updated, diagnostics))
 }
 
-pub async fn refresh_account_token(account_id: &str) -> Result<WorkbuddyAccount, String> {
-    if let Some(account) = load_account(account_id) {
-        if account
-            .status
-            .as_deref()
-            .is_some_and(|status| status.eq_ignore_ascii_case(LOGIN_REQUIRED_STATUS))
-        {
-            logger::log_info(&format!(
-                "[WorkBuddy Refresh] 账号需要重新登录，跳过自动请求: id={}",
-                account_id
-            ));
-            return Ok(account);
-        }
-    }
+pub(crate) async fn refresh_account_detailed(
+    account_id: &str,
+) -> Result<(WorkbuddyAccount, workbuddy_oauth::RefreshDiagnostics), String> {
+    let refresh_lock = WORKBUDDY_REFRESH_LOCKS
+        .lock()
+        .map_err(|_| "获取 WorkBuddy 刷新锁失败".to_string())?
+        .entry(account_id.to_string())
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+        .clone();
+    let _refresh_guard = refresh_lock.lock().await;
     let result = refresh_account_token_once(account_id).await;
     if let Err(error) = &result {
         if let Some(mut account) = load_account(account_id) {
@@ -770,6 +817,14 @@ pub async fn refresh_account_token(account_id: &str) -> Result<WorkbuddyAccount,
     result
 }
 
+pub async fn refresh_account_token(account_id: &str) -> Result<WorkbuddyAccount, String> {
+    let (account, diagnostics) = refresh_account_detailed(account_id).await?;
+    if let Some(error) = diagnostics.error_message() {
+        return Err(error);
+    }
+    Ok(account)
+}
+
 pub async fn refresh_all_tokens() -> Result<Vec<(String, Result<WorkbuddyAccount, String>)>, String>
 {
     use futures::future::join_all;
@@ -777,16 +832,10 @@ pub async fn refresh_all_tokens() -> Result<Vec<(String, Result<WorkbuddyAccount
     use tokio::sync::Semaphore;
 
     const MAX_CONCURRENT: usize = 5;
-    let accounts = list_accounts();
+    let accounts = list_accounts_checked()?;
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
     let tasks: Vec<_> = accounts
         .into_iter()
-        .filter(|account| {
-            !account
-                .status
-                .as_deref()
-                .is_some_and(|status| status.eq_ignore_ascii_case(LOGIN_REQUIRED_STATUS))
-        })
         .map(|account| {
             let id = account.id;
             let semaphore = semaphore.clone();
@@ -864,101 +913,69 @@ pub fn import_from_json(json_content: &str) -> Result<Vec<WorkbuddyAccount>, Str
 }
 
 fn import_from_json_value(value: Value) -> Result<Vec<WorkbuddyAccount>, String> {
-    match value {
-        Value::Array(items) => {
-            if items.is_empty() {
-                return Err("导入数组为空".to_string());
-            }
-            let mut results = Vec::new();
-            for (idx, item) in items.into_iter().enumerate() {
-                let payload = payload_from_import_value(item)
-                    .map_err(|e| format!("第 {} 条记录解析失败: {}", idx + 1, e))?;
-                let account = upsert_account_record_from_payload(payload)?;
-                results.push(account);
-            }
-            Ok(results)
-        }
-        Value::Object(mut obj) => {
-            let object_value = Value::Object(obj.clone());
-            if let Ok(payload) = payload_from_import_value(object_value) {
-                let account = upsert_account_record_from_payload(payload)?;
-                return Ok(vec![account]);
-            }
-
-            if let Some(accounts) = obj
-                .remove("accounts")
-                .or_else(|| obj.remove("items"))
-                .and_then(|raw| raw.as_array().cloned())
+    let items = match value {
+        Value::Array(items) => items,
+        Value::Object(mut object) => {
+            if object.contains_key("access_token")
+                || object.contains_key("accessToken")
+                || object.contains_key("token")
+                || object.contains_key("auth")
             {
-                if accounts.is_empty() {
-                    return Err("导入数组为空".to_string());
-                }
-                let mut results = Vec::new();
-                for (idx, item) in accounts.into_iter().enumerate() {
-                    let payload = payload_from_import_value(item)
-                        .map_err(|e| format!("第 {} 条记录解析失败: {}", idx + 1, e))?;
-                    let account = upsert_account_record_from_payload(payload)?;
-                    results.push(account);
-                }
-                return Ok(results);
+                vec![Value::Object(object)]
+            } else {
+                object
+                    .remove("accounts")
+                    .or_else(|| object.remove("items"))
+                    .and_then(|value| value.as_array().cloned())
+                    .ok_or_else(|| "无法解析 WorkBuddy 导入对象".to_string())?
             }
-
-            Err("无法解析 WorkBuddy 导入对象".to_string())
         }
-        _ => Err("WorkBuddy 导入 JSON 必须是对象或数组".to_string()),
+        _ => return Err("WorkBuddy 导入 JSON 必须是对象或数组".to_string()),
+    };
+    if items.is_empty() {
+        return Err("导入数组为空".to_string());
     }
+    // Validate the whole batch before writing its first record.
+    let parsed = items
+        .into_iter()
+        .enumerate()
+        .map(|(index, raw)| {
+            let payload = payload_from_import_value(raw.clone())
+                .map_err(|error| format!("第 {} 条记录解析失败: {}", index + 1, error))?;
+            validate_payload_identity(&payload)?;
+            Ok((
+                payload,
+                serde_json::from_value::<WorkbuddyAccount>(raw).ok(),
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut imported = Vec::new();
+    for (payload, snapshot) in parsed {
+        let mut account = upsert_account(payload)?;
+        if let Some(snapshot) = snapshot {
+            account.tags = merge_string_list(account.tags, snapshot.tags);
+            account.created_at = account.created_at.min(snapshot.created_at);
+            account.usage_updated_at = account.usage_updated_at.or(snapshot.usage_updated_at);
+            account.last_checkin_time = account.last_checkin_time.or(snapshot.last_checkin_time);
+            account.checkin_streak = account.checkin_streak.or(snapshot.checkin_streak);
+            account.checkin_rewards = account.checkin_rewards.or(snapshot.checkin_rewards);
+            account = upsert_account_record(account)?;
+        }
+        imported.push(account);
+    }
+    Ok(imported)
 }
 
-fn upsert_account_record_from_payload(
-    payload: WorkbuddyOAuthCompletePayload,
-) -> Result<WorkbuddyAccount, String> {
-    drop(
-        WORKBUDDY_ACCOUNT_INDEX_LOCK
-            .lock()
-            .map_err(|_| "获取锁失败".to_string())?,
-    );
-    let now = now_ts();
-    let incoming_uid = normalize_identity(payload.uid.as_deref());
-    let incoming_email = normalize_email_identity(Some(payload.email.as_str()));
-    let identity_seed = incoming_uid
-        .or_else(|| incoming_email)
-        .unwrap_or_else(|| "workbuddy_user".to_string());
-    let generated_id = format!("workbuddy_{:x}", md5::compute(identity_seed.as_bytes()));
-
-    let account = WorkbuddyAccount {
-        id: generated_id,
-        email: payload.email,
-        uid: payload.uid,
-        nickname: payload.nickname,
-        enterprise_id: payload.enterprise_id,
-        enterprise_name: payload.enterprise_name,
-        tags: None,
-        access_token: payload.access_token,
-        refresh_token: payload.refresh_token,
-        token_type: payload.token_type,
-        expires_at: payload.expires_at,
-        domain: payload.domain,
-        plan_type: payload.plan_type,
-        dosage_notify_code: payload.dosage_notify_code,
-        dosage_notify_zh: payload.dosage_notify_zh,
-        dosage_notify_en: payload.dosage_notify_en,
-        payment_type: payload.payment_type,
-        quota_raw: payload.quota_raw,
-        auth_raw: payload.auth_raw,
-        profile_raw: payload.profile_raw,
-        usage_raw: payload.usage_raw,
-        status: payload.status,
-        status_reason: payload.status_reason,
-        quota_query_last_error: None,
-        quota_query_last_error_at: None,
-        usage_updated_at: None,
-        last_checkin_time: None,
-        checkin_streak: None,
-        checkin_rewards: None,
-        created_at: now,
-        last_used: now,
-    };
-    upsert_account_record(account)
+fn validate_payload_identity(payload: &WorkbuddyOAuthCompletePayload) -> Result<(), String> {
+    if payload.access_token.trim().is_empty() {
+        return Err("缺少有效 access_token".to_string());
+    }
+    if normalize_identity(payload.uid.as_deref()).is_none()
+        && normalize_email_identity(Some(&payload.email)).is_none()
+    {
+        return Err("无法确认 WorkBuddy 账号身份（缺少 uid 或邮箱），未覆盖已保存账号。请重新授权或从客户端导入。".to_string());
+    }
+    Ok(())
 }
 
 fn payload_from_import_value(raw: Value) -> Result<WorkbuddyOAuthCompletePayload, String> {
@@ -966,12 +983,21 @@ fn payload_from_import_value(raw: Value) -> Result<WorkbuddyOAuthCompletePayload
         .as_object()
         .ok_or_else(|| "导入条目必须是对象".to_string())?;
 
+    if obj.contains_key("auth") {
+        let raw_token = parse_local_access_token(&raw)
+            .ok_or_else(|| "本地凭证缺少 access token".to_string())?;
+        let (uid, token) = extract_local_workbuddy_token_parts(&raw_token)
+            .ok_or_else(|| "本地 access token 无效".to_string())?;
+        return Ok(build_local_import_payload(token, Some(raw), uid));
+    }
+
     let access_token = obj
         .get("access_token")
         .or_else(|| obj.get("accessToken"))
         .or_else(|| obj.get("token"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
+        .trim()
         .to_string();
 
     if access_token.is_empty() {
@@ -1017,6 +1043,7 @@ fn payload_from_import_value(raw: Value) -> Result<WorkbuddyOAuthCompletePayload
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    let expires_at = workbuddy_oauth::token_expires_at(&raw, &access_token, now_ts());
     Ok(WorkbuddyOAuthCompletePayload {
         email,
         uid,
@@ -1026,14 +1053,32 @@ fn payload_from_import_value(raw: Value) -> Result<WorkbuddyOAuthCompletePayload
         access_token,
         refresh_token,
         token_type: Some("Bearer".to_string()),
-        expires_at: None,
+        expires_at,
         domain,
-        plan_type: None,
-        dosage_notify_code: None,
-        dosage_notify_zh: None,
-        dosage_notify_en: None,
-        payment_type: None,
-        quota_raw: None,
+        plan_type: obj
+            .get("plan_type")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        dosage_notify_code: obj
+            .get("dosage_notify_code")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        dosage_notify_zh: obj
+            .get("dosage_notify_zh")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        dosage_notify_en: obj
+            .get("dosage_notify_en")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        payment_type: obj
+            .get("payment_type")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        quota_raw: obj
+            .get("quota_raw")
+            .filter(|value| !value.is_null())
+            .cloned(),
         auth_raw: obj.get("auth_raw").cloned(),
         profile_raw: obj.get("profile_raw").cloned(),
         usage_raw: obj.get("usage_raw").cloned(),
@@ -1043,10 +1088,13 @@ fn payload_from_import_value(raw: Value) -> Result<WorkbuddyOAuthCompletePayload
 }
 
 pub fn export_accounts(account_ids: &[String]) -> Result<String, String> {
+    if account_ids.is_empty() {
+        return Err("请选择需要导出的 WorkBuddy 账号".to_string());
+    }
     let accounts: Vec<WorkbuddyAccount> = account_ids
         .iter()
-        .filter_map(|id| load_account(id))
-        .collect();
+        .map(|id| load_account(id).ok_or_else(|| format!("导出失败，账号不存在或无法读取：{}", id)))
+        .collect::<Result<_, _>>()?;
     serde_json::to_string_pretty(&accounts).map_err(|e| format!("导出失败:{}", e))
 }
 
@@ -1098,6 +1146,28 @@ fn get_workbuddy_shared_auth_dir() -> Option<PathBuf> {
 
 pub fn get_default_workbuddy_auth_file_path() -> Option<PathBuf> {
     get_workbuddy_shared_auth_dir().map(|dir| dir.join(WORKBUDDY_AUTH_FILE_NAME))
+}
+
+fn get_workbuddy_vscode_data_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        return dirs::home_dir().map(|home| home.join("Library/Application Support/WorkBuddy"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return dirs::data_dir().map(|dir| dir.join("WorkBuddy"));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return dirs::config_dir().map(|dir| dir.join("WorkBuddy"));
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+fn get_workbuddy_state_db_path() -> Option<PathBuf> {
+    get_workbuddy_vscode_data_dir()
+        .map(|dir| dir.join("User").join("globalStorage").join("state.vscdb"))
 }
 
 fn workbuddy_logout_marker_path(auth_file: &Path) -> PathBuf {
@@ -1287,7 +1357,16 @@ fn build_local_import_payload(
         .and_then(|obj| json_object_i64_field(obj, &["expiresAt", "expires_at"]))
         .or_else(|| {
             auth_obj.and_then(|obj| json_object_i64_field(obj, &["expiresAt", "expires_at"]))
-        });
+        })
+        .filter(|value| *value > 0)
+        .map(|value| {
+            if value > 10_000_000_000 {
+                value / 1000
+            } else {
+                value
+            }
+        })
+        .or_else(|| workbuddy_oauth::token_expires_at(&Value::Null, &access_token, now_ts()));
 
     WorkbuddyOAuthCompletePayload {
         email,
@@ -1435,7 +1514,14 @@ fn build_default_auth_value(account: &WorkbuddyAccount) -> Value {
         Value::Number(serde_json::Number::from(now_ms)),
     );
 
-    if let Some(expires_at) = account.expires_at {
+    // Account scheduling uses seconds; the desktop SDK stores absolute times in milliseconds.
+    if let Some(expires_at) = account.expires_at.filter(|value| *value > 0).map(|value| {
+        if value > 10_000_000_000 {
+            value
+        } else {
+            value.saturating_mul(1000)
+        }
+    }) {
         auth_obj.insert(
             "expiresAt".to_string(),
             Value::Number(serde_json::Number::from(expires_at)),
@@ -1449,6 +1535,14 @@ fn build_default_auth_value(account: &WorkbuddyAccount) -> Value {
 
         let refresh_expires_at = raw_auth_obj
             .and_then(|obj| json_object_i64_field(obj, &["refreshExpiresAt", "refresh_expires_at"]))
+            .filter(|value| *value > 0)
+            .map(|value| {
+                if value > 10_000_000_000 {
+                    value
+                } else {
+                    value.saturating_mul(1000)
+                }
+            })
             .unwrap_or(expires_at);
         auth_obj.insert(
             "refreshExpiresAt".to_string(),
@@ -1477,7 +1571,7 @@ fn build_default_auth_value(account: &WorkbuddyAccount) -> Value {
     Value::Object(auth_obj)
 }
 
-fn build_default_client_auth_session(account: &WorkbuddyAccount) -> Value {
+pub(crate) fn build_runtime_auth_session(account: &WorkbuddyAccount) -> Value {
     let account_value = build_default_auth_account_value(account);
     serde_json::json!({
         "account": account_value.clone(),
@@ -1486,18 +1580,7 @@ fn build_default_client_auth_session(account: &WorkbuddyAccount) -> Value {
     })
 }
 
-pub fn import_payload_from_local() -> Result<Option<WorkbuddyOAuthCompletePayload>, String> {
-    let auth_file = match get_default_workbuddy_auth_file_path() {
-        Some(path) => path,
-        None => return Ok(None),
-    };
-    if !auth_file.exists() || workbuddy_logout_marker_path(&auth_file).exists() {
-        return Ok(None);
-    }
-
-    let secret = fs::read_to_string(&auth_file)
-        .map_err(|e| format!("读取本机 WorkBuddy 登录信息失败: {}", e))?;
-
+fn payload_from_local_secret(secret: &str) -> Result<WorkbuddyOAuthCompletePayload, String> {
     let parsed_json = serde_json::from_str::<Value>(&secret).ok();
     let token_candidate = parsed_json
         .as_ref()
@@ -1523,19 +1606,71 @@ pub fn import_payload_from_local() -> Result<Option<WorkbuddyOAuthCompletePayloa
         return Err("本地 WorkBuddy 登录信息解析失败: access token 为空".to_string());
     };
 
-    let payload = build_local_import_payload(access_token, parsed_json, uid_from_token);
-    Ok(Some(payload))
+    Ok(build_local_import_payload(
+        access_token,
+        parsed_json,
+        uid_from_token,
+    ))
+}
+
+pub fn import_payload_from_local() -> Result<Option<WorkbuddyOAuthCompletePayload>, String> {
+    let mut errors = Vec::new();
+
+    // WorkBuddy 5.x stores a shared native auth file on all desktop platforms.
+    if let Some(auth_file) = get_default_workbuddy_auth_file_path() {
+        if auth_file.exists() && !workbuddy_logout_marker_path(&auth_file).exists() {
+            match fs::read_to_string(&auth_file)
+                .map_err(|e| format!("读取本机 WorkBuddy 登录信息失败: {}", e))
+                .and_then(|secret| payload_from_local_secret(&secret))
+            {
+                Ok(payload) => return Ok(Some(payload)),
+                Err(error) => errors.push(format!("原生认证文件：{}", error)),
+            }
+        }
+    }
+
+    // Older/current distribution variants use VS Code SecretStorage instead.
+    // Keep this fallback for macOS and for installations migrated between versions.
+    if let (Some(data_root), Some(state_db)) = (
+        get_workbuddy_vscode_data_dir(),
+        get_workbuddy_state_db_path(),
+    ) {
+        if state_db.exists() {
+            match crate::modules::vscode_inject::read_workbuddy_secret_storage_value(
+                WORKBUDDY_SECRET_EXTENSION_ID,
+                WORKBUDDY_SECRET_KEY,
+                Some(data_root.to_string_lossy().as_ref()),
+            ) {
+                Ok(Some(secret)) => match payload_from_local_secret(&secret) {
+                    Ok(payload) => return Ok(Some(payload)),
+                    Err(error) => errors.push(format!("SecretStorage：{}", error)),
+                },
+                Ok(None) => {}
+                Err(error) => errors.push(format!("SecretStorage：{}", error)),
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(None)
+    } else {
+        Err(format!(
+            "无法读取本机 WorkBuddy 登录：{}",
+            errors.join("；")
+        ))
+    }
 }
 
 pub fn write_account_to_default_client(account: &WorkbuddyAccount) -> Result<(), String> {
     let auth_file = get_default_workbuddy_auth_file_path()
         .ok_or_else(|| "无法定位默认 WorkBuddy 登录信息路径".to_string())?;
+    let had_native_auth = auth_file.exists();
     let marker_path = workbuddy_logout_marker_path(&auth_file);
     if marker_path.exists() {
         fs::remove_file(&marker_path).map_err(|e| format!("清理 WorkBuddy 登出标记失败: {}", e))?;
     }
 
-    let session = build_default_client_auth_session(account);
+    let session = build_runtime_auth_session(account);
     let content =
         serde_json::to_string_pretty(&session).map_err(|e| format!("序列化登录信息失败: {}", e))?;
     crate::modules::atomic_write::write_string_atomic(&auth_file, &content)
@@ -1556,6 +1691,28 @@ pub fn write_account_to_default_client(account: &WorkbuddyAccount) -> Result<(),
         ));
     }
 
+    // If this installation is backed by VS Code SecretStorage, update that authoritative
+    // store as well. Do not create a second profile/database for native-auth installations.
+    if let Some(state_db) = get_workbuddy_state_db_path().filter(|path| path.exists()) {
+        let secret_key = format!(
+            r#"secret://{{"extensionId":"{}","key":"{}"}}"#,
+            WORKBUDDY_SECRET_EXTENSION_ID, WORKBUDDY_SECRET_KEY
+        );
+        if let Err(error) = crate::modules::vscode_inject::inject_secret_to_state_db_for_workbuddy(
+            &state_db,
+            &secret_key,
+            &content,
+        ) {
+            if !had_native_auth {
+                return Err(format!("写入 WorkBuddy SecretStorage 失败: {}", error));
+            }
+            logger::log_warn(&format!(
+                "[WorkBuddy Account] 原生认证已写入，但兼容 SecretStorage 更新失败: {}",
+                error
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -1563,6 +1720,19 @@ pub fn sync_account_to_default_client(account_id: &str) -> Result<(), String> {
     let account =
         load_account(account_id).ok_or_else(|| format!("WorkBuddy 账号不存在: {}", account_id))?;
     write_account_to_default_client(&account)
+}
+
+pub(crate) fn verify_default_client_credentials(account: &WorkbuddyAccount) -> Result<(), String> {
+    let imported = import_payload_from_local()?
+        .ok_or_else(|| "WorkBuddy 启动后登录凭证缺失或已被客户端登出".to_string())?;
+    let same_identity = match (&account.uid, &imported.uid) {
+        (Some(expected), Some(actual)) => expected == actual,
+        _ => account.access_token == imported.access_token,
+    };
+    if !same_identity || account.enterprise_id != imported.enterprise_id {
+        return Err("WorkBuddy 启动后凭证与目标账号不一致，切换未确认".to_string());
+    }
+    Ok(())
 }
 
 pub(crate) fn resolve_current_account_id(accounts: &[WorkbuddyAccount]) -> Option<String> {
@@ -1714,6 +1884,180 @@ pub fn sync_accounts_to_codebuddy_cn() -> Result<usize, String> {
     }
 
     Ok(synced_count)
+}
+
+#[cfg(test)]
+mod management_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sample(uid: &str) -> WorkbuddyAccount {
+        serde_json::from_value(json!({
+            "id": format!("fixture-{}", uid), "uid": uid, "email": format!("{}@example.invalid", uid),
+            "access_token": "fixture-access-token", "refresh_token": "fixture-refresh-token",
+            "created_at": 1, "last_used": 2, "usage_updated_at": 5, "tags": ["keep"],
+            "quota_raw": {"userResource": {"data": {"Accounts": [1]}}},
+            "usage_raw": {"data": {"Accounts": [1]}}
+        })).unwrap()
+    }
+
+    #[test]
+    fn token_only_import_does_not_erase_refresh_token_or_identity() {
+        let mut account = sample("uid-a");
+        let payload =
+            payload_from_import_value(json!({"uid": "uid-a", "access_token": "updated-token"}))
+                .unwrap();
+        apply_payload(&mut account, payload);
+        assert_eq!(account.access_token, "updated-token");
+        assert_eq!(
+            account.refresh_token.as_deref(),
+            Some("fixture-refresh-token")
+        );
+        assert_eq!(account.uid.as_deref(), Some("uid-a"));
+        assert_eq!(account.tags, Some(vec!["keep".to_string()]));
+        assert!(account.quota_raw.is_some());
+    }
+
+    #[test]
+    fn quota_failure_does_not_advance_cached_usage_timestamp() {
+        let mut account = sample("uid-a");
+        let payload =
+            payload_from_import_value(json!({"uid": "uid-a", "access_token": "updated-token"}))
+                .unwrap();
+        let diagnostics = workbuddy_oauth::RefreshDiagnostics {
+            token_refreshed: true,
+            quota_error: Some("请求失败 (http=403): 请求不合法".to_string()),
+            ..Default::default()
+        };
+        apply_refresh_result(&mut account, payload, &diagnostics, 999);
+        assert_eq!(account.usage_updated_at, Some(5));
+        assert_eq!(account.token_refreshed_at, Some(999));
+        assert!(account.quota_query_last_error.is_some());
+        assert_ne!(account.status.as_deref(), Some("login_required"));
+        assert!(diagnostics.error_message().is_some());
+    }
+
+    #[test]
+    fn successful_quota_refresh_clears_stale_error() {
+        let mut account = sample("uid-a");
+        account.quota_query_last_error = Some("old".to_string());
+        account.status = Some("login_required".to_string());
+        let payload =
+            payload_from_import_value(json!({"uid": "uid-a", "access_token": "updated-token"}))
+                .unwrap();
+        let diagnostics = workbuddy_oauth::RefreshDiagnostics {
+            token_refreshed: true,
+            quota_refreshed: true,
+            ..Default::default()
+        };
+        apply_refresh_result(&mut account, payload, &diagnostics, 999);
+        assert_eq!(account.usage_updated_at, Some(999));
+        assert_eq!(account.status.as_deref(), Some("normal"));
+        assert!(account.quota_query_last_error.is_none());
+    }
+
+    #[test]
+    fn invalid_request_403_is_not_proof_that_login_expired() {
+        assert!(!is_login_required_error("请求失败 (http=403): 请求不合法"));
+        assert!(is_login_required_error("请求失败 (http=401): Unauthorized"));
+        assert!(is_login_required_error("刷新失败 (code=401)"));
+    }
+
+    #[test]
+    fn unknown_identity_is_not_merged_into_placeholder_account() {
+        let unknown = payload_from_import_value(
+            json!({"access_token": "fixture-access-token", "email": "unknown"}),
+        )
+        .unwrap();
+        assert!(validate_payload_identity(&unknown).is_err());
+        let identified = payload_from_import_value(
+            json!({"access_token": "fixture-access-token", "uid": "uid-a"}),
+        )
+        .unwrap();
+        assert!(validate_payload_identity(&identified).is_ok());
+        assert!(!accounts_are_duplicates(&sample("uid-a"), &sample("uid-b")));
+    }
+
+    #[test]
+    fn exported_record_and_native_session_can_be_parsed_without_losing_credentials() {
+        let account = sample("uid-a");
+        let exported = payload_from_import_value(serde_json::to_value(&account).unwrap()).unwrap();
+        assert_eq!(exported.refresh_token, account.refresh_token);
+        assert_eq!(exported.quota_raw, account.quota_raw);
+        let session = build_runtime_auth_session(&account);
+        let native = payload_from_import_value(session).unwrap();
+        assert_eq!(native.uid, account.uid);
+        assert_eq!(native.access_token, account.access_token);
+        assert_eq!(native.refresh_token, account.refresh_token);
+    }
+
+    #[test]
+    fn native_session_expiry_roundtrip_keeps_desktop_milliseconds_and_account_seconds() {
+        let mut account = sample("uid-a");
+        let expiry = now_ts() + 3600;
+        account.expires_at = Some(expiry);
+        let session = build_runtime_auth_session(&account);
+        assert_eq!(session["auth"]["expiresAt"].as_i64(), Some(expiry * 1000));
+        assert!(session["auth"]["expiresIn"].as_i64().unwrap() >= 3598);
+        let native = payload_from_import_value(session).unwrap();
+        assert_eq!(native.expires_at, Some(expiry));
+
+        // Older exported records may still have millisecond expiry values.
+        account.expires_at = Some(expiry * 1000);
+        let session = build_runtime_auth_session(&account);
+        assert_eq!(session["auth"]["expiresAt"].as_i64(), Some(expiry * 1000));
+        assert_eq!(
+            payload_from_import_value(session).unwrap().expires_at,
+            Some(expiry)
+        );
+    }
+
+    #[test]
+    #[ignore = "isolated storage verification; explicitly supply WORKBUDDY_STORAGE_SMOKE_DIR and CLE_CONSOLE_DATA_DIR"]
+    fn isolated_workbuddy_import_export_roundtrip() {
+        let expected = PathBuf::from(
+            std::env::var("WORKBUDDY_STORAGE_SMOKE_DIR").expect("isolated directory required"),
+        );
+        let actual = get_data_dir().unwrap();
+        assert_eq!(actual, expected);
+        assert!(actual
+            .to_string_lossy()
+            .contains("workbuddy-management-repair"));
+        assert!(
+            list_accounts_checked().unwrap().is_empty(),
+            "start with a clean isolated directory"
+        );
+        let accounts = import_from_json(
+            &serde_json::to_string(&vec![sample("uid-a"), sample("uid-b")]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(accounts.len(), 2);
+        assert_ne!(accounts[0].id, accounts[1].id);
+        let ids = accounts
+            .iter()
+            .map(|account| account.id.clone())
+            .collect::<Vec<_>>();
+        let exported = export_accounts(&ids).unwrap();
+        let restored = import_from_json(&exported).unwrap();
+        assert_eq!(restored.len(), 2);
+        for account in &restored {
+            assert_eq!(
+                account.refresh_token.as_deref(),
+                Some("fixture-refresh-token")
+            );
+            assert_eq!(account.usage_updated_at, Some(5));
+            assert_eq!(account.tags, Some(vec!["keep".to_string()]));
+        }
+        import_from_json(r#"{"uid":"uid-a","access_token":"new-fixture-access-token"}"#).unwrap();
+        assert_eq!(
+            load_account(&ids[0]).unwrap().refresh_token.as_deref(),
+            Some("fixture-refresh-token")
+        );
+        let invalid_batch = json!([{"uid":"uid-c", "access_token":"fixture"}, {"email":"unknown", "access_token":"fixture"}]);
+        assert!(import_from_json(&invalid_batch.to_string()).is_err());
+        assert_eq!(list_accounts_checked().unwrap().len(), 2);
+        assert!(export_accounts(&["missing-id".to_string()]).is_err());
+    }
 }
 
 pub fn update_checkin_info(

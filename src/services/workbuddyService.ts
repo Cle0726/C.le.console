@@ -39,7 +39,19 @@ export async function refreshWorkbuddyToken(accountId: string): Promise<Workbudd
 }
 
 export async function refreshAllWorkbuddyTokens(): Promise<number> {
-  return await invoke('refresh_all_workbuddy_tokens');
+  const result = await invoke<number | {
+    success_count: number;
+    failed_count: number;
+    results: Array<{ account_id: string; email: string; success: boolean; error?: string }>;
+  }>('refresh_all_workbuddy_tokens');
+  // Keep compatibility with an older backend, but never hide partial failures from a new one.
+  if (typeof result === 'number') return result;
+  if (result.failed_count > 0) {
+    const errors = result.results.filter((item) => !item.success)
+      .map((item) => `${item.email || item.account_id}：${item.error || '刷新失败'}`);
+    throw new Error(`刷新完成：${result.success_count} 个成功，${result.failed_count} 个失败。\n${errors.join('\n')}`);
+  }
+  return result.success_count;
 }
 
 export async function startWorkbuddyOAuthLogin(): Promise<WorkbuddyOAuthLoginStartResponse> {

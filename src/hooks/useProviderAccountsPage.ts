@@ -1175,25 +1175,33 @@ export function useProviderAccountsPage<TAccount extends ProviderAccountBase>(
   const handleRefresh = useCallback(
     async (accountId: string) => {
       setRefreshing(accountId);
+      setMessage(null);
       try {
         await refreshToken(accountId);
+        if (platformKey === 'WorkBuddy') {
+          setMessage({ text: 'WorkBuddy 凭证和额度已刷新。' });
+        }
       } catch (e) {
-        console.error(e);
+        setMessage({ text: String(e).replace(/^Error:\s*/, ''), tone: 'error' });
       }
       setRefreshing(null);
     },
-    [refreshToken],
+    [refreshToken, platformKey],
   );
 
   const handleRefreshAll = useCallback(async () => {
     setRefreshingAll(true);
+    setMessage(null);
     try {
       await refreshAllTokens();
+      if (platformKey === 'WorkBuddy') {
+        setMessage({ text: 'WorkBuddy 全部账号的凭证和额度已刷新。' });
+      }
     } catch (e) {
-      console.error(e);
+      setMessage({ text: String(e).replace(/^Error:\s*/, ''), tone: 'error' });
     }
     setRefreshingAll(false);
-  }, [refreshAllTokens]);
+  }, [refreshAllTokens, platformKey]);
 
   const handleDelete = useCallback(
     (accountId: string) => {
@@ -1247,7 +1255,7 @@ export function useProviderAccountsPage<TAccount extends ProviderAccountBase>(
       const account = accounts.find((item) => item.id === accountId);
       const displayEmail = account ? config.getDisplayEmail(account) : accountId;
       try {
-        await injectFn(accountId);
+        const injectResult = await injectFn(accountId);
         setCurrentAccountId(accountId);
         if (platformId) {
           await emitCurrentAccountChanged({
@@ -1256,7 +1264,8 @@ export function useProviderAccountsPage<TAccount extends ProviderAccountBase>(
             reason: 'switch',
           });
         }
-        setMessage({ text: t('messages.switched', { email: maskAccountText(displayEmail) }) });
+        setMessage({ text: platformKey === 'WorkBuddy' && typeof injectResult === 'string'
+          ? injectResult : t('messages.switched', { email: maskAccountText(displayEmail) }) });
         if (config.onInjectSuccess) {
           try {
             await config.onInjectSuccess({

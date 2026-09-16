@@ -39,9 +39,20 @@ fn generate_login_id() -> String {
     )
 }
 
-fn build_client() -> Result<reqwest::Client, String> {
+fn client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
+        // Buddy rejects otherwise valid requests without a product User-Agent (code 10085).
+        .user_agent(concat!(
+            "WorkBuddy/",
+            env!("CARGO_PKG_VERSION"),
+            " C.le.console/",
+            env!("CARGO_PKG_VERSION")
+        ))
         .timeout(std::time::Duration::from_secs(30))
+}
+
+fn build_client() -> Result<reqwest::Client, String> {
+    client_builder()
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败:{}", e))
 }
@@ -68,12 +79,119 @@ fn normalize_user_resource_status(status: &[i32]) -> Vec<i32> {
 }
 
 fn build_default_user_resource_time_range() -> (String, String) {
-    let now = chrono::Local::now();
+    let now = chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap());
     let begin = now.format("%Y-%m-%d %H:%M:%S").to_string();
     let end = (now + chrono::Duration::days(365 * 101))
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
     (begin, end)
+}
+
+pub(crate) fn token_expires_at(data: &Value, access_token: &str, now: i64) -> Option<i64> {
+    use base64::Engine;
+    let number = |value: &Value| value.as_i64().or_else(|| value.as_str()?.parse().ok());
+    let explicit = data
+        .get("expiresAt")
+        .or_else(|| data.get("expires_at"))
+        .and_then(number);
+    if let Some(expiry) = explicit.filter(|value| *value > 0) {
+        return Some(if expiry > 10_000_000_000 {
+            expiry / 1000
+        } else {
+            expiry
+        });
+    }
+    // JWT is inspected only to schedule refresh, never to authenticate an account.
+    if let Some(claims) = access_token
+        .split('.')
+        .nth(1)
+        .and_then(|part| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(part.trim_end_matches('='))
+                .ok()
+        })
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    {
+        if let Some(expiry) = claims
+            .get("exp")
+            .and_then(number)
+            .filter(|value| *value > 0)
+        {
+            return Some(expiry);
+        }
+    }
+    data.get("expiresIn")
+        .or_else(|| data.get("expires_in"))
+        .and_then(number)
+        .filter(|value| *value > 0)
+        .and_then(|seconds| now.checked_add(seconds))
+}
+
+fn validate_api_body(body: &Value, http_status: u16, action: &str) -> Result<(), String> {
+    let code = body.get("code").and_then(|value| value.as_i64());
+    let message = body
+        .get("message")
+        .or_else(|| body.get("msg"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("响应未包含错误说明");
+    if !(200..300).contains(&http_status) {
+        return Err(format!(
+            "{}失败 (http={}): {}",
+            action, http_status, message
+        ));
+    }
+    if !matches!(code, Some(0 | 200)) {
+        return Err(format!(
+            "{}失败 (code={}): {}",
+            action,
+            code.unwrap_or(-1),
+            message
+        ));
+    }
+    if body.get("data").is_none_or(Value::is_null) {
+        return Err(format!("{}响应缺少 data 字段", action));
+    }
+    Ok(())
+}
+
+async fn read_api_response(response: reqwest::Response, action: &str) -> Result<Value, String> {
+    let status = response.status().as_u16();
+    let body = response
+        .json::<Value>()
+        .await
+        .map_err(|error| format!("解析{}响应失败 (http={}): {}", action, status, error))?;
+    validate_api_body(&body, status, action)?;
+    Ok(body)
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct RefreshDiagnostics {
+    pub token_refreshed: bool,
+    pub quota_refreshed: bool,
+    pub token_error: Option<String>,
+    pub quota_error: Option<String>,
+}
+
+impl RefreshDiagnostics {
+    pub fn error_message(&self) -> Option<String> {
+        let mut errors = Vec::new();
+        if let Some(error) = &self.token_error {
+            errors.push(format!("凭证刷新失败：{}", error));
+        }
+        if let Some(error) = &self.quota_error {
+            errors.push(format!("额度查询失败（保留上次缓存）：{}", error));
+        }
+        if errors.is_empty() {
+            return None;
+        }
+        if self.token_refreshed {
+            errors.insert(0, "凭证已更新".to_string());
+        }
+        if self.quota_refreshed {
+            errors.insert(0, "额度已更新".to_string());
+        }
+        Some(errors.join("；"))
+    }
 }
 
 fn clear_pending_login(login_id: &str) -> Result<(), String> {
@@ -230,10 +348,8 @@ pub async fn complete_login(login_id: &str) -> Result<WorkbuddyOAuthCompletePayl
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
 
-                                let expires_at = data
-                                    .get("expiresAt")
-                                    .or_else(|| data.get("expires_at"))
-                                    .and_then(|v| v.as_i64());
+                                let expires_at =
+                                    token_expires_at(data, &access_token, now_timestamp());
 
                                 let domain = data
                                     .get("domain")
@@ -270,7 +386,7 @@ pub async fn complete_login(login_id: &str) -> Result<WorkbuddyOAuthCompletePayl
                                             "[WorkBuddy OAuth] 获取账号信息失败:{}",
                                             e
                                         ));
-                                        (None, None, String::new(), None, None, None)
+                                        return Err(format!("授权已完成，但无法读取 WorkBuddy 账号身份；未覆盖已保存账号：{}", e));
                                     }
                                 };
 
@@ -366,10 +482,7 @@ async fn fetch_account_info(
         .await
         .map_err(|e| format!("请求 login/account 失败:{}", e))?;
 
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 login/account 响应失败:{}", e))?;
+    let body = read_api_response(resp, "读取 login/account").await?;
 
     let data = body.get("data").cloned().unwrap_or(json!({}));
 
@@ -443,10 +556,7 @@ pub async fn refresh_token(
         .await
         .map_err(|e| format!("刷新 token 失败:{}", e))?;
 
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析刷新响应失败:{}", e))?;
+    let body = read_api_response(resp, "刷新 token").await?;
 
     let code = body.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 && code != 200 {
@@ -458,9 +568,20 @@ pub async fn refresh_token(
         return Err(format!("刷新 token 失败 (code={}): {}", code, msg));
     }
 
-    body.get("data")
+    let data = body
+        .get("data")
         .cloned()
-        .ok_or_else(|| "刷新响应缺少 data 字段".to_string())
+        .ok_or_else(|| "刷新响应缺少 data 字段".to_string())?;
+    if normalize_non_empty(
+        data.get("accessToken")
+            .or_else(|| data.get("access_token"))
+            .and_then(Value::as_str),
+    )
+    .is_none()
+    {
+        return Err("刷新响应缺少有效 access token".to_string());
+    }
+    Ok(data)
 }
 
 pub async fn fetch_dosage_notify(
@@ -496,12 +617,7 @@ pub async fn fetch_dosage_notify(
         .await
         .map_err(|e| format!("请求 dosage notify 失败:{}", e))?;
 
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 dosage 响应失败:{}", e))?;
-
-    Ok(body)
+    read_api_response(resp, "查询 dosage notify").await
 }
 
 pub async fn fetch_payment_type(
@@ -537,12 +653,7 @@ pub async fn fetch_payment_type(
         .await
         .map_err(|e| format!("请求 payment type 失败:{}", e))?;
 
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 payment type 响应失败:{}", e))?;
-
-    Ok(body)
+    read_api_response(resp, "查询 payment type").await
 }
 
 pub async fn fetch_user_resource_with_access_token(
@@ -596,63 +707,7 @@ pub async fn fetch_user_resource_with_access_token(
         .await
         .map_err(|e| format!("请求 user resource（Token）失败:{}", e))?;
 
-    let status_code = resp.status();
-    let content_type = resp
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let content_encoding = resp
-        .headers()
-        .get(reqwest::header::CONTENT_ENCODING)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| {
-            format!(
-                "解析 user resource（Token）响应失败:{} (http={}, url={}, has_uid={}, has_enterprise_id={}, content_type={}, content_encoding={})",
-                e,
-                status_code.as_u16(),
-                url,
-                uid.is_some(),
-                enterprise_id.is_some(),
-                content_type,
-                content_encoding
-            )
-        })?;
-
-    if !status_code.is_success() {
-        let message = body
-            .get("message")
-            .or_else(|| body.get("msg"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown error");
-        return Err(format!(
-            "请求 user resource（Token）失败 (http={}): {}",
-            status_code.as_u16(),
-            message
-        ));
-    }
-
-    if let Some(code) = body.get("code").and_then(|v| v.as_i64()) {
-        if code != 0 && code != 200 {
-            let message = body
-                .get("message")
-                .or_else(|| body.get("msg"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Err(format!(
-                "请求 user resource（Token）失败 (code={}): {}",
-                code, message
-            ));
-        }
-    }
-
-    Ok(body)
+    read_api_response(resp, "请求 user resource（Token）").await
 }
 
 async fn fetch_user_resource_with_access_token_default(
@@ -680,10 +735,37 @@ async fn fetch_user_resource_with_access_token_default(
     .await
 }
 
+fn merge_quota_snapshot(
+    cached: Option<&Value>,
+    dosage: Option<&Value>,
+    payment: Option<&Value>,
+    resource: Option<&Value>,
+) -> Option<Value> {
+    let mut merged = cached
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for (key, result) in [
+        ("dosage", dosage),
+        ("payment", payment),
+        ("userResource", resource),
+    ] {
+        if let Some(result) = result {
+            merged.insert(key.to_string(), result.clone());
+        }
+    }
+    if merged.is_empty() {
+        cached.cloned()
+    } else {
+        Some(Value::Object(merged))
+    }
+}
+
 async fn refresh_payload_for_account_inner(
     account: &crate::models::workbuddy::WorkbuddyAccount,
     require_user_resource: bool,
-) -> Result<(WorkbuddyOAuthCompletePayload, Option<String>), String> {
+) -> Result<(WorkbuddyOAuthCompletePayload, RefreshDiagnostics), String> {
+    let mut diagnostics = RefreshDiagnostics::default();
     let mut new_access_token = account.access_token.clone();
     let mut new_refresh_token = account.refresh_token.clone();
     let mut new_expires_at = account.expires_at;
@@ -692,6 +774,7 @@ async fn refresh_payload_for_account_inner(
     if let Some(refresh_tk) = account.refresh_token.as_deref() {
         match refresh_token(&account.access_token, refresh_tk, account.domain.as_deref()).await {
             Ok(token_data) => {
+                diagnostics.token_refreshed = true;
                 new_access_token = token_data
                     .get("accessToken")
                     .or_else(|| token_data.get("access_token"))
@@ -706,10 +789,7 @@ async fn refresh_payload_for_account_inner(
                     .map(|s| s.to_string())
                     .or_else(|| account.refresh_token.clone());
 
-                new_expires_at = token_data
-                    .get("expiresAt")
-                    .or_else(|| token_data.get("expires_at"))
-                    .and_then(|v| v.as_i64())
+                new_expires_at = token_expires_at(&token_data, &new_access_token, now_timestamp())
                     .or(account.expires_at);
 
                 new_domain = token_data
@@ -723,9 +803,15 @@ async fn refresh_payload_for_account_inner(
                     "[WorkBuddy] Token 刷新失败，将使用现有 token 查询配额:{}",
                     e
                 ));
+                diagnostics.token_error = Some(e);
             }
         }
+    } else {
+        diagnostics.token_error =
+            Some("未保存 refresh token，无法刷新凭证；仍尝试查询额度".to_string());
     }
+    new_expires_at = new_expires_at
+        .or_else(|| token_expires_at(&Value::Null, &new_access_token, now_timestamp()));
 
     let resolved_email =
         normalize_non_empty(Some(account.email.as_str())).unwrap_or_else(|| account.email.clone());
@@ -753,7 +839,6 @@ async fn refresh_payload_for_account_inner(
     .await
     .ok();
 
-    let mut quota_refresh_error: Option<String> = None;
     logger::log_info(&format!(
         "[WorkBuddy][IDE Token] 尝试刷新 user_resource: has_uid={}, has_enterprise_id={}, has_domain={}",
         resolved_uid.is_some(),
@@ -769,6 +854,7 @@ async fn refresh_payload_for_account_inner(
     .await
     {
         Ok(payload) => {
+            diagnostics.quota_refreshed = true;
             logger::log_info("[WorkBuddy][IDE Token] 刷新 user_resource 成功");
             Some(payload)
         }
@@ -777,7 +863,7 @@ async fn refresh_payload_for_account_inner(
                 "[WorkBuddy][IDE Token] 刷新 user_resource 失败:{}",
                 err
             ));
-            quota_refresh_error = Some(err.clone());
+            diagnostics.quota_error = Some(err.clone());
             if require_user_resource {
                 return Err(
                     "使用 IDE token 刷新 user_resource 失败，无法获取资源包配额".to_string()
@@ -817,22 +903,12 @@ async fn refresh_payload_for_account_inner(
         })
         .or_else(|| account.payment_type.clone());
 
-    let mut combined_quota = serde_json::Map::new();
-    if let Some(d) = &dosage {
-        combined_quota.insert("dosage".to_string(), d.clone());
-    }
-    if let Some(p) = &payment {
-        combined_quota.insert("payment".to_string(), p.clone());
-    }
-    if let Some(r) = &user_resource {
-        combined_quota.insert("userResource".to_string(), r.clone());
-    }
-
-    let quota_raw = if combined_quota.is_empty() {
-        account.quota_raw.clone()
-    } else {
-        Some(Value::Object(combined_quota))
-    };
+    let quota_raw = merge_quota_snapshot(
+        account.quota_raw.as_ref(),
+        dosage.as_ref(),
+        payment.as_ref(),
+        user_resource.as_ref(),
+    );
 
     let final_email =
         normalize_non_empty(Some(resolved_email.as_str())).unwrap_or_else(|| account.email.clone());
@@ -861,13 +937,13 @@ async fn refresh_payload_for_account_inner(
             status: account.status.clone(),
             status_reason: account.status_reason.clone(),
         },
-        quota_refresh_error,
+        diagnostics,
     ))
 }
 
-pub async fn refresh_payload_for_account(
+pub(crate) async fn refresh_payload_for_account(
     account: &crate::models::workbuddy::WorkbuddyAccount,
-) -> Result<(WorkbuddyOAuthCompletePayload, Option<String>), String> {
+) -> Result<(WorkbuddyOAuthCompletePayload, RefreshDiagnostics), String> {
     refresh_payload_for_account_inner(account, false).await
 }
 
@@ -1017,7 +1093,7 @@ pub async fn build_payload_from_token(
         access_token: access_token.to_string(),
         refresh_token: None,
         token_type: Some("Bearer".to_string()),
-        expires_at: None,
+        expires_at: token_expires_at(&Value::Null, access_token, now_timestamp()),
         domain: None,
         plan_type: None,
         dosage_notify_code,
@@ -1031,4 +1107,154 @@ pub async fn build_payload_from_token(
         status: Some("normal".to_string()),
         status_reason: None,
     })
+}
+
+#[cfg(test)]
+mod management_tests {
+    use super::*;
+
+    #[test]
+    fn expiry_accepts_seconds_milliseconds_and_expires_in() {
+        assert_eq!(
+            token_expires_at(&json!({"expiresAt": 1_800_000_000}), "opaque", 100),
+            Some(1_800_000_000)
+        );
+        assert_eq!(
+            token_expires_at(&json!({"expires_at": "1800000000000"}), "opaque", 100),
+            Some(1_800_000_000)
+        );
+        assert_eq!(
+            token_expires_at(&json!({"expiresIn": 3600}), "opaque", 100),
+            Some(3700)
+        );
+        assert_eq!(
+            token_expires_at(&json!({"expires_in": -1}), "opaque", 100),
+            None
+        );
+    }
+
+    #[test]
+    fn expiry_uses_jwt_only_for_scheduling() {
+        use base64::Engine;
+        let claims =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"exp":1800000000}"#);
+        let token = format!("header.{}.unsigned", claims);
+        assert_eq!(
+            token_expires_at(&Value::Null, &token, 100),
+            Some(1_800_000_000)
+        );
+        assert_eq!(token_expires_at(&Value::Null, "broken.jwt", 100), None);
+    }
+
+    #[test]
+    fn quota_failure_preserves_packages_and_partial_success_is_not_full_success() {
+        let cached = json!({"userResource": {"data": {"Accounts": [1]}}, "dosage": "old"});
+        let dosage = json!({"code": 0, "data": {"dosageNotifyCode": 0}});
+        let merged = merge_quota_snapshot(Some(&cached), Some(&dosage), None, None).unwrap();
+        assert_eq!(merged["userResource"], cached["userResource"]);
+        assert_eq!(merged["dosage"], dosage);
+        let diagnostics = RefreshDiagnostics {
+            token_refreshed: true,
+            quota_error: Some("http=403".into()),
+            ..Default::default()
+        };
+        assert!(diagnostics
+            .error_message()
+            .unwrap()
+            .contains("额度查询失败"));
+        assert!(RefreshDiagnostics {
+            token_refreshed: true,
+            quota_refreshed: true,
+            ..Default::default()
+        }
+        .error_message()
+        .is_none());
+    }
+
+    #[test]
+    fn rejects_http_business_and_missing_data_errors() {
+        assert!(validate_api_body(&json!({"code": 0, "data": {}}), 200, "测试").is_ok());
+        assert!(validate_api_body(
+            &json!({"code": 10085, "message": "请求不合法"}),
+            403,
+            "测试"
+        )
+        .unwrap_err()
+        .contains("http=403"));
+        assert!(validate_api_body(&json!({"code": 401, "data": {}}), 200, "测试").is_err());
+        assert!(validate_api_body(&json!({"code": 0, "data": null}), 200, "测试").is_err());
+        assert!(validate_api_body(&json!({"data": {}}), 200, "测试").is_err());
+    }
+
+    #[tokio::test]
+    async fn client_sends_product_user_agent() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let address = server.server_addr().to_string();
+        let worker = std::thread::spawn(move || {
+            let request = server
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap()
+                .unwrap();
+            let agent = request
+                .headers()
+                .iter()
+                .find(|header| header.field.equiv("User-Agent"))
+                .map(|header| header.value.to_string())
+                .unwrap_or_default();
+            request
+                .respond(tiny_http::Response::from_string(r#"{"code":0,"data":{}}"#))
+                .unwrap();
+            agent
+        });
+        // Only this loopback test bypasses inherited proxies; production routing is unchanged.
+        let response = client_builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(format!("http://{}", address))
+            .send()
+            .await
+            .unwrap();
+        read_api_response(response, "本地测试").await.unwrap();
+        let agent = worker.join().unwrap();
+        assert!(agent.starts_with("WorkBuddy/"));
+        assert!(agent.contains("C.le.console/"));
+    }
+
+    #[tokio::test]
+    #[ignore = "read-only live account verification; explicitly supply WORKBUDDY_LIVE_ACCOUNT_FILE"]
+    async fn live_workbuddy_quota_and_checkin_smoke() {
+        let path =
+            std::env::var("WORKBUDDY_LIVE_ACCOUNT_FILE").expect("explicit account path required");
+        let account: crate::models::workbuddy::WorkbuddyAccount =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let quota = fetch_user_resource_with_access_token_default(
+            &account.access_token,
+            account.uid.as_deref(),
+            account.enterprise_id.as_deref(),
+            account.domain.as_deref(),
+        )
+        .await
+        .unwrap();
+        let data = &quota["data"]["Response"]["Data"];
+        let accounts = data["Accounts"]
+            .as_array()
+            .expect("official resource account array");
+        println!(
+            "live WorkBuddy quota: http/business success; {} resource packages",
+            accounts.len()
+        );
+        let status = crate::modules::codebuddy_cn_oauth::get_checkin_status(
+            &account.access_token,
+            account.uid.as_deref(),
+            account.enterprise_id.as_deref(),
+            account.domain.as_deref(),
+        )
+        .await
+        .unwrap();
+        println!(
+            "live WorkBuddy daily credits: active={}, today_checked_in={}",
+            status.active, status.today_checked_in
+        );
+    }
 }

@@ -260,8 +260,7 @@ export function CodebuddySuiteCheckinModal<TAccount extends CodebuddySuiteAccoun
           const remote = await getCheckinStatus(accountId);
           const merged: CheckinStatusResponse = {
             ...remote,
-            // 服务端短暂未更新时仍视为今日已领
-            today_checked_in: remote.today_checked_in || true,
+            today_checked_in: remote.today_checked_in,
             active: remote.active !== false,
           };
           updateAccountState(accountId, {
@@ -279,7 +278,7 @@ export function CodebuddySuiteCheckinModal<TAccount extends CodebuddySuiteAccoun
       }
 
         // 业务失败（如已签到）：刷新状态对齐官方
-        const alreadyChecked = /已签到|already\s*check|already\s*claim/i.test(
+        const alreadyChecked = /已签到|已领取|已经领取|already\s*check|already\s*claim/i.test(
           result.message || '',
         );
         updateAccountState(accountId, {
