@@ -1075,6 +1075,7 @@ pub fn run() {
             commands::multi_model_api::multi_model_api_save_config,
             commands::multi_model_api::multi_model_api_set_enabled,
             commands::multi_model_api::multi_model_api_sync_managed_accounts,
+            commands::multi_model_api::multi_model_api_sync_upstream_models,
             commands::multi_model_api::multi_model_api_test_chat,
             commands::multi_model_api::multi_model_api_diagnose_and_repair,
             commands::multi_model_api::multi_model_api_xai_oauth_start,

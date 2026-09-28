@@ -42,6 +42,8 @@ export const multiModelApiService = {
     invoke<MultiModelApiState>('multi_model_api_set_enabled', { enabled }),
   syncManagedAccounts: () =>
     invoke<MultiModelApiState>('multi_model_api_sync_managed_accounts'),
+  syncUpstreamModels: () =>
+    invoke<MultiModelApiState>('multi_model_api_sync_upstream_models'),
   testChat: (model?: string, prompt?: string) =>
     invoke<MultiModelApiTestResult>('multi_model_api_test_chat', { model, prompt }),
   diagnoseAndRepair: (deep = true) =>

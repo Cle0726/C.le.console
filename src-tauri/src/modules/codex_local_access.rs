@@ -37,7 +37,7 @@ use std::error::Error as StdError;
 use std::net::{Ipv4Addr, TcpListener as StdTcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
@@ -58,6 +58,10 @@ use tokio_tungstenite::{client_async_tls_with_config, MaybeTlsStream, WebSocketS
 use toml_edit::{value, Document};
 
 const CODEX_LOCAL_ACCESS_FILE: &str = "codex_local_access.json";
+const CODEX_UPSTREAM_MODELS_CACHE_FILE: &str = "codex_upstream_models.json";
+const CODEX_UPSTREAM_MODELS_URL: &str =
+    "https://chatgpt.com/backend-api/codex/models?client_version=0.135.0";
+const CODEX_UPSTREAM_MODELS_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const CODEX_LOCAL_ACCESS_CHAT_TEST_STREAM_EVENT: &str = "codex-local-access-chat-test-stream";
 const CODEX_LOCAL_ACCESS_TEST_DISABLE_IMAGE_GENERATION_HEADER: &str =
     "x-agtools-disable-image-generation";
@@ -158,6 +162,9 @@ const CODEX_OFFICIAL_EMPTY_HEADERS: &[&str] = &[
     "x-responsesapi-include-timing-metrics",
 ];
 const DEFAULT_CODEX_MODELS: &[&str] = &[
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
@@ -165,6 +172,7 @@ const DEFAULT_CODEX_MODELS: &[&str] = &[
     "gpt-5.4",
     "gpt-5.4-mini",
 ];
+static CODEX_UPSTREAM_MODELS_REFRESH_STARTED: AtomicBool = AtomicBool::new(false);
 const CODEX_IMAGE_MODEL_ID: &str = "gpt-image-2";
 const CODEX_AUTO_REVIEW_MODEL_ID: &str = "codex-auto-review";
 const DEFAULT_IMAGES_MAIN_MODEL: &str = "gpt-5.4-mini";
@@ -928,6 +936,10 @@ fn local_access_file_path() -> Result<PathBuf, String> {
     Ok(account::get_data_dir()?.join(CODEX_LOCAL_ACCESS_FILE))
 }
 
+fn codex_upstream_models_cache_path() -> Result<PathBuf, String> {
+    Ok(account::get_data_dir()?.join(CODEX_UPSTREAM_MODELS_CACHE_FILE))
+}
+
 fn local_access_stats_file_path() -> Result<PathBuf, String> {
     Ok(account::get_data_dir()?.join(CODEX_LOCAL_ACCESS_STATS_FILE))
 }
@@ -1285,6 +1297,161 @@ fn normalize_model_key(model: &str) -> String {
     model.trim().to_ascii_lowercase()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CodexUpstreamModelsCache {
+    models: Vec<String>,
+    updated_at: Option<String>,
+}
+
+fn parse_codex_upstream_model_ids(payload: &Value) -> Vec<String> {
+    let Some(items) = payload.get("models").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    items
+        .iter()
+        .filter_map(|item| {
+            item.as_str()
+                .or_else(|| item.get("slug").and_then(Value::as_str))
+                .or_else(|| item.get("id").and_then(Value::as_str))
+                .or_else(|| item.get("model").and_then(Value::as_str))
+                .or_else(|| item.get("name").and_then(Value::as_str))
+        })
+        .map(str::trim)
+        .filter(|model| {
+            !model.is_empty()
+                && model.len() <= 180
+                && !model.chars().any(char::is_whitespace)
+                && seen.insert(model.to_ascii_lowercase())
+        })
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[cfg(not(test))]
+fn load_codex_upstream_models_cache() -> CodexUpstreamModelsCache {
+    let Ok(path) = codex_upstream_models_cache_path() else {
+        return CodexUpstreamModelsCache::default();
+    };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return CodexUpstreamModelsCache::default();
+    };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+#[cfg(test)]
+fn load_codex_upstream_models_cache() -> CodexUpstreamModelsCache {
+    CodexUpstreamModelsCache::default()
+}
+
+fn save_codex_upstream_models_cache(models: Vec<String>) -> Result<(), String> {
+    let path = codex_upstream_models_cache_path()?;
+    let cache = CodexUpstreamModelsCache {
+        models,
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+    };
+    let content = serde_json::to_string_pretty(&cache)
+        .map_err(|error| format!("序列化 Codex 上游模型缓存失败: {error}"))?;
+    write_string_atomic(&path, &content)
+}
+
+async fn refresh_codex_upstream_models_cache() -> Result<usize, String> {
+    let collection = load_collection_from_disk()?.unwrap_or(new_empty_local_access_collection()?);
+    let mut account_ids = collection.account_ids.clone();
+    account_ids.extend(codex_account::list_accounts().into_iter().map(|account| account.id));
+    let mut seen_accounts = HashSet::new();
+    account_ids.retain(|id| seen_accounts.insert(id.clone()));
+
+    let signature = current_upstream_http_client_signature(
+        collection.upstream_proxy_url.as_deref(),
+        Duration::from_secs(10),
+    );
+    let client = build_upstream_http_client(&signature)?;
+    let mut errors = Vec::new();
+    for account_id in account_ids {
+        let account = match codex_account::prepare_account_for_injection_from_store(&account_id).await
+        {
+            Ok(account) if !account.is_api_key_auth() && !account.requires_reauth => account,
+            Ok(_) => continue,
+            Err(error) => {
+                errors.push(error);
+                continue;
+            }
+        };
+        let access_token = account.tokens.access_token.trim();
+        if access_token.is_empty() {
+            continue;
+        }
+        let mut request = client
+            .get(CODEX_UPSTREAM_MODELS_URL)
+            .timeout(Duration::from_secs(20))
+            .header(ACCEPT, "application/json")
+            .header(AUTHORIZATION, format!("Bearer {access_token}"))
+            .header(USER_AGENT, DEFAULT_CODEX_USER_AGENT)
+            .header("Originator", DEFAULT_CODEX_ORIGINATOR);
+        let chatgpt_account_id = account.account_id.clone().or_else(|| {
+            codex_account::extract_chatgpt_account_id_from_access_token(access_token)
+        });
+        if let Some(chatgpt_account_id) = chatgpt_account_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            request = request.header("ChatGPT-Account-Id", chatgpt_account_id);
+        }
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                errors.push(format!("{}: {error}", account.email));
+                continue;
+            }
+        };
+        if !response.status().is_success() {
+            errors.push(format!("{}: HTTP {}", account.email, response.status().as_u16()));
+            continue;
+        }
+        let payload = response
+            .json::<Value>()
+            .await
+            .map_err(|error| format!("解析 Codex 上游模型目录失败: {error}"))?;
+        let models = parse_codex_upstream_model_ids(&payload);
+        if models.is_empty() {
+            errors.push(format!("{}: 上游返回空模型目录", account.email));
+            continue;
+        }
+        let count = models.len();
+        save_codex_upstream_models_cache(models)?;
+        logger::log_codex_api_info(&format!(
+            "[CodexLocalAccess][models] 已同步 Codex 上游模型目录: count={count}"
+        ));
+        return Ok(count);
+    }
+
+    Err(if errors.is_empty() {
+        "没有可用于同步模型目录的 Codex OAuth 账号".to_string()
+    } else {
+        errors.into_iter().take(3).collect::<Vec<_>>().join("；")
+    })
+}
+
+fn start_codex_upstream_models_refresh_worker() {
+    if CODEX_UPSTREAM_MODELS_REFRESH_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        loop {
+            if let Err(error) = refresh_codex_upstream_models_cache().await {
+                logger::log_codex_api_warn(&format!(
+                    "[CodexLocalAccess][models] 自动同步失败，继续使用本地缓存: {error}"
+                ));
+            }
+            tokio::time::sleep(CODEX_UPSTREAM_MODELS_REFRESH_INTERVAL).await;
+        }
+    });
+}
+
 fn has_date_snapshot_suffix(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 11
@@ -1299,7 +1466,19 @@ fn has_date_snapshot_suffix(value: &str) -> bool {
 
 fn supported_codex_model_ids() -> Vec<String> {
     let mut seen = HashSet::new();
-    let mut model_ids: Vec<String> = codex_wakeup::load_state_for_scheduler()
+    let mut model_ids = load_codex_upstream_models_cache()
+        .models
+        .into_iter()
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty())
+        .filter(|model| seen.insert(model.to_ascii_lowercase()))
+        .collect::<Vec<_>>();
+    for model in DEFAULT_CODEX_MODELS {
+        if seen.insert((*model).to_ascii_lowercase()) {
+            model_ids.push((*model).to_string());
+        }
+    }
+    let configured_models: Vec<String> = codex_wakeup::load_state_for_scheduler()
         .ok()
         .map(|state| {
             state
@@ -1311,21 +1490,15 @@ fn supported_codex_model_ids() -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
-
-    let mut seen_model_ids: HashSet<String> = model_ids
-        .iter()
-        .map(|model| model.trim().to_ascii_lowercase())
-        .filter(|model| !model.is_empty())
-        .collect();
-    for model in DEFAULT_CODEX_MODELS {
-        if seen_model_ids.insert((*model).to_ascii_lowercase()) {
-            model_ids.push((*model).to_string());
+    for model in configured_models {
+        if seen.insert(model.to_ascii_lowercase()) {
+            model_ids.push(model);
         }
     }
-    if seen_model_ids.insert(CODEX_IMAGE_MODEL_ID.to_string()) {
+    if seen.insert(CODEX_IMAGE_MODEL_ID.to_string()) {
         model_ids.push(CODEX_IMAGE_MODEL_ID.to_string());
     }
-    if seen_model_ids.insert(CODEX_AUTO_REVIEW_MODEL_ID.to_string()) {
+    if seen.insert(CODEX_AUTO_REVIEW_MODEL_ID.to_string()) {
         model_ids.push(CODEX_AUTO_REVIEW_MODEL_ID.to_string());
     }
 
@@ -14597,6 +14770,7 @@ pub async fn restore_local_access_gateway() {
         runtime.last_error = Some(err.clone());
         logger::log_codex_api_warn(&format!("[CodexLocalAccess] 初始化失败: {}", err));
     }
+    start_codex_upstream_models_refresh_worker();
 }
 
 #[cfg(target_os = "windows")]
@@ -19183,7 +19357,8 @@ mod tests {
         normalize_account_model_rules, normalize_custom_routing_rules,
         normalized_sidecar_error_category, open_local_access_logs_db_once, parse_codex_retry_after,
         parse_responses_payload_from_upstream, parse_websocket_upstream_error,
-        prepare_gateway_request, prepare_gateway_request_with_default_service_tier,
+        parse_codex_upstream_model_ids, prepare_gateway_request,
+        prepare_gateway_request_with_default_service_tier,
         prepare_sidecar_launch_config_in_dir, prepare_websocket_initial_request,
         profile_base_url_matches, provider_gateway_bound_oauth_account_id_for_account,
         provider_gateway_default_model_for_account,
@@ -19243,9 +19418,26 @@ mod tests {
     use toml_edit::{value, Document};
 
     #[test]
-    fn default_codex_catalog_excludes_unsupported_generic_gpt_5_6_alias() {
+    fn default_codex_catalog_includes_current_named_models_but_not_generic_gpt_5_6_alias() {
         assert!(!DEFAULT_CODEX_MODELS.contains(&"gpt-5.6"));
+        assert!(DEFAULT_CODEX_MODELS.contains(&"gpt-6-astra"));
+        assert!(DEFAULT_CODEX_MODELS.contains(&"gpt-6-sol"));
+        assert!(DEFAULT_CODEX_MODELS.contains(&"gpt-6-luna"));
         assert!(DEFAULT_CODEX_MODELS.contains(&"gpt-5.6-sol"));
+    }
+
+    #[test]
+    fn parses_current_codex_upstream_model_catalog() {
+        let models = parse_codex_upstream_model_ids(&json!({
+            "models": [
+                { "slug": "gpt-6-astra" },
+                { "id": "gpt-6-sol" },
+                { "slug": "gpt-6-astra" },
+                { "slug": "bad model" }
+            ]
+        }));
+
+        assert_eq!(models, ["gpt-6-astra", "gpt-6-sol"]);
     }
 
     #[tokio::test]

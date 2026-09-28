@@ -60,6 +60,13 @@ const PROVIDER_MODELS: Record<string, MultiModelDefinition[]> = {
     ['veo-3.1-generate-preview', ['video']],
   ].map(([id, capabilities]) => ({ id: id as string, alias: '', capabilities: capabilities as ModelCapability[], enabled: true })),
   openai: [
+    ['gpt-6-astra', ['text', 'vision', 'reasoning']],
+    ['gpt-6-sol', ['text', 'vision', 'reasoning']],
+    ['gpt-6-luna', ['text', 'vision', 'reasoning']],
+    ['gpt-5.6-sol', ['text', 'vision', 'reasoning']],
+    ['gpt-5.6-terra', ['text', 'vision', 'reasoning']],
+    ['gpt-5.6-luna', ['text', 'vision', 'reasoning']],
+    ['gpt-5.5', ['text', 'vision', 'reasoning']],
     ['gpt-5.4', ['text', 'vision', 'reasoning']],
     ['gpt-5.4-mini', ['text', 'vision', 'reasoning']],
     ['gpt-image-2', ['image']],
@@ -87,6 +94,9 @@ const providerLabel = (id: string) => PROVIDERS.find((item) => item.id === id)?.
 const accountModelsText = (models: MultiModelDefinition[]) => models
   .map((model) => `${model.id} | ${model.alias} | ${model.capabilities.join(',')}`)
   .join('\n');
+const formatModelSyncTime = (value?: string | null) => value
+  ? new Date(value).toLocaleString('zh-CN', { hour12: false })
+  : '尚未同步';
 
 const parseModels = (raw: string): MultiModelDefinition[] => raw.split('\n').map((line) => {
   const parts = line.split('|').map((item) => item.trim());
@@ -158,6 +168,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   const loadInFlight = useRef<Promise<void> | null>(null);
   const refreshInFlight = useRef(false);
   const runtimeSnapshotRef = useRef('');
+  const modelSyncSuccessRef = useRef('');
 
   const load = useCallback((quiet = false) => {
     if (loadInFlight.current) return loadInFlight.current;
@@ -167,6 +178,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
       if (!quiet) setNotice(null);
       try {
         const next = await multiModelApiService.getState();
+        modelSyncSuccessRef.current = next.modelSync.lastSuccessAt ?? '';
         setState(next);
         setDraft(structuredClone(next.config));
       } catch (error) {
@@ -226,17 +238,27 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
           accountUsages: next.accountUsages,
           routeDispatches: next.routeDispatches,
           xaiAccounts: next.xaiAccounts,
+          catalog: next.catalog,
+          modelSync: next.modelSync,
         });
         if (runtimeSnapshot !== runtimeSnapshotRef.current) {
+          const modelsChanged = modelSyncSuccessRef.current !== (next.modelSync.lastSuccessAt ?? '');
+          if (modelsChanged) {
+            modelSyncSuccessRef.current = next.modelSync.lastSuccessAt ?? '';
+            setDraft(structuredClone(next.config));
+          }
           runtimeSnapshotRef.current = runtimeSnapshot;
           setState((previous) => previous ? {
             ...previous,
+            config: modelsChanged ? next.config : previous.config,
             running: next.running,
             lastError: next.lastError,
             selfHeal: next.selfHeal,
             accountUsages: next.accountUsages,
             routeDispatches: next.routeDispatches,
             xaiAccounts: next.xaiAccounts,
+            catalog: next.catalog,
+            modelSync: next.modelSync,
           } : next);
         }
       } catch {
@@ -313,6 +335,28 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
       });
     } catch (error) {
       setNotice({ tone: 'error', text: `同步失败：${String(error)}` });
+    } finally {
+      setOperation(null);
+    }
+  };
+
+  const syncUpstreamModels = async () => {
+    setOperation('model-sync');
+    setNotice({ tone: 'info', text: '正在并行读取各上游模型目录…' });
+    try {
+      const next = await multiModelApiService.syncUpstreamModels();
+      modelSyncSuccessRef.current = next.modelSync.lastSuccessAt ?? '';
+      setState(next);
+      setDraft(structuredClone(next.config));
+      const result = next.modelSync;
+      setNotice({
+        tone: result.status === 'failed' ? 'error' : result.status === 'partial' ? 'info' : 'success',
+        text: result.status === 'failed'
+          ? `模型同步失败，已保留原目录：${result.lastError ?? '上游暂时不可用'}`
+          : `模型同步完成：检查 ${result.discovered} 个，上新增 ${result.added} 个${result.sourcesFailed ? `；${result.sourcesFailed} 个上游失败，旧目录已保留` : ''}`,
+      });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `模型同步失败，已保留原目录：${String(error)}` });
     } finally {
       setOperation(null);
     }
@@ -629,7 +673,26 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
 
         {tab === 'models' && (
           <section className="mm-api-panel">
-            <header className="mm-api-panel-head"><div><h2>模型与能力目录</h2><p>“可用”表示已有启用账号声明该模型；未配置的模型不会被当成可调用额度。</p></div></header>
+            <header className="mm-api-panel-head">
+              <div>
+                <h2>模型与能力目录</h2>
+                <p>“可用”表示已有启用账号声明该模型；自动同步只补充上游新增模型，不会删除模型或改回你停用的项目。</p>
+              </div>
+              <div className="mm-model-sync-actions">
+                <span className={`mm-model-sync-state ${state.modelSync.status}`} title={state.modelSync.lastError ?? undefined}>
+                  {state.modelSync.status === 'syncing'
+                    ? '正在同步上游…'
+                    : state.modelSync.status === 'failed'
+                      ? '上次同步失败'
+                      : state.modelSync.status === 'partial'
+                        ? `部分同步 · 新增 ${state.modelSync.added}`
+                        : `上次同步 ${formatModelSyncTime(state.modelSync.lastSuccessAt)}`}
+                </span>
+                <button type="button" className="btn btn-secondary" onClick={() => void syncUpstreamModels()} disabled={busy}>
+                  <RefreshCw className={operation === 'model-sync' ? 'spin' : ''} />同步上游模型
+                </button>
+              </div>
+            </header>
             <div className="mm-model-table">
               <div className="head"><span>厂商</span><span>Model ID</span><span>能力</span><span>状态 / 操作</span></div>
               {visibleCatalog.map((item) => {
@@ -742,6 +805,8 @@ function Overview({ config, setConfig, onSave, busy, testModel, setTestModel, te
         <label><span>路由策略</span><select value={config.routingStrategy} onChange={(event) => setConfig({ ...config, routingStrategy: event.target.value as 'round-robin' | 'fill-first' })}><option value="round-robin">严格轮询（推荐）</option><option value="fill-first">Fill First 优先填满</option></select><small>每个模型独立轮询；仅跳过明确耗尽或临时冷却账号</small></label>
         <label><span>失败重试</span><input type="number" min={0} max={10} value={config.requestRetries} onChange={(event) => setConfig({ ...config, requestRetries: Number(event.target.value) })} /></label>
         <label className="wide"><span>上游代理</span><input placeholder="http://127.0.0.1:7890（可选）" value={config.upstreamProxy} onChange={(event) => setConfig({ ...config, upstreamProxy: event.target.value })} /></label>
+        <label><span>模型同步间隔</span><select value={config.modelSyncIntervalMinutes} disabled={!config.autoSyncModels} onChange={(event) => setConfig({ ...config, modelSyncIntervalMinutes: Number(event.target.value) })}><option value={15}>每 15 分钟</option><option value={30}>每 30 分钟</option><option value={60}>每小时</option><option value={180}>每 3 小时</option><option value={360}>每 6 小时</option><option value={1440}>每天</option></select><small>应用启动后也会自动检查一次</small></label>
+        <label className="switch-row"><span><b>自动同步上游模型</b><small>发现官方新增模型后自动加入现有账号目录</small></span><input type="checkbox" checked={config.autoSyncModels} onChange={(event) => setConfig({ ...config, autoSyncModels: event.target.checked })} /></label>
         <label className="switch-row"><span><b>会话固定（默认关闭）</b><small>开启后同一会话会固定一个账号，可能造成单号集中消耗</small></span><input type="checkbox" checked={config.sessionAffinity} onChange={(event) => setConfig({ ...config, sessionAffinity: event.target.checked })} /></label>
         <label className="switch-row"><span><b>Debug Logs</b><small>记录 sidecar 请求诊断信息</small></span><input type="checkbox" checked={config.debugLogs} onChange={(event) => setConfig({ ...config, debugLogs: event.target.checked })} /></label>
       </div>

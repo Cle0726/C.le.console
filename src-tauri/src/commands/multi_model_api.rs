@@ -80,6 +80,11 @@ pub async fn multi_model_api_sync_managed_accounts() -> Result<MultiModelApiStat
 }
 
 #[tauri::command]
+pub async fn multi_model_api_sync_upstream_models() -> Result<MultiModelApiState, String> {
+    multi_model_api::sync_upstream_models().await
+}
+
+#[tauri::command]
 pub async fn multi_model_api_test_chat(
     model: Option<String>,
     prompt: Option<String>,

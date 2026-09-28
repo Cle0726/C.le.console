@@ -47,6 +47,8 @@ export interface MultiModelApiConfig {
   sessionAffinityTtl: string;
   requestRetries: number;
   debugLogs: boolean;
+  autoSyncModels: boolean;
+  modelSyncIntervalMinutes: number;
   apiKeys: MultiModelApiKey[];
   accounts: MultiModelAccount[];
 }
@@ -67,6 +69,19 @@ export interface MultiModelApiState {
   xaiAccounts?: XaiAccountUsage[];
   accountUsages?: MultiModelAccountUsage[];
   routeDispatches?: MultiModelRouteDispatch[];
+  modelSync: MultiModelSyncState;
+}
+
+export interface MultiModelSyncState {
+  status: 'idle' | 'syncing' | 'success' | 'partial' | 'failed' | string;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  nextSyncAt?: string | null;
+  discovered: number;
+  added: number;
+  sourcesSucceeded: number;
+  sourcesFailed: number;
+  lastError?: string | null;
 }
 
 export interface MultiModelRouteDispatch {

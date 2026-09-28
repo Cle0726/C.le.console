@@ -29,7 +29,9 @@ const WATCHDOG_INTERVAL_SECONDS: u64 = 15;
 const WATCHDOG_RESTART_COOLDOWN_SECONDS: u64 = 30;
 const WATCHDOG_MAX_RESTART_COOLDOWN_SECONDS: u64 = 300;
 const WATCHDOG_FAILURE_THRESHOLD: u32 = 3;
+const DEFAULT_MODEL_SYNC_INTERVAL_MINUTES: u32 = 60;
 static WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
+static MODEL_SYNC_STARTED: AtomicBool = AtomicBool::new(false);
 static ACCOUNT_USAGE_REFRESHING: AtomicBool = AtomicBool::new(false);
 static ROUTE_DISPATCHES: OnceLock<StdMutex<BTreeMap<String, MultiModelRouteDispatch>>> =
     OnceLock::new();
@@ -120,6 +122,10 @@ pub struct MultiModelApiConfig {
     pub request_retries: u8,
     #[serde(default)]
     pub debug_logs: bool,
+    #[serde(default = "default_true")]
+    pub auto_sync_models: bool,
+    #[serde(default = "default_model_sync_interval_minutes")]
+    pub model_sync_interval_minutes: u32,
     #[serde(default)]
     pub api_keys: Vec<MultiModelApiKey>,
     #[serde(default)]
@@ -138,6 +144,34 @@ pub struct MultiModelApiState {
     pub xai_accounts: Vec<XaiAccountUsage>,
     pub account_usages: Vec<MultiModelAccountUsage>,
     pub route_dispatches: Vec<MultiModelRouteDispatch>,
+    pub model_sync: MultiModelSyncState,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiModelSyncState {
+    pub status: String,
+    pub last_attempt_at: Option<String>,
+    pub last_success_at: Option<String>,
+    pub next_sync_at: Option<String>,
+    pub discovered: usize,
+    pub added: usize,
+    pub sources_succeeded: usize,
+    pub sources_failed: usize,
+    pub last_error: Option<String>,
+}
+
+#[derive(Default)]
+struct ModelSyncRuntime {
+    status: String,
+    last_attempt: Option<Instant>,
+    last_attempt_at: Option<String>,
+    last_success_at: Option<String>,
+    discovered: usize,
+    added: usize,
+    sources_succeeded: usize,
+    sources_failed: usize,
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -338,6 +372,11 @@ fn self_heal_runtime() -> &'static Mutex<SelfHealRuntime> {
     SELF_HEAL_RUNTIME.get_or_init(|| Mutex::new(SelfHealRuntime::default()))
 }
 
+fn model_sync_runtime() -> &'static Mutex<ModelSyncRuntime> {
+    static MODEL_SYNC_RUNTIME: OnceLock<Mutex<ModelSyncRuntime>> = OnceLock::new();
+    MODEL_SYNC_RUNTIME.get_or_init(|| Mutex::new(ModelSyncRuntime::default()))
+}
+
 fn default_true() -> bool {
     true
 }
@@ -358,6 +397,9 @@ fn default_session_ttl() -> String {
 }
 fn default_retries() -> u8 {
     2
+}
+fn default_model_sync_interval_minutes() -> u32 {
+    DEFAULT_MODEL_SYNC_INTERVAL_MINUTES
 }
 
 fn random_key() -> String {
@@ -383,6 +425,8 @@ fn default_config() -> MultiModelApiConfig {
         session_affinity_ttl: default_session_ttl(),
         request_retries: default_retries(),
         debug_logs: false,
+        auto_sync_models: true,
+        model_sync_interval_minutes: default_model_sync_interval_minutes(),
         api_keys: vec![MultiModelApiKey {
             id: uuid::Uuid::new_v4().to_string(),
             label: "默认全模型 Key".into(),
@@ -668,6 +712,7 @@ fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
     // Zero disables failover in the upstream SDK, while excessive retries can
     // duplicate paid generation work and amplify provider outages.
     config.request_retries = config.request_retries.clamp(1, 4);
+    config.model_sync_interval_minutes = config.model_sync_interval_minutes.clamp(15, 1440);
     let mut keys = BTreeSet::new();
     for item in &mut config.api_keys {
         item.id = item.id.trim().to_string();
@@ -787,6 +832,13 @@ fn builtin_catalog() -> Vec<MultiModelCatalogEntry> {
             &["text", "vision", "image"],
         ),
         ("antigravity", "veo-3.1-generate-preview", &["video"]),
+        ("openai", "gpt-6-astra", &["text", "vision", "reasoning"]),
+        ("openai", "gpt-6-sol", &["text", "vision", "reasoning"]),
+        ("openai", "gpt-6-luna", &["text", "vision", "reasoning"]),
+        ("openai", "gpt-5.6-sol", &["text", "vision", "reasoning"]),
+        ("openai", "gpt-5.6-terra", &["text", "vision", "reasoning"]),
+        ("openai", "gpt-5.6-luna", &["text", "vision", "reasoning"]),
+        ("openai", "gpt-5.5", &["text", "vision", "reasoning"]),
         ("openai", "gpt-5.4", &["text", "vision", "reasoning"]),
         ("openai", "gpt-5.4-mini", &["text", "vision", "reasoning"]),
         ("openai", "gpt-image-2", &["image"]),
@@ -2134,6 +2186,34 @@ async fn self_heal_snapshot() -> MultiModelSelfHealState {
     }
 }
 
+async fn model_sync_snapshot(interval_minutes: u32) -> MultiModelSyncState {
+    let state = model_sync_runtime().lock().await;
+    let next_sync_at = state.last_attempt_at.as_deref().and_then(|value| {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .ok()
+            .map(|time| {
+                (time.with_timezone(&chrono::Utc)
+                    + chrono::Duration::minutes(interval_minutes.max(15) as i64))
+                .to_rfc3339()
+            })
+    });
+    MultiModelSyncState {
+        status: if state.status.is_empty() {
+            "idle".to_string()
+        } else {
+            state.status.clone()
+        },
+        last_attempt_at: state.last_attempt_at.clone(),
+        last_success_at: state.last_success_at.clone(),
+        next_sync_at,
+        discovered: state.discovered,
+        added: state.added,
+        sources_succeeded: state.sources_succeeded,
+        sources_failed: state.sources_failed,
+        last_error: state.last_error.clone(),
+    }
+}
+
 async fn record_health_success(repaired: bool) {
     let mut state = self_heal_runtime().lock().await;
     state.consecutive_failures = 0;
@@ -2189,6 +2269,7 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
     // latest snapshot immediately and refresh it on one blocking worker.
     let account_usages = cached_account_usages_snapshot(&config);
     let self_heal = self_heal_snapshot().await;
+    let model_sync = model_sync_snapshot(config.model_sync_interval_minutes).await;
     Ok(MultiModelApiState {
         base_url: format!("http://{host}:{}", config.port),
         catalog: catalog_for_config(&config),
@@ -2199,6 +2280,7 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
         xai_accounts: load_xai_usage_cache(),
         account_usages,
         route_dispatches: current_route_dispatches(),
+        model_sync,
     })
 }
 
@@ -3422,6 +3504,331 @@ pub async fn refresh_xai_accounts(force_credentials: bool) -> Result<MultiModelA
     get_state().await
 }
 
+fn upstream_models_url(account: &MultiModelAccount) -> Option<String> {
+    let provider = normalize_provider(&account.provider);
+    if matches!(
+        provider.as_str(),
+        "antigravity" | "claude-web" | "doubao-seedance"
+    ) {
+        return None;
+    }
+    let base = if account.base_url.trim().is_empty() {
+        match provider.as_str() {
+            "xai" => "https://api.x.ai/v1",
+            "openai" => "https://api.openai.com/v1",
+            "claude" => "https://api.anthropic.com/v1",
+            "gemini" => "https://generativelanguage.googleapis.com/v1beta",
+            _ => return None,
+        }
+    } else {
+        account.base_url.trim().trim_end_matches('/')
+    };
+    if base.ends_with("/models") {
+        Some(base.to_string())
+    } else if base.ends_with("/v1") || base.ends_with("/v1beta") {
+        Some(format!("{base}/models"))
+    } else {
+        Some(format!("{base}/v1/models"))
+    }
+}
+
+fn model_ids_from_upstream_payload(value: &Value) -> Vec<String> {
+    let items = value
+        .get("data")
+        .and_then(Value::as_array)
+        .or_else(|| value.get("models").and_then(Value::as_array))
+        .or_else(|| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut seen = BTreeSet::new();
+    let mut models = Vec::new();
+    for item in items {
+        let raw = item
+            .as_str()
+            .or_else(|| item.get("id").and_then(Value::as_str))
+            .or_else(|| item.get("name").and_then(Value::as_str))
+            .or_else(|| item.get("model").and_then(Value::as_str))
+            .unwrap_or_default()
+            .trim();
+        let id = raw.strip_prefix("models/").unwrap_or(raw).trim();
+        if id.is_empty() || id.len() > 180 || id.chars().any(char::is_whitespace) {
+            continue;
+        }
+        if seen.insert(id.to_ascii_lowercase()) {
+            models.push(id.to_string());
+        }
+    }
+    models
+}
+
+fn managed_model_snapshots() -> BTreeMap<String, Vec<String>> {
+    let mut snapshots = BTreeMap::new();
+    if let Ok(accounts) = account::list_accounts() {
+        for managed in accounts {
+            let models = managed
+                .quota
+                .as_ref()
+                .map(|quota| {
+                    quota
+                        .models
+                        .iter()
+                        .map(|model| model.name.clone())
+                        .filter(|model| is_routable_antigravity_model(model))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if !models.is_empty() {
+                snapshots.insert(format!("cle:antigravity:{}", managed.id), models);
+            }
+        }
+    }
+    if let Ok(accounts) = gemini_account::list_accounts_checked() {
+        for account in accounts {
+            let models = gemini_account::extract_account_model_remaining(&account)
+                .into_iter()
+                .map(|(model, _)| model)
+                .collect::<Vec<_>>();
+            if !models.is_empty() {
+                snapshots.insert(format!("cle:gemini:{}", account.id), models);
+            }
+        }
+    }
+    if let Ok(accounts) = claude_account::list_accounts_checked() {
+        for account in accounts {
+            let models = account.api_model_catalog.clone().unwrap_or_default();
+            if !models.is_empty() {
+                snapshots.insert(format!("cle:claude:{}", account.id), models);
+            }
+        }
+    }
+    snapshots
+}
+
+async fn fetch_upstream_models(
+    account: MultiModelAccount,
+    global_proxy: String,
+) -> Result<Vec<String>, String> {
+    let provider = normalize_provider(&account.provider);
+    let endpoint = upstream_models_url(&account)
+        .ok_or_else(|| format!("{} 不提供标准模型目录", account.name))?;
+    let mut client_builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(15));
+    let proxy_url = if !account.proxy_url.trim().is_empty() {
+        Some(account.proxy_url.trim().to_string())
+    } else if !global_proxy.trim().is_empty() {
+        Some(global_proxy.trim().to_string())
+    } else {
+        codex_local_access::system_proxy_url_for_target(&endpoint)
+    };
+    if let Some(proxy_url) = proxy_url.filter(|value| !value.is_empty()) {
+        if loopback_proxy_is_available(&proxy_url) == Some(false) {
+            return Err(format!("{} 的代理端口不可用", account.name));
+        }
+        client_builder = client_builder.proxy(
+            reqwest::Proxy::all(&proxy_url)
+                .map_err(|error| format!("{} 的代理无效: {error}", account.name))?,
+        );
+    }
+    let client = client_builder
+        .build()
+        .map_err(|error| format!("创建 {} 模型客户端失败: {error}", account.name))?;
+    let access_token = account
+        .credential_json
+        .as_ref()
+        .and_then(|value| value.get("access_token"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let api_key = account.api_key.trim();
+    let mut request = client.get(&endpoint);
+    match provider.as_str() {
+        "gemini" if !api_key.is_empty() => {
+            request = request.query(&[("key", api_key)]);
+        }
+        "claude" if !api_key.is_empty() => {
+            request = request
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01");
+        }
+        "claude" if access_token.is_some() => {
+            request = request
+                .bearer_auth(access_token.unwrap_or_default())
+                .header("anthropic-version", "2023-06-01");
+        }
+        _ if access_token.is_some() => {
+            request = request.bearer_auth(access_token.unwrap_or_default());
+        }
+        _ if !api_key.is_empty() => {
+            request = request.bearer_auth(api_key);
+        }
+        _ => return Err(format!("{} 缺少可用于模型同步的凭证", account.name)),
+    }
+    for (key, value) in &account.headers {
+        request = request.header(key.as_str(), value.as_str());
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("{} 模型目录请求失败: {error}", account.name))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("{} 模型目录读取失败: {error}", account.name))?;
+    if !status.is_success() {
+        return Err(format!(
+            "{} 模型目录返回 HTTP {}",
+            account.name,
+            status.as_u16()
+        ));
+    }
+    let payload: Value = serde_json::from_str(&body)
+        .map_err(|_| format!("{} 模型目录不是有效 JSON", account.name))?;
+    let models = model_ids_from_upstream_payload(&payload);
+    if models.is_empty() {
+        return Err(format!("{} 模型目录为空", account.name));
+    }
+    Ok(models)
+}
+
+fn merge_discovered_models(
+    existing: &mut Vec<MultiModelDefinition>,
+    discovered: Vec<String>,
+) -> usize {
+    let mut seen = existing
+        .iter()
+        .map(|model| model.id.trim().to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
+    let mut added = 0usize;
+    for id in discovered {
+        if seen.insert(id.trim().to_ascii_lowercase()) {
+            existing.push(model_definition(id));
+            added += 1;
+        }
+    }
+    added
+}
+
+async fn finish_model_sync(
+    status: &str,
+    discovered: usize,
+    added: usize,
+    sources_succeeded: usize,
+    sources_failed: usize,
+    error: Option<String>,
+) {
+    let mut runtime = model_sync_runtime().lock().await;
+    runtime.status = status.to_string();
+    runtime.discovered = discovered;
+    runtime.added = added;
+    runtime.sources_succeeded = sources_succeeded;
+    runtime.sources_failed = sources_failed;
+    runtime.last_error = error;
+    if sources_succeeded > 0 {
+        runtime.last_success_at = Some(chrono::Utc::now().to_rfc3339());
+    }
+}
+
+pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
+    {
+        let mut runtime = model_sync_runtime().lock().await;
+        runtime.status = "syncing".to_string();
+        runtime.last_attempt = Some(Instant::now());
+        runtime.last_attempt_at = Some(chrono::Utc::now().to_rfc3339());
+        runtime.last_error = None;
+    }
+    let mut config = match load_config() {
+        Ok(config) => config,
+        Err(error) => {
+            finish_model_sync("failed", 0, 0, 0, 1, Some(error.clone())).await;
+            return Err(error);
+        }
+    };
+    let snapshots = managed_model_snapshots();
+    let mut discoveries = BTreeMap::<String, Vec<String>>::new();
+    let mut errors = Vec::new();
+    let mut sources_succeeded = 0usize;
+    let mut sources_failed = 0usize;
+
+    for account in config.accounts.iter().filter(|item| item.enabled) {
+        if let Some(models) = snapshots
+            .get(&account.source)
+            .filter(|items| !items.is_empty())
+        {
+            discoveries.insert(account.id.clone(), models.clone());
+            sources_succeeded += 1;
+        }
+    }
+
+    let remote_accounts = config
+        .accounts
+        .iter()
+        .filter(|item| {
+            item.enabled
+                && !discoveries.contains_key(&item.id)
+                && upstream_models_url(item).is_some()
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let proxy = config.upstream_proxy.clone();
+    let results = futures::future::join_all(remote_accounts.into_iter().map(|account| {
+        let proxy = proxy.clone();
+        async move {
+            let id = account.id.clone();
+            let name = account.name.clone();
+            (id, name, fetch_upstream_models(account, proxy).await)
+        }
+    }))
+    .await;
+    for (id, name, result) in results {
+        match result {
+            Ok(models) => {
+                discoveries.insert(id, models);
+                sources_succeeded += 1;
+            }
+            Err(error) => {
+                sources_failed += 1;
+                errors.push(format!("{name}: {error}"));
+            }
+        }
+    }
+
+    let discovered = discoveries.values().map(Vec::len).sum::<usize>();
+    let mut added = 0usize;
+    for account in &mut config.accounts {
+        if let Some(models) = discoveries.remove(&account.id) {
+            added += merge_discovered_models(&mut account.models, models);
+        }
+    }
+    let status = if sources_failed == 0 {
+        "success"
+    } else if sources_succeeded > 0 {
+        "partial"
+    } else {
+        "failed"
+    };
+    let error =
+        (!errors.is_empty()).then(|| errors.into_iter().take(4).collect::<Vec<_>>().join("；"));
+    finish_model_sync(
+        status,
+        discovered,
+        added,
+        sources_succeeded,
+        sources_failed,
+        error,
+    )
+    .await;
+    if added > 0 {
+        logger::log_info(&format!(
+            "[MultiModelAPI][models] 自动发现 {discovered} 个模型，新增 {added} 个"
+        ));
+        save_config(config).await
+    } else {
+        get_state().await
+    }
+}
+
 pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
     let mut config = load_config()?;
     // A provider account can be healthy enough for quota reads while its model
@@ -3727,15 +4134,20 @@ fn managed_models_or_previous_selection(
         return previous_models.clone();
     }
 
-    let available = candidates
+    let mut merged = previous_models.clone();
+    let mut seen = merged
         .iter()
         .map(|model| model.id.trim().to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
-    previous_models
-        .iter()
-        .filter(|model| available.contains(&model.id.trim().to_ascii_lowercase()))
-        .cloned()
-        .collect()
+    // Preserve the user's enabled/disabled choices and old aliases, but append
+    // newly advertised upstream models immediately. Missing models are kept as
+    // a safe cache because a transient provider response must not erase them.
+    for model in candidates {
+        if seen.insert(model.id.trim().to_ascii_lowercase()) {
+            merged.push(model);
+        }
+    }
+    merged
 }
 
 fn is_routable_antigravity_model(model: &str) -> bool {
@@ -3820,6 +4232,47 @@ pub async fn restore() {
         Err(error) => logger::log_warn(&format!("[MultiModelAPI] 读取配置失败: {error}")),
     }
     start_runtime_watchdog();
+    start_model_sync_worker();
+}
+
+fn start_model_sync_worker() {
+    if MODEL_SYNC_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tokio::spawn(async {
+        // Let account stores and network state settle before the first pull.
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        loop {
+            let config = match load_config() {
+                Ok(config) => config,
+                Err(error) => {
+                    logger::log_warn(&format!(
+                        "[MultiModelAPI][models] 读取自动同步配置失败: {error}"
+                    ));
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    continue;
+                }
+            };
+            if config.auto_sync_models {
+                let interval =
+                    Duration::from_secs(u64::from(config.model_sync_interval_minutes.max(15)) * 60);
+                let due = {
+                    let runtime = model_sync_runtime().lock().await;
+                    runtime
+                        .last_attempt
+                        .map_or(true, |last_attempt| last_attempt.elapsed() >= interval)
+                };
+                if due {
+                    if let Err(error) = sync_upstream_models().await {
+                        logger::log_warn(&format!(
+                            "[MultiModelAPI][models] 自动同步失败，将保留现有模型: {error}"
+                        ));
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+    });
 }
 
 /// Whether the background gateway owns application lifetime after the main UI
@@ -3943,10 +4396,10 @@ mod tests {
     use super::{
         builtin_catalog, catalog_for_config, default_config, is_blocking_managed_account_status,
         is_blocking_managed_route_error, is_routable_antigravity_model,
-        managed_models_or_previous_selection, model_definition, normalize_config,
-        normalize_oauth_credential, normalize_provider, provider_chat_test_models,
-        watchdog_restart_delay, MultiModelAccount, MultiModelDefinition,
-        DEFAULT_ANTIGRAVITY_MODELS,
+        managed_models_or_previous_selection, merge_discovered_models, model_definition,
+        model_ids_from_upstream_payload, normalize_config, normalize_oauth_credential,
+        normalize_provider, provider_chat_test_models, watchdog_restart_delay, MultiModelAccount,
+        MultiModelDefinition, DEFAULT_ANTIGRAVITY_MODELS,
     };
     use serde_json::json;
     use std::time::Duration;
@@ -3996,7 +4449,7 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_sync_preserves_a_pruned_model_selection() {
+    fn antigravity_sync_preserves_selection_and_appends_new_models() {
         let previous = vec![
             model_definition("gemini-3-flash".to_string()),
             MultiModelDefinition {
@@ -4014,11 +4467,53 @@ mod tests {
             Some(&previous),
         );
 
-        assert_eq!(models.len(), 2);
+        assert_eq!(models.len(), 3);
         assert_eq!(models[0].id, "gemini-3-flash");
         assert_eq!(models[1].id, "claude-sonnet-4-6");
         assert!(!models[1].enabled);
-        assert!(!models.iter().any(|model| model.id == "gemini-2.5-pro"));
+        assert_eq!(models[2].id, "gemini-2.5-pro");
+        assert!(models[2].enabled);
+    }
+
+    #[test]
+    fn upstream_model_payload_supports_openai_and_gemini_shapes() {
+        let openai = json!({
+            "data": [
+                { "id": "gpt-new" },
+                { "id": "gpt-new" },
+                { "id": "bad model" }
+            ]
+        });
+        assert_eq!(model_ids_from_upstream_payload(&openai), ["gpt-new"]);
+
+        let gemini = json!({
+            "models": [
+                { "name": "models/gemini-new" },
+                { "name": "models/gemini-image" }
+            ]
+        });
+        assert_eq!(
+            model_ids_from_upstream_payload(&gemini),
+            ["gemini-new", "gemini-image"]
+        );
+    }
+
+    #[test]
+    fn model_merge_keeps_user_state_and_only_appends_unknown_ids() {
+        let mut existing = vec![MultiModelDefinition {
+            enabled: false,
+            ..model_definition("model-a".to_string())
+        }];
+        let added = merge_discovered_models(
+            &mut existing,
+            vec!["model-a".to_string(), "model-b".to_string()],
+        );
+
+        assert_eq!(added, 1);
+        assert_eq!(existing.len(), 2);
+        assert!(!existing[0].enabled);
+        assert_eq!(existing[1].id, "model-b");
+        assert!(existing[1].enabled);
     }
 
     #[test]

@@ -249,6 +249,12 @@
 .mm-api-panel-head h2 { margin: 0 0 3px; color: var(--text-primary); font-size: 13px; font-weight: 730; }
 .mm-api-panel-head p { margin: 0; color: var(--text-secondary); font-size: 10.5px; line-height: 1.45; }
 .mm-api-panel-head .btn { min-height: 30px; padding: 0 10px; font-size: 11px; white-space: nowrap; }
+.mm-model-sync-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.mm-model-sync-state { max-width: 260px; overflow: hidden; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.mm-model-sync-state.success { color: var(--success); }
+.mm-model-sync-state.partial { color: #d97706; }
+.mm-model-sync-state.failed { color: var(--danger); }
+.mm-model-sync-state.syncing { color: var(--primary); }
 
 .mm-api-grid { display: grid; gap: 10px; min-width: 0; }
 .mm-api-grid.two { grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); }
