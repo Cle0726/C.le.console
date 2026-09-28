@@ -1329,6 +1329,36 @@ fn parse_codex_upstream_model_ids(payload: &Value) -> Vec<String> {
         .collect()
 }
 
+fn load_codex_client_cached_models() -> Vec<String> {
+    let mut paths = Vec::new();
+    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        let codex_home = codex_home.trim();
+        if !codex_home.is_empty() {
+            paths.push(PathBuf::from(codex_home).join("models_cache.json"));
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join(".codex/models_cache.json"));
+    }
+
+    let mut models = Vec::new();
+    let mut seen = HashSet::new();
+    for path in paths {
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(payload) = serde_json::from_str::<Value>(&content) else {
+            continue;
+        };
+        for model in parse_codex_upstream_model_ids(&payload) {
+            if seen.insert(model.to_ascii_lowercase()) {
+                models.push(model);
+            }
+        }
+    }
+    models
+}
+
 fn parse_codex_cli_version(output: &str) -> Option<String> {
     output
         .split_whitespace()
@@ -1448,8 +1478,12 @@ async fn refresh_codex_upstream_models_cache() -> Result<usize, String> {
     let models_url = codex_upstream_models_url(&client_version);
     let models_user_agent = format!("codex-tui/{client_version}");
     let mut errors = Vec::new();
-    let mut synced_models = Vec::new();
-    let mut seen_models = HashSet::new();
+    let mut synced_models = load_codex_client_cached_models();
+    let mut seen_models = synced_models
+        .iter()
+        .map(|model| model.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let local_catalog_count = synced_models.len();
     let mut successful_accounts = 0usize;
     for account_id in account_ids {
         let account = match codex_account::prepare_account_for_injection_from_store(&account_id).await
@@ -1510,8 +1544,8 @@ async fn refresh_codex_upstream_models_cache() -> Result<usize, String> {
         }
     }
 
-    if successful_accounts > 0 && !synced_models.is_empty() {
-        if !errors.is_empty() {
+    if !synced_models.is_empty() {
+        if successful_accounts == 0 || !errors.is_empty() {
             for model in load_codex_upstream_models_cache().models {
                 if seen_models.insert(model.to_ascii_lowercase()) {
                     synced_models.push(model);
@@ -1521,7 +1555,7 @@ async fn refresh_codex_upstream_models_cache() -> Result<usize, String> {
         let count = synced_models.len();
         save_codex_upstream_models_cache(synced_models)?;
         logger::log_codex_api_info(&format!(
-            "[CodexLocalAccess][models] 已同步 Codex 上游模型目录: count={count}, accounts={successful_accounts}, client_version={client_version}"
+            "[CodexLocalAccess][models] 已同步 Codex 上游模型目录: count={count}, local_catalog={local_catalog_count}, accounts={successful_accounts}, client_version={client_version}"
         ));
         return Ok(count);
     }
@@ -1571,6 +1605,11 @@ fn supported_codex_model_ids() -> Vec<String> {
         .filter(|model| !model.is_empty())
         .filter(|model| seen.insert(model.to_ascii_lowercase()))
         .collect::<Vec<_>>();
+    for model in load_codex_client_cached_models() {
+        if seen.insert(model.to_ascii_lowercase()) {
+            model_ids.push(model);
+        }
+    }
     for model in DEFAULT_CODEX_MODELS {
         if seen.insert((*model).to_ascii_lowercase()) {
             model_ids.push((*model).to_string());
