@@ -4536,7 +4536,9 @@ mod imp {
                         .map(|_| 0)
                 }
                 (PlatformId::Workbuddy, None) => {
-                    commands::workbuddy::refresh_all_workbuddy_tokens(app.clone()).await
+                    commands::workbuddy::refresh_all_workbuddy_tokens(app.clone())
+                        .await
+                        .map(|result| result.success_count as i32)
                 }
                 (PlatformId::Zed, Some(account_id)) => {
                     commands::zed::refresh_zed_token(app.clone(), account_id)
