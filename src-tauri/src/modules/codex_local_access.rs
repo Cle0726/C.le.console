@@ -59,8 +59,8 @@ use toml_edit::{value, Document};
 
 const CODEX_LOCAL_ACCESS_FILE: &str = "codex_local_access.json";
 const CODEX_UPSTREAM_MODELS_CACHE_FILE: &str = "codex_upstream_models.json";
-const CODEX_UPSTREAM_MODELS_URL: &str =
-    "https://chatgpt.com/backend-api/codex/models?client_version=0.135.0";
+const CODEX_UPSTREAM_MODELS_BASE_URL: &str = "https://chatgpt.com/backend-api/codex/models";
+const FALLBACK_CODEX_CLIENT_VERSION: &str = "0.158.0-alpha.2.1";
 const CODEX_UPSTREAM_MODELS_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const CODEX_LOCAL_ACCESS_CHAT_TEST_STREAM_EVENT: &str = "codex-local-access-chat-test-stream";
 const CODEX_LOCAL_ACCESS_TEST_DISABLE_IMAGE_GENERATION_HEADER: &str =
@@ -1329,6 +1329,82 @@ fn parse_codex_upstream_model_ids(payload: &Value) -> Vec<String> {
         .collect()
 }
 
+fn parse_codex_cli_version(output: &str) -> Option<String> {
+    output
+        .split_whitespace()
+        .map(|part| part.trim().trim_start_matches('v'))
+        .find(|part| {
+            part.as_bytes().first().is_some_and(u8::is_ascii_digit)
+                && part.len() <= 64
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
+        })
+        .map(ToOwned::to_owned)
+}
+
+fn detect_codex_client_version() -> String {
+    if let Ok(version) = std::env::var("CODEX_CLIENT_VERSION") {
+        if let Some(version) = parse_codex_cli_version(&version) {
+            return version;
+        }
+    }
+
+    let mut candidates = Vec::new();
+    if let Ok(path) = std::env::var("CODEX_CLI_PATH") {
+        let path = path.trim();
+        if !path.is_empty() {
+            candidates.push(PathBuf::from(path));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        candidates.extend([
+            PathBuf::from(
+                "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+            ),
+            PathBuf::from(
+                "/Applications/Codex.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+            ),
+        ]);
+        if let Some(home) = dirs::home_dir() {
+            candidates.extend(["ChatGPT.app", "Codex.app"].into_iter().map(|app_name| {
+                home.join("Applications")
+                    .join(app_name)
+                    .join("Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
+            }));
+        }
+    }
+    candidates.push(PathBuf::from(if cfg!(target_os = "windows") {
+        "codex.exe"
+    } else {
+        "codex"
+    }));
+
+    for candidate in candidates {
+        let Ok(output) = StdCommand::new(&candidate).arg("--version").output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(version) = parse_codex_cli_version(&stdout) {
+            return version;
+        }
+    }
+
+    FALLBACK_CODEX_CLIENT_VERSION.to_string()
+}
+
+fn codex_upstream_models_url(client_version: &str) -> String {
+    format!(
+        "{}?client_version={}",
+        CODEX_UPSTREAM_MODELS_BASE_URL,
+        urlencoding::encode(client_version)
+    )
+}
+
 #[cfg(not(test))]
 fn load_codex_upstream_models_cache() -> CodexUpstreamModelsCache {
     let Ok(path) = codex_upstream_models_cache_path() else {
@@ -1368,6 +1444,9 @@ async fn refresh_codex_upstream_models_cache() -> Result<usize, String> {
         Duration::from_secs(10),
     );
     let client = build_upstream_http_client(&signature)?;
+    let client_version = detect_codex_client_version();
+    let models_url = codex_upstream_models_url(&client_version);
+    let models_user_agent = format!("codex-tui/{client_version}");
     let mut errors = Vec::new();
     for account_id in account_ids {
         let account = match codex_account::prepare_account_for_injection_from_store(&account_id).await
@@ -1384,11 +1463,11 @@ async fn refresh_codex_upstream_models_cache() -> Result<usize, String> {
             continue;
         }
         let mut request = client
-            .get(CODEX_UPSTREAM_MODELS_URL)
+            .get(&models_url)
             .timeout(Duration::from_secs(20))
             .header(ACCEPT, "application/json")
             .header(AUTHORIZATION, format!("Bearer {access_token}"))
-            .header(USER_AGENT, DEFAULT_CODEX_USER_AGENT)
+            .header(USER_AGENT, &models_user_agent)
             .header("Originator", DEFAULT_CODEX_ORIGINATOR);
         let chatgpt_account_id = account.account_id.clone().or_else(|| {
             codex_account::extract_chatgpt_account_id_from_access_token(access_token)
@@ -1423,7 +1502,7 @@ async fn refresh_codex_upstream_models_cache() -> Result<usize, String> {
         let count = models.len();
         save_codex_upstream_models_cache(models)?;
         logger::log_codex_api_info(&format!(
-            "[CodexLocalAccess][models] 已同步 Codex 上游模型目录: count={count}"
+            "[CodexLocalAccess][models] 已同步 Codex 上游模型目录: count={count}, client_version={client_version}"
         ));
         return Ok(count);
     }
@@ -19357,7 +19436,8 @@ mod tests {
         normalize_account_model_rules, normalize_custom_routing_rules,
         normalized_sidecar_error_category, open_local_access_logs_db_once, parse_codex_retry_after,
         parse_responses_payload_from_upstream, parse_websocket_upstream_error,
-        parse_codex_upstream_model_ids, prepare_gateway_request,
+        codex_upstream_models_url, parse_codex_cli_version, parse_codex_upstream_model_ids,
+        prepare_gateway_request,
         prepare_gateway_request_with_default_service_tier,
         prepare_sidecar_launch_config_in_dir, prepare_websocket_initial_request,
         profile_base_url_matches, provider_gateway_bound_oauth_account_id_for_account,
@@ -19438,6 +19518,17 @@ mod tests {
         }));
 
         assert_eq!(models, ["gpt-6-astra", "gpt-6-sol"]);
+    }
+
+    #[test]
+    fn builds_model_catalog_url_from_current_codex_cli_version() {
+        let version = parse_codex_cli_version("codex-cli 0.158.0-alpha.2.1\n").unwrap();
+        assert_eq!(version, "0.158.0-alpha.2.1");
+        assert_eq!(
+            codex_upstream_models_url(&version),
+            "https://chatgpt.com/backend-api/codex/models?client_version=0.158.0-alpha.2.1"
+        );
+        assert!(parse_codex_cli_version("codex-cli not-a-version").is_none());
     }
 
     #[tokio::test]
