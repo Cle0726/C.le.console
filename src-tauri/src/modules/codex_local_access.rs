@@ -1448,6 +1448,9 @@ async fn refresh_codex_upstream_models_cache() -> Result<usize, String> {
     let models_url = codex_upstream_models_url(&client_version);
     let models_user_agent = format!("codex-tui/{client_version}");
     let mut errors = Vec::new();
+    let mut synced_models = Vec::new();
+    let mut seen_models = HashSet::new();
+    let mut successful_accounts = 0usize;
     for account_id in account_ids {
         let account = match codex_account::prepare_account_for_injection_from_store(&account_id).await
         {
@@ -1499,10 +1502,26 @@ async fn refresh_codex_upstream_models_cache() -> Result<usize, String> {
             errors.push(format!("{}: 上游返回空模型目录", account.email));
             continue;
         }
-        let count = models.len();
-        save_codex_upstream_models_cache(models)?;
+        successful_accounts += 1;
+        for model in models {
+            if seen_models.insert(model.to_ascii_lowercase()) {
+                synced_models.push(model);
+            }
+        }
+    }
+
+    if successful_accounts > 0 && !synced_models.is_empty() {
+        if !errors.is_empty() {
+            for model in load_codex_upstream_models_cache().models {
+                if seen_models.insert(model.to_ascii_lowercase()) {
+                    synced_models.push(model);
+                }
+            }
+        }
+        let count = synced_models.len();
+        save_codex_upstream_models_cache(synced_models)?;
         logger::log_codex_api_info(&format!(
-            "[CodexLocalAccess][models] 已同步 Codex 上游模型目录: count={count}, client_version={client_version}"
+            "[CodexLocalAccess][models] 已同步 Codex 上游模型目录: count={count}, accounts={successful_accounts}, client_version={client_version}"
         ));
         return Ok(count);
     }
