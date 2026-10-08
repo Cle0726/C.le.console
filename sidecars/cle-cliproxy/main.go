@@ -130,24 +130,28 @@ type providerGatewayModelCapability struct {
 }
 
 type accountSpec struct {
-	ID                   string            `json:"id"`
-	Email                string            `json:"email"`
-	AuthID               string            `json:"authId,omitempty"`
-	AuthKind             string            `json:"authKind,omitempty"`
-	PlanType             string            `json:"planType,omitempty"`
-	AccessTokenOnly      bool              `json:"accessTokenOnly,omitempty"`
-	ChatGPTAccountID     string            `json:"chatgptAccountId,omitempty"`
-	UpstreamAPIKey       string            `json:"upstreamApiKey,omitempty"`
-	Provider             string            `json:"provider,omitempty"`
-	Models               []string          `json:"models,omitempty"`
-	BaseURL              string            `json:"baseUrl,omitempty"`
-	ProxyURL             string            `json:"proxyUrl,omitempty"`
-	Headers              map[string]string `json:"headers,omitempty"`
-	Priority             int               `json:"priority,omitempty"`
-	PlanRank             *int              `json:"planRank,omitempty"`
-	RemainingQuota       *int              `json:"remainingQuota,omitempty"`
-	ModelQuotas          map[string]int    `json:"modelQuotas,omitempty"`
-	SubscriptionExpiryMS *int64            `json:"subscriptionExpiryMs,omitempty"`
+	ID                   string                      `json:"id"`
+	Email                string                      `json:"email"`
+	AuthID               string                      `json:"authId,omitempty"`
+	AuthKind             string                      `json:"authKind,omitempty"`
+	PlanType             string                      `json:"planType,omitempty"`
+	AccessTokenOnly      bool                        `json:"accessTokenOnly,omitempty"`
+	ChatGPTAccountID     string                      `json:"chatgptAccountId,omitempty"`
+	UpstreamAPIKey       string                      `json:"upstreamApiKey,omitempty"`
+	CLIPath              string                      `json:"cliPath,omitempty"`
+	CLIApp               string                      `json:"cliApp,omitempty"`
+	CLIProfile           string                      `json:"cliProfile,omitempty"`
+	Provider             string                      `json:"provider,omitempty"`
+	Models               []string                    `json:"models,omitempty"`
+	ModelLimits          map[string]modelTokenLimits `json:"modelLimits,omitempty"`
+	BaseURL              string                      `json:"baseUrl,omitempty"`
+	ProxyURL             string                      `json:"proxyUrl,omitempty"`
+	Headers              map[string]string           `json:"headers,omitempty"`
+	Priority             int                         `json:"priority,omitempty"`
+	PlanRank             *int                        `json:"planRank,omitempty"`
+	RemainingQuota       *int                        `json:"remainingQuota,omitempty"`
+	ModelQuotas          map[string]int              `json:"modelQuotas,omitempty"`
+	SubscriptionExpiryMS *int64                      `json:"subscriptionExpiryMs,omitempty"`
 }
 
 type modelAliasSpec struct {
@@ -436,6 +440,9 @@ func loadManifest(path string) (*manifest, error) {
 		account.Provider = strings.ToLower(strings.TrimSpace(account.Provider))
 		account.Models = normalizeStringList(account.Models)
 		account.BaseURL = strings.TrimSpace(account.BaseURL)
+		account.CLIPath = strings.TrimSpace(account.CLIPath)
+		account.CLIApp = strings.ToLower(strings.TrimSpace(account.CLIApp))
+		account.CLIProfile = strings.TrimSpace(account.CLIProfile)
 		account.ProxyURL = strings.TrimSpace(account.ProxyURL)
 		if len(account.Headers) > 0 {
 			headers := make(map[string]string, len(account.Headers))
@@ -602,9 +609,9 @@ func (p *requestPolicy) middleware() gin.HandlerFunc {
 		if spec != nil && isModelsRequest(c.Request) {
 			models := clientCatalogModelsForAPIKey(p.manifest, spec)
 			if isCodexClientModelsRequest(c.Request) {
-				c.JSON(http.StatusOK, buildCodexClientModelsResponse(models))
+				c.JSON(http.StatusOK, modelsResponseWithTokenLimits(p.manifest, spec, models, true))
 			} else {
-				c.JSON(http.StatusOK, buildModelsResponse(models))
+				c.JSON(http.StatusOK, modelsResponseWithTokenLimits(p.manifest, spec, models, false))
 			}
 			c.Abort()
 			return
@@ -2178,6 +2185,9 @@ func newSidecarRuntime(ctx context.Context, configPath string, cfg *config.Confi
 		registerManifestModelsForAuth(manager, m, auth)
 	}
 	service.RebindRuntimeExecutors()
+	if stringSliceContainsFold(m.Providers, "workbuddy") {
+		manager.RegisterExecutor(newWorkbuddyExecutor(cfg))
+	}
 
 	return &sidecarRuntime{manager: manager, service: service, cancel: cancel, done: done}, nil
 }
@@ -2363,7 +2373,14 @@ func manifestRegistryModelsForAccount(m *manifest, account *accountSpec, provide
 			continue
 		}
 		seen[key] = struct{}{}
-		models = append(models, manifestRegistryModelInfoForProvider(id, provider, now))
+		info := manifestRegistryModelInfoForProvider(id, provider, now)
+		if limits, ok := account.ModelLimits[id]; ok {
+			info.ContextLength = limits.MaxInputTokens
+			info.InputTokenLimit = limits.MaxInputTokens
+			info.MaxCompletionTokens = limits.MaxOutputTokens
+			info.OutputTokenLimit = limits.MaxOutputTokens
+		}
+		models = append(models, info)
 	}
 	return models
 }
@@ -2655,13 +2672,16 @@ func (s *relayServer) handleModels(c *gin.Context) {
 	}
 	models := clientCatalogModelsForAPIKey(s.manifest, spec)
 	if isCodexClientModelsRequest(c.Request) {
-		c.JSON(http.StatusOK, buildCodexClientModelsResponse(models))
+		c.JSON(http.StatusOK, modelsResponseWithTokenLimits(s.manifest, spec, models, true))
 		return
 	}
-	c.JSON(http.StatusOK, buildModelsResponse(models))
+	c.JSON(http.StatusOK, modelsResponseWithTokenLimits(s.manifest, spec, models, false))
 }
 
 func (s *relayServer) handleResponses(c *gin.Context) {
+	if s.handleDoubaoWorkIfRequested(c, true) {
+		return
+	}
 	s.handleExecutorRequest(c, sdktranslator.FormatOpenAIResponse, "")
 }
 
@@ -2670,7 +2690,27 @@ func (s *relayServer) handleResponsesCompact(c *gin.Context) {
 }
 
 func (s *relayServer) handleChatCompletions(c *gin.Context) {
+	if s.handleDoubaoWorkIfRequested(c, false) {
+		return
+	}
 	s.handleExecutorRequest(c, sdktranslator.FormatOpenAI, "")
+}
+
+func (s *relayServer) handleDoubaoWorkIfRequested(c *gin.Context, responsesAPI bool) bool {
+	body, err := readAndRestoreBody(c.Request)
+	if err != nil {
+		writeAPIError(c, http.StatusBadRequest, "failed to read request body", "invalid_request")
+		return true
+	}
+	if !isDoubaoWorkModel(requestBodyModel(body)) {
+		return false
+	}
+	spec, ok := s.requireAPIKey(c)
+	if !ok {
+		return true
+	}
+	s.handleDoubaoWorkChat(c, spec, body, responsesAPI)
+	return true
 }
 
 func (s *relayServer) handleAnthropicMessages(c *gin.Context) {
@@ -2686,7 +2726,7 @@ func (s *relayServer) handleGeminiModels(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, buildGeminiModelsResponse(clientCatalogModelsForAPIKey(s.manifest, spec)))
+	c.JSON(http.StatusOK, geminiModelsResponseWithTokenLimits(s.manifest, spec, clientCatalogModelsForAPIKey(s.manifest, spec)))
 }
 
 func (s *relayServer) handleGeminiModel(c *gin.Context) {
@@ -2708,7 +2748,7 @@ func (s *relayServer) handleGeminiModel(c *gin.Context) {
 		writeAPIError(c, http.StatusNotFound, fmt.Sprintf("model %s not found", model), "not_found")
 		return
 	}
-	c.JSON(http.StatusOK, buildGeminiModelEntry(canonical))
+	c.JSON(http.StatusOK, geminiModelEntryWithTokenLimits(s.manifest, spec, canonical))
 }
 
 func (s *relayServer) handleGeminiAction(c *gin.Context) {
@@ -5206,7 +5246,7 @@ func (s *relayServer) handleOllamaShow(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, buildOllamaShowResponse(canonical, time.Now()))
+	c.JSON(http.StatusOK, ollamaShowResponseWithTokenLimits(s.manifest, spec, canonical, time.Now()))
 }
 
 func (s *relayServer) handleOllamaChat(c *gin.Context) {
@@ -6337,8 +6377,10 @@ const (
 )
 
 type relayStreamFramer struct {
-	mode      relayStreamFrameMode
-	responses responsesSSEFramer
+	mode           relayStreamFrameMode
+	responses      responsesSSEFramer
+	emitOpenAIDone bool
+	openAIDone     bool
 }
 
 func newRelayStreamFramer(sourceFormat sdktranslator.Format, path string) *relayStreamFramer {
@@ -6352,7 +6394,7 @@ func newRelayStreamFramer(sourceFormat sdktranslator.Format, path string) *relay
 	if strings.HasPrefix(strings.Split(path, "?")[0], "/v1/responses") {
 		mode = relayStreamFrameResponses
 	}
-	return &relayStreamFramer{mode: mode}
+	return &relayStreamFramer{mode: mode, emitOpenAIDone: sourceFormat == sdktranslator.FormatOpenAI}
 }
 
 func (f *relayStreamFramer) Write(w io.Writer, chunk []byte) error {
@@ -6363,6 +6405,12 @@ func (f *relayStreamFramer) Write(w io.Writer, chunk []byte) error {
 	case relayStreamFrameResponses:
 		return f.responses.WriteChunk(w, normalizeResponsesInputChunk(f.responses.HasPending(), chunk))
 	case relayStreamFrameOpenAI:
+		for _, line := range bytes.Split(chunk, []byte("\n")) {
+			data := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(line), []byte("data:")))
+			if bytes.Equal(data, []byte("[DONE]")) {
+				f.openAIDone = true
+			}
+		}
 		_, err := w.Write(frameOpenAIStreamChunk(chunk))
 		return err
 	default:
@@ -6374,6 +6422,13 @@ func (f *relayStreamFramer) Write(w io.Writer, chunk []byte) error {
 func (f *relayStreamFramer) Close(w io.Writer) error {
 	if f.mode == relayStreamFrameResponses {
 		return f.responses.Flush(w)
+	}
+	// Native OpenAI translators consume upstream [DONE]. Restore it once after
+	// successful channel completion; error and cancellation paths never call Close.
+	if f.mode == relayStreamFrameOpenAI && f.emitOpenAIDone && !f.openAIDone {
+		f.openAIDone = true
+		_, err := w.Write([]byte("data: [DONE]\n\n"))
+		return err
 	}
 	return nil
 }

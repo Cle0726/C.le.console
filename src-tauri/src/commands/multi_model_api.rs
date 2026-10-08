@@ -1,5 +1,6 @@
 use crate::modules::multi_model_api::{
-    self, MultiModelApiConfig, MultiModelApiState, MultiModelApiTestResult, MultiModelRepairReport,
+    self, DoubaoWorkCliModels, MultiModelApiConfig, MultiModelApiState, MultiModelApiTestResult,
+    MultiModelRepairReport,
 };
 use crate::modules::multi_model_xai::XaiOAuthStartResponse;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -80,8 +81,18 @@ pub async fn multi_model_api_sync_managed_accounts() -> Result<MultiModelApiStat
 }
 
 #[tauri::command]
+pub async fn multi_model_api_sync_workbuddy_accounts() -> Result<MultiModelApiState, String> {
+    multi_model_api::sync_workbuddy_accounts().await
+}
+
+#[tauri::command]
 pub async fn multi_model_api_sync_upstream_models() -> Result<MultiModelApiState, String> {
     multi_model_api::sync_upstream_models().await
+}
+
+#[tauri::command]
+pub async fn multi_model_api_doubao_work_models() -> Result<DoubaoWorkCliModels, String> {
+    multi_model_api::doubao_work_cli_models().await
 }
 
 #[tauri::command]

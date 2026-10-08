@@ -5,7 +5,7 @@ import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile } from '@tauri-apps/plugin-fs';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
-  Boxes, Check, CircleAlert, Copy, Database, Download, Eye, EyeOff, FileText,
+  Bot, Boxes, Check, CircleAlert, Copy, Database, Download, Eye, EyeOff, FileText,
   FileUp, Film, Globe, Image, KeyRound, Network, Plus, Power, RefreshCw, Route,
   Save, Settings2, ShieldCheck, Sparkles, Trash2, Users, X, Zap,
 } from 'lucide-react';
@@ -13,6 +13,7 @@ import { AntigravityIcon } from '../components/icons/AntigravityIcon';
 import { ClaudeIcon } from '../components/icons/ClaudeIcon';
 import { CodexIcon } from '../components/icons/CodexIcon';
 import { GeminiIcon } from '../components/icons/GeminiIcon';
+import { WorkbuddyIcon } from '../components/icons/WorkbuddyIcon';
 import * as accountService from '../services/accountService';
 import * as claudeService from '../services/claudeService';
 import * as codexService from '../services/codexService';
@@ -26,7 +27,7 @@ import type {
 } from '../types/multiModelApi';
 import './MultiModelApiServicePage.css';
 
-type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'workbuddy';
+type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'doubao-work' | 'workbuddy';
 type AccountAddMode = 'oauth' | 'token' | 'api_key' | 'import';
 type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
 
@@ -36,6 +37,8 @@ const PROVIDERS = [
   { id: 'claude', label: 'Claude', short: 'Claude', baseUrl: 'https://api.anthropic.com' },
   { id: 'gemini', label: 'Gemini', short: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com' },
   { id: 'antigravity', label: 'Antigravity', short: 'Antigravity', baseUrl: '' },
+  { id: 'workbuddy', label: 'WorkBuddy', short: 'WorkBuddy', baseUrl: '' },
+  { id: 'doubao-work', label: '豆包工作 Agent', short: '豆包工作', baseUrl: '' },
   { id: 'doubao-seedance', label: 'Doubao Seedance', short: 'Seedance', baseUrl: 'https://doubao.happieapi.top' },
   { id: 'custom', label: '兼容 API', short: '自定义', baseUrl: '' },
 ] as const;
@@ -85,6 +88,7 @@ const PROVIDER_MODELS: Record<string, MultiModelDefinition[]> = {
     ['doubao-seedance-1.5-pro', ['video']],
     ['doubao-seedance-1.0-pro-fast', ['video']],
   ].map(([id, capabilities]) => ({ id: id as string, alias: '', capabilities: capabilities as ModelCapability[], enabled: true })),
+  'doubao-work': [],
   custom: [],
 };
 
@@ -120,7 +124,7 @@ function blankAccount(provider = 'xai'): MultiModelAccount {
     id: newId(),
     name: '',
     provider,
-    authMode: provider === 'antigravity' || provider === 'xai' ? 'oauth_json' : 'api_key',
+    authMode: provider === 'doubao-work' ? 'local_cli' : provider === 'antigravity' || provider === 'xai' ? 'oauth_json' : 'api_key',
     baseUrl: preset.baseUrl,
     apiKey: '',
     credentialJson: null,
@@ -340,6 +344,25 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     }
   };
 
+  const syncWorkbuddyAccounts = async () => {
+    setOperation('workbuddy-sync');
+    setNotice({ tone: 'info', text: '正在读取 WorkBuddy 登录账号与真实模型目录…' });
+    try {
+      const next = await multiModelApiService.syncWorkbuddyAccounts();
+      setState(next);
+      setDraft(structuredClone(next.config));
+      const imported = next.config.accounts.filter((account) => account.provider === 'workbuddy');
+      const models = new Set(imported.flatMap((account) => account.models.map((model) => model.id)));
+      setNotice({ tone: imported.length ? 'success' : 'info', text: imported.length
+        ? `已接入 ${imported.length} 个 WorkBuddy 账号、${models.size} 个模型。去“账号池”或“模型”即可调用。`
+        : '还没有 WorkBuddy 登录账号，请先在下方添加账号，然后再次同步。' });
+    } catch (error) {
+      setNotice({ tone: 'error', text: `WorkBuddy 接入失败：${String(error)}` });
+    } finally {
+      setOperation(null);
+    }
+  };
+
   const syncUpstreamModels = async () => {
     setOperation('model-sync');
     setNotice({ tone: 'info', text: '正在并行读取各上游模型目录…' });
@@ -379,6 +402,10 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   };
 
   const openAccount = (account?: MultiModelAccount, provider = 'xai') => {
+    if ((account?.provider ?? provider) === 'workbuddy') {
+      setTab('workbuddy');
+      return;
+    }
     const value = structuredClone(account ?? blankAccount(provider));
     setEditing(value);
     setEditingIsNew(!account);
@@ -393,8 +420,13 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     setEditing({
       ...editing,
       provider,
-      authMode: provider === 'antigravity' || provider === 'xai' ? 'oauth_json' : 'api_key',
+      authMode: provider === 'doubao-work' ? 'local_cli' : provider === 'antigravity' || provider === 'xai' ? 'oauth_json' : 'api_key',
       baseUrl: preset?.baseUrl ?? '',
+      apiKey: provider === 'doubao-work' ? '' : editing.apiKey,
+      cliPath: provider === 'doubao-work' ? editing.cliPath : '',
+      cliApp: provider === 'doubao-work' ? editing.cliApp : undefined,
+      cliProfile: provider === 'doubao-work' ? editing.cliProfile : '',
+      credentialJson: null,
       models,
     });
     setModelText(accountModelsText(models));
@@ -547,7 +579,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         <div className="page-tabs filter-tabs">
           {([
             ['overview', Settings2, '服务'], ['accounts', Users, '账号池'], ['models', Boxes, '模型'],
-            ['keys', KeyRound, 'API Keys'], ['routes', Route, '路线'], ['workbuddy', Sparkles, 'WorkBuddy 积分'],
+            ['keys', KeyRound, 'API Keys'], ['routes', Route, '路线'], ['doubao-work', Bot, '豆包工作 Agent'], ['workbuddy', WorkbuddyIcon, 'WorkBuddy API'],
           ] as const).map(([id, Icon, label]) => (
             <button key={id} type="button" className={`filter-tab${tab === id ? ' active' : ''}`} onClick={() => setTab(id)}>
               <Icon /><span>{label}</span>
@@ -561,12 +593,26 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
           <section className="mm-workbuddy-host" aria-label="WorkBuddy 多账号与每日积分">
             <header className="mm-api-panel-head mm-workbuddy-heading">
               <div>
-                <h1>WorkBuddy 多账号与每日积分</h1>
-                <p>统一管理账号、刷新积分、批量领取每日奖励，并设置北京时间自动领取。</p>
+                <h1>WorkBuddy 订阅 / 积分 API</h1>
+                <p>先在下方登录多个账号，再同步到 API 账号池。使用同一个网关地址和 Key，调用 workbuddy/ 开头的模型；各账号分别扣除自己的积分。</p>
+              </div>
+              <div className="mm-inline-actions">
+                <button type="button" className="btn btn-primary" onClick={() => void syncWorkbuddyAccounts()} disabled={busy}><RefreshCw className={operation === 'workbuddy-sync' ? 'spin' : ''} />接入 API / 同步账号和模型</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { setProviderFilter('workbuddy'); setTab('accounts'); }}><Users />查看 API 账号池</button>
               </div>
             </header>
+            {notice && <div className={`mm-api-message ${notice.tone}`}><CircleAlert /><span>{notice.text}</span></div>}
+            <div className="mm-api-message info"><Network /><span>已接入 {accounts.filter((account) => account.provider === 'workbuddy').length} 个账号 · Base URL：<code>{baseUrl}/v1</code> · 自动同步上游模型，登录凭证由 C.le 托管。</span></div>
             <WorkbuddyAccountsPage embedded />
           </section>
+        ) : tab === 'doubao-work' ? (
+          <DoubaoWorkPage
+            accounts={accounts.filter((account) => account.provider === 'doubao-work')}
+            busy={busy}
+            onAdd={() => openAccount(undefined, 'doubao-work')}
+            onEdit={openAccount}
+            onToggle={(account) => void updateAccount({ ...account, enabled: !account.enabled })}
+          />
         ) : (
           <>
         <section className="mm-api-hero">
@@ -702,7 +748,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
                   <div className="row" key={`${item.provider}:${item.id}`}>
                     <span className={`provider ${item.provider}`}><ProviderIcon provider={item.provider} />{providerLabel(item.provider)}</span>
                     <code>{item.id}</code>
-                    <span className="caps">{item.capabilities.map((cap) => <i key={cap}>{cap === 'image' ? <Image /> : cap === 'video' ? <Film /> : <Sparkles />}{cap}</i>)}</span>
+                    <span className="caps">{item.capabilities.map((cap) => <i key={cap}>{cap === 'image' ? <Image /> : cap === 'video' ? <Film /> : <Sparkles />}{cap}</i>)}{item.maxInputTokens ? <i title={`上游最高支持 ${item.maxInputTokens.toLocaleString()} tokens；实际消耗取决于发送的内容`}>上下文 {item.maxInputTokens >= 1000000 ? `${item.maxInputTokens / 1000000}M` : `${item.maxInputTokens / 1000}K`}</i> : null}{item.maxOutputTokens ? <i title="仅公布上游输出上限，不自动增加单次生成长度">输出 {item.maxOutputTokens / 1000}K</i> : null}</span>
                     <span className="mm-model-actions"><em className={available ? 'available' : ''}>{available ? '可用' : '未配置'}</em><button type="button" onClick={() => void copy(item.id, `model:${item.provider}:${item.id}`)}>{copied === `model:${item.provider}:${item.id}` ? <Check /> : <Copy />}</button>{!configured && <button type="button" onClick={() => { setTab('accounts'); setProviderFilter(item.provider); openAccount(undefined, item.provider); }}><Plus /></button>}</span>
                   </div>
                 );
@@ -746,9 +792,93 @@ function ProviderIcon({ provider }: { provider: string }) {
   if (provider === 'gemini') return <GeminiIcon style={{ width: 18, height: 18 }} />;
   if (provider === 'codex') return <CodexIcon size={18} />;
   if (provider === 'antigravity') return <AntigravityIcon style={{ width: 18, height: 18 }} />;
+  if (provider === 'workbuddy') return <WorkbuddyIcon style={{ width: 18, height: 18 }} />;
   if (provider === 'openai') return <Sparkles />;
+  if (provider === 'doubao-work') return <Bot />;
   if (provider === 'doubao-seedance') return <Film />;
   return <Boxes />;
+}
+
+function DoubaoWorkPage({
+  accounts,
+  busy,
+  onAdd,
+  onEdit,
+  onToggle,
+}: {
+  accounts: MultiModelAccount[];
+  busy: boolean;
+  onAdd: () => void;
+  onEdit: (account: MultiModelAccount) => void;
+  onToggle: (account: MultiModelAccount) => void;
+}) {
+  const enabledAccounts = accounts.filter((account) => account.enabled);
+  const modelCount = enabledAccounts.reduce((total, account) => total + account.models.filter((model) => model.enabled).length, 0);
+
+  return (
+    <section className="mm-doubao-work-page" aria-label="豆包工作 Agent 接入">
+      <header className="mm-doubao-work-hero mm-api-panel">
+        <div className="mm-doubao-work-brand">
+          <span className="mm-doubao-work-mark"><Bot /></span>
+          <div>
+            <span className="mm-doubao-eyebrow">多模型 API · 本机 CLI</span>
+            <h1>豆包工作 Agent</h1>
+            <p>连接豆包 App 中的工作任务，或独立豆包工作 App 中的当前登录账号。</p>
+          </div>
+        </div>
+        <div className="mm-doubao-work-actions">
+          <span className={`mm-doubao-state${enabledAccounts.length ? ' connected' : ''}`}>
+            <i />{enabledAccounts.length ? `已记录 · ${enabledAccounts.length} 个档案 / ${modelCount} 个模型（仅当前激活档案可调用）` : '尚未连接'}
+          </span>
+          <button type="button" className="btn btn-primary" onClick={onAdd} disabled={busy}>
+            <Plus />{accounts.length ? '检测当前账号' : '连接豆包工作'}
+          </button>
+        </div>
+      </header>
+
+      <div className="mm-doubao-work-grid">
+        <section className="mm-api-panel mm-doubao-setup-panel">
+          <header className="mm-api-panel-head">
+            <div><h2>接入步骤</h2><p>使用当前豆包账号的工作任务额度，不需要额外填写 API Key。</p></div>
+          </header>
+          <ol className="mm-doubao-steps">
+            <li><span>1</span><div><strong>在豆包 App 中登录</strong><small>打开“工作任务”；独立豆包工作 App 也支持。</small></div></li>
+            <li><span>2</span><div><strong>安装 doubao-cli 并启动连接</strong><code>doubao --app doubao cdp launch</code></div></li>
+            <li><span>3</span><div><strong>连接当前登录档案</strong><small>点右上角按钮检测当前客户端与账号。</small></div></li>
+          </ol>
+          <p className="mm-doubao-footnote">同一豆包客户端一次只激活一个账号档案；切换账号后需重新检测。已记录的其他账号不会自动轮换。当前只转发文本请求，每次调用新建任务，不支持 OpenAI tools / function calling。</p>
+        </section>
+
+        <section className="mm-api-panel mm-doubao-accounts-panel">
+          <header className="mm-api-panel-head">
+            <div><h2>已接入账号</h2><p>仅当前在豆包客户端激活的账号可以接收请求。</p></div>
+          </header>
+          {accounts.length ? <div className="mm-doubao-account-list">
+            {accounts.map((account) => (
+              <article className="mm-doubao-account" key={account.id}>
+                <span className="mm-provider-icon doubao-work"><ProviderIcon provider="doubao-work" /></span>
+                <div className="mm-doubao-account-copy">
+                  <strong>{account.name || '豆包工作账号'}</strong>
+                  <small>{account.cliApp === 'doubao' ? '豆包 App' : '豆包工作 App'} · {account.cliProfile || '当前档案'}</small>
+                  <small>{account.models.filter((model) => model.enabled).length} 个启用模型</small>
+                </div>
+                <span className={`mm-doubao-state compact${account.enabled ? ' connected' : ''}`}><i />{account.enabled ? '已启用 · 需当前激活' : '已停用'}</span>
+                <button type="button" className="btn btn-secondary" onClick={() => onEdit(account)} disabled={busy}><Settings2 />编辑</button>
+                <button type="button" className="btn btn-secondary" onClick={() => onToggle(account)} disabled={busy}>{account.enabled ? '停用' : '启用'}</button>
+              </article>
+            ))}
+          </div> : (
+            <div className="mm-doubao-empty">
+              <span className="mm-doubao-empty-icon"><Bot /></span>
+              <strong>还没有接入豆包工作账号</strong>
+              <p>在豆包 App 登录并打开“工作任务”后，通过本机 CLI 检测当前账号。</p>
+              <button type="button" className="btn btn-secondary" onClick={onAdd} disabled={busy}><Plus />现在连接</button>
+            </div>
+          )}
+        </section>
+      </div>
+    </section>
+  );
 }
 
 function Metric({ label, value, detail }: { label: string; value: number; detail: string }) {
@@ -829,7 +959,7 @@ function formatQuotaNumber(value?: number | null) {
 function AccountCard({ account, usage, dispatch, xaiUsage, onEdit, onToggle, onRemove }: { account: MultiModelAccount; usage?: MultiModelAccountUsage; dispatch?: MultiModelRouteDispatch; xaiUsage?: XaiAccountUsage; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
   const capabilities = new Set(account.models.flatMap((item) => item.capabilities));
   return <article className={`mm-account${account.enabled ? '' : ' disabled'}`}>
-    <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{xaiUsage?.email || account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}{xaiUsage?.plan ? ` · ${xaiUsage.plan}` : ''}</p></div><button type="button" className={`mm-account-state${account.enabled && (!xaiUsage || xaiUsage.status === 'normal') ? ' enabled' : ''}`} onClick={onToggle}>{!account.enabled ? '停用' : xaiUsage?.status === 'reauth_required' ? '需重登' : xaiUsage?.status === 'error' ? '异常' : '可用'}</button></div>
+    <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{xaiUsage?.email || account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'doubao-work' ? '豆包工作本机 CLI' : account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}{xaiUsage?.plan ? ` · ${xaiUsage.plan}` : ''}</p></div><button type="button" className={`mm-account-state${account.enabled && (!xaiUsage || xaiUsage.status === 'normal') ? ' enabled' : ''}`} onClick={onToggle}>{!account.enabled ? '停用' : xaiUsage?.status === 'reauth_required' ? '需重登' : xaiUsage?.status === 'error' ? '异常' : '可用'}</button></div>
     {account.provider === 'xai' && account.authMode === 'oauth_json' && <div className="mm-xai-quota">
       {xaiUsage?.buckets?.length ? xaiUsage.buckets.slice(0, 4).map((bucket) => {
         const usedPercent = Math.max(0, Math.min(100, bucket.usedPercent ?? (bucket.used != null && bucket.total ? bucket.used / bucket.total * 100 : 0)));
@@ -855,8 +985,8 @@ function AccountCard({ account, usage, dispatch, xaiUsage, onEdit, onToggle, onR
       <span>本次运行调度 <b>{dispatch?.selected ?? 0}</b> 次</span>
       {dispatch && <em>成功 {dispatch.succeeded} · 失败 {dispatch.failed}{dispatch.lastModel ? ` · ${dispatch.lastModel}` : ''}</em>}
     </div>
-    <code>{account.baseUrl || 'CLIProxy native endpoint'}</code>
-    <footer><span>{account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span><button type="button" onClick={onEdit}>编辑</button><button type="button" className="trash" onClick={onRemove} aria-label="删除账号"><Trash2 /></button></footer>
+    <code>{account.provider === 'doubao-work' ? account.cliPath || '豆包工作 CLI' : account.baseUrl || 'CLIProxy native endpoint'}</code>
+    <footer><span>{account.source === 'local:doubao-work' ? '本机豆包工作账号' : account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span><button type="button" onClick={onEdit}>{account.provider === 'workbuddy' ? '管理 / 登录' : '编辑'}</button><button type="button" className="trash" onClick={onRemove} aria-label="删除账号"><Trash2 /></button></footer>
   </article>;
 }
 
@@ -865,6 +995,7 @@ function Empty({ icon, title, text, children }: { icon: ReactNode; title: string
 }
 
 function initialAccountAddMode(account: MultiModelAccount): AccountAddMode {
+  if (account.provider === 'doubao-work') return 'import';
   if (account.provider === 'codex' || account.provider === 'xai') return account.authMode === 'api_key' ? 'api_key' : 'oauth';
   return account.authMode === 'oauth_json' ? 'token' : 'api_key';
 }
@@ -983,6 +1114,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
   const isAntigravity = account.provider === 'antigravity';
   const isXai = account.provider === 'xai';
   const isSeedance = account.provider === 'doubao-seedance';
+  const isDoubaoWork = account.provider === 'doubao-work';
   const hasNativeOAuth = isCodex || isGemini || isClaude || isAntigravity || isXai;
   const disabled = busy || localBusy;
 
@@ -1017,12 +1149,13 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
     } : draft);
     cancelActiveOAuth();
     if (pending?.provider === account.provider && pending.authUrl) oauthProviderRef.current = account.provider;
-    if (isSeedance) {
+    if (isSeedance || isDoubaoWork) {
       setAddMode('api_key');
+      if (isDoubaoWork) setAddMode('import');
     } else if (isNew && (account.provider === 'xai' || account.provider === 'codex' || account.provider === 'gemini' || account.provider === 'claude' || account.provider === 'antigravity')) {
       setAddMode('oauth');
     }
-  }, [account.credentialJson, account.provider, cancelActiveOAuth, isNew, isSeedance]);
+  }, [account.credentialJson, account.provider, cancelActiveOAuth, isDoubaoWork, isNew, isSeedance]);
 
   useEffect(() => () => cancelActiveOAuth(), [cancelActiveOAuth]);
 
@@ -1462,6 +1595,32 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
     setLocalBusy(true);
     setModalStatus({ tone: 'loading', text: `正在导入本机 ${providerLabel(account.provider)} 登录态...` });
     try {
+      if (isDoubaoWork) {
+        const result = await multiModelApiService.doubaoWorkModels();
+        const profileLabel = result.profileName || result.profile || '豆包当前账号';
+        const models: MultiModelDefinition[] = result.models.map((id) => ({
+          id: `doubao-work/${id}`,
+          alias: '',
+          capabilities: ['text'],
+          enabled: true,
+        }));
+        const nextAccount = {
+          ...account,
+          name: account.name.trim() || profileLabel,
+          authMode: 'local_cli' as const,
+          apiKey: '',
+          baseUrl: '',
+          cliPath: result.cliPath,
+          cliApp: result.app,
+          cliProfile: result.profile,
+          credentialJson: null,
+          models,
+        };
+        setAccount(nextAccount);
+        setModelText(accountModelsText(models));
+        setModalStatus({ tone: 'success', text: `已连接 ${result.app === 'doubao' ? '豆包 App' : '豆包工作 App'} 的 ${profileLabel}，同步到 ${models.length} 个模型。` });
+        return;
+      }
       if (isCodex) await codexService.importCodexFromLocal();
       else if (isGemini) await geminiService.importGeminiFromLocal();
       else if (isClaude) await claudeService.importClaudeCliFromLocal();
@@ -1517,21 +1676,21 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
 
   return <div className="mm-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
     <div className="mm-modal mm-account-add-modal" role="dialog" aria-modal="true" aria-label={isNew ? '添加上游账号' : '编辑上游账号'}>
-      <header><div><h2>{isNew ? '添加上游账号' : '编辑上游账号'}</h2><p>每个账号是一条独立凭证；OAuth、Token / JSON、API Key、导入都按当前供应商执行，不再只做展示。</p></div><button type="button" onClick={onClose} aria-label="关闭"><X /></button></header>
+      <header><div><h2>{isDoubaoWork ? '连接当前豆包账号' : isNew ? '添加上游账号' : '编辑上游账号'}</h2><p>{isDoubaoWork ? '从已登录的豆包客户端读取当前档案；这里不提供独立的多账号登录。' : '每个账号是一条独立凭证；OAuth、Token / JSON、API Key、导入都按当前供应商执行，不再只做展示。'}</p></div><button type="button" onClick={onClose} aria-label="关闭"><X /></button></header>
       <div className="mm-modal-provider-grid">
-        {PROVIDERS.map((provider) => <button type="button" key={provider.id} className={account.provider === provider.id ? 'active' : ''} onClick={() => onProvider(provider.id)} disabled={disabled}><span className={`mm-provider-icon ${provider.id}`}><ProviderIcon provider={provider.id} /></span><b>{provider.short}</b></button>)}
+        {PROVIDERS.filter((provider) => provider.id !== 'workbuddy').map((provider) => <button type="button" key={provider.id} className={account.provider === provider.id ? 'active' : ''} onClick={() => onProvider(provider.id)} disabled={disabled}><span className={`mm-provider-icon ${provider.id}`}><ProviderIcon provider={provider.id} /></span><b>{provider.short}</b></button>)}
       </div>
       <div className="mm-modal-auth-tabs" role="tablist" aria-label="账号添加方式">
-        <button type="button" className={addMode === 'oauth' ? 'active' : ''} onClick={() => setAddMode('oauth')} disabled={disabled || isSeedance}><Globe size={14} /><span>OAuth 授权</span></button>
-        <button type="button" className={addMode === 'token' ? 'active' : ''} onClick={() => setAddMode('token')} disabled={disabled || isSeedance}><FileText size={14} /><span>Token / JSON</span></button>
-        <button type="button" className={addMode === 'api_key' ? 'active' : ''} onClick={() => setAddMode('api_key')} disabled={disabled}><KeyRound size={14} /><span>{isSeedance ? 'connect.sid' : 'API Key'}</span></button>
-        <button type="button" className={addMode === 'import' ? 'active' : ''} onClick={() => setAddMode('import')} disabled={disabled || isSeedance}><Database size={14} /><span>导入</span></button>
+        {!isDoubaoWork && <button type="button" className={addMode === 'oauth' ? 'active' : ''} onClick={() => setAddMode('oauth')} disabled={disabled || isSeedance}><Globe size={14} /><span>OAuth 授权</span></button>}
+        {!isDoubaoWork && <button type="button" className={addMode === 'token' ? 'active' : ''} onClick={() => setAddMode('token')} disabled={disabled || isSeedance}><FileText size={14} /><span>Token / JSON</span></button>}
+        {!isDoubaoWork && <button type="button" className={addMode === 'api_key' ? 'active' : ''} onClick={() => setAddMode('api_key')} disabled={disabled}><KeyRound size={14} /><span>{isSeedance ? 'connect.sid' : 'API Key'}</span></button>}
+        <button type="button" className={addMode === 'import' ? 'active' : ''} onClick={() => setAddMode('import')} disabled={disabled || isSeedance}><Database size={14} /><span>{isDoubaoWork ? '当前豆包账号' : '导入'}</span></button>
       </div>
       <div className="mm-modal-form mm-modal-form-codex-like">
         <label><span>账号名称</span><input autoFocus value={account.name} onChange={(event) => setAccount({ ...account, name: event.target.value })} placeholder={`例如 ${providerLabel(account.provider)} 主账号`} /></label>
         <label><span>优先级</span><input type="number" value={account.priority} onChange={(event) => setAccount({ ...account, priority: Number(event.target.value) })} /></label>
         <label><span>模型前缀</span><input value={account.prefix} onChange={(event) => setAccount({ ...account, prefix: event.target.value })} placeholder="可选" /></label>
-        <label><span>Base URL</span><input value={account.baseUrl} onChange={(event) => setAccount({ ...account, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /></label>
+        {!isDoubaoWork && <label><span>Base URL</span><input value={account.baseUrl} onChange={(event) => setAccount({ ...account, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /></label>}
 
         {addMode === 'oauth' && (
           <div className="mm-add-section wide">
@@ -1600,9 +1759,9 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
 
         {addMode === 'import' && (
           <div className="mm-add-section wide">
-            <p className="section-desc">{isXai ? '可导入本机 Grok CLI 登录态，或选择 JSON/TXT/CSV 文件。文件支持 Sub2API JSON 和每行“账号----密码----refresh_token”的账号池格式。' : '优先从本机已登录账号导入；也可以选择 JSON 文件。没有固定本机登录态的供应商会把 JSON 文件直接作为当前上游 credential 保存。'}</p>
-            <button type="button" className="btn btn-primary btn-full" onClick={() => void handleImportLocal()} disabled={disabled}>{localBusy ? <RefreshCw size={16} className="spin" /> : <Database size={16} />}获取本机 {providerLabel(account.provider)} 账号</button>
-            <button type="button" className="btn btn-secondary btn-full" onClick={() => void handleImportFiles()} disabled={disabled}><FileUp size={16} />{isXai ? '从 Sub2API / JSON / TXT 文件导入' : '从 JSON 文件导入'}</button>
+            {isDoubaoWork ? <p className="section-desc">不需要 API Key：CLI 通过已登录的豆包 App 工作任务创建 Agent 任务，使用当前账号权益。先安装 doubao-cli，并运行 <code>doubao --app doubao cdp launch</code>；若使用独立豆包工作 App，则把 doubao 改为 work。任务默认要求“高风险操作时询问”（AskOnRisk）；当前支持文本，每次请求新建任务，不转发 OpenAI 工具调用。</p> : <p className="section-desc">{isXai ? '可导入本机 Grok CLI 登录态，或选择 JSON/TXT/CSV 文件。文件支持 Sub2API JSON 和每行“账号----密码----refresh_token”的账号池格式。' : '优先从本机已登录账号导入；也可以选择 JSON 文件。没有固定本机登录态的供应商会把 JSON 文件直接作为当前上游 credential 保存。'}</p>}
+            <button type="button" className="btn btn-primary btn-full" onClick={() => void handleImportLocal()} disabled={disabled}>{localBusy ? <RefreshCw size={16} className="spin" /> : <Database size={16} />}{isDoubaoWork ? '检测当前豆包账号与工作模型' : `获取本机 ${providerLabel(account.provider)} 账号`}</button>
+            {!isDoubaoWork && <button type="button" className="btn btn-secondary btn-full" onClick={() => void handleImportFiles()} disabled={disabled}><FileUp size={16} />{isXai ? '从 Sub2API / JSON / TXT 文件导入' : '从 JSON 文件导入'}</button>}
           </div>
         )}
 
@@ -1610,7 +1769,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
         <label className="wide"><span>账号代理</span><input value={account.proxyUrl} onChange={(event) => setAccount({ ...account, proxyUrl: event.target.value })} placeholder="http://127.0.0.1:7890（可选）" /></label>
         {modalStatus && <div className={`mm-add-status ${modalStatus.tone} wide`}>{modalStatus.tone === 'success' ? <Check size={16} /> : modalStatus.tone === 'loading' ? <RefreshCw size={16} className="spin" /> : <CircleAlert size={16} />}<span>{modalStatus.text}</span></div>}
       </div>
-      <footer><button type="button" className="btn btn-secondary" onClick={onClose} disabled={disabled}>取消</button>{(addMode === 'api_key' || addMode === 'token') && <button type="button" className="btn btn-primary" onClick={() => void (addMode === 'api_key' ? handleApiKeySubmit() : handleTokenSubmit())} disabled={disabled}><Save />保存账号</button>}</footer>
+      <footer><button type="button" className="btn btn-secondary" onClick={onClose} disabled={disabled}>取消</button>{(addMode === 'api_key' || addMode === 'token' || (isDoubaoWork && addMode === 'import')) && <button type="button" className="btn btn-primary" onClick={() => void (isDoubaoWork ? onSubmit({ ...account, authMode: 'local_cli', apiKey: '', baseUrl: '', source: 'local:doubao-work' }, '') : addMode === 'api_key' ? handleApiKeySubmit() : handleTokenSubmit())} disabled={disabled || (isDoubaoWork && account.models.length === 0)}><Save />保存账号</button>}</footer>
     </div>
   </div>;
 }

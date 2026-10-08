@@ -118,6 +118,7 @@
       "icons/icon.ico"
     ],
     "resources": {
+      "../sidecars/cle-cliproxy/WORKBUDDY-NOTICE.md": "licenses/WORKBUDDY-NOTICE.md",
       "../scripts/claude-desktop-auth-helper.cjs": "scripts/claude-desktop-auth-helper.cjs",
       "../src/assets/icons/antigravity-menu.png": "native-menu-icons/antigravity-menu.png",
       "../src/assets/icons/claude.png": "native-menu-icons/claude.png",

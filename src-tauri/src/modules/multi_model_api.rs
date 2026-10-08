@@ -3,6 +3,7 @@ use crate::modules::atomic_write::{parse_json_with_auto_restore, write_string_at
 use crate::modules::multi_model_xai::{self, XaiAccountUsage, XaiOAuthStartResponse};
 use crate::modules::{
     account, claude_account, codex_local_access, gemini_account, logger, process,
+    workbuddy_account, workbuddy_api,
 };
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,10 @@ pub struct MultiModelDefinition {
     pub alias: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_input_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -84,6 +89,12 @@ pub struct MultiModelAccount {
     #[serde(default)]
     pub api_key: String,
     #[serde(default)]
+    pub cli_path: String,
+    #[serde(default)]
+    pub cli_app: String,
+    #[serde(default)]
+    pub cli_profile: String,
+    #[serde(default)]
     pub credential_json: Option<Value>,
     #[serde(default)]
     pub proxy_url: String,
@@ -99,6 +110,16 @@ pub struct MultiModelAccount {
     pub enabled: bool,
     #[serde(default)]
     pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoubaoWorkCliModels {
+    pub cli_path: String,
+    pub app: String,
+    pub profile: String,
+    pub profile_name: String,
+    pub models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,6 +307,8 @@ pub struct MultiModelCatalogEntry {
     pub provider: String,
     pub id: String,
     pub capabilities: Vec<String>,
+    pub max_input_tokens: Option<u32>,
+    pub max_output_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -743,11 +766,14 @@ fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
             return Err(format!("账号 ID 重复: {}", account.id));
         }
         account.provider = normalize_provider(&account.provider);
+        account.cli_path = account.cli_path.trim().to_string();
+        account.cli_profile = account.cli_profile.trim().to_string();
         if account.name.trim().is_empty() {
             account.name = format!("{} account", account.provider);
         }
         if account.enabled
             && account.auth_mode != "oauth_json"
+            && !(account.provider == "doubao-work" && account.auth_mode == "local_cli")
             && account.api_key.trim().is_empty()
             && account.credential_json.is_none()
         {
@@ -873,6 +899,8 @@ fn builtin_catalog() -> Vec<MultiModelCatalogEntry> {
             provider: (*provider).into(),
             id: (*id).into(),
             capabilities: caps.iter().map(|item| (*item).into()).collect(),
+            max_input_tokens: None,
+            max_output_tokens: None,
         })
         .collect()
 }
@@ -897,6 +925,8 @@ fn catalog_for_config(config: &MultiModelApiConfig) -> Vec<MultiModelCatalogEntr
                     provider: account.provider.clone(),
                     id: model.id.clone(),
                     capabilities: model.capabilities.clone(),
+                    max_input_tokens: model.max_input_tokens,
+                    max_output_tokens: model.max_output_tokens,
                 });
             }
         }
@@ -1074,7 +1104,12 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             }
         }
         let provider = normalize_provider(&account.provider);
-        let key = account.api_key.trim();
+        let workbuddy_id = account.source.strip_prefix("cle:workbuddy:");
+        let bridge = if provider == "workbuddy" {
+            Some(workbuddy_api::descriptor().ok_or("WorkBuddy 凭证管理尚未启动")?)
+        } else { None };
+        let workbuddy_key = bridge.as_ref().zip(workbuddy_id).map(|(bridge, id)| bridge.key(id));
+        let key = workbuddy_key.as_deref().unwrap_or_else(|| account.api_key.trim());
         let common = json!({
             "api-key": key,
             "priority": account.priority,
@@ -1085,6 +1120,29 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "models": models.iter().map(|item| model_json(item, false)).collect::<Vec<_>>()
         });
         match provider.as_str() {
+            "workbuddy" => {
+                let managed_id = workbuddy_id.ok_or("WorkBuddy 代理账号必须关联 C.le 已登录账号")?;
+                let managed = workbuddy_account::load_account(managed_id).ok_or("WorkBuddy 账号已删除")?;
+                providers.insert("workbuddy".to_string());
+                let mapped_models = models.iter().flat_map(|model| {
+                    let upstream = model.id.strip_prefix("workbuddy/").unwrap_or(&model.id);
+                    let mut entries = vec![json!({"name": upstream, "alias": model.id})];
+                    if !model.alias.trim().is_empty() { entries.push(json!({"name": upstream, "alias": model.alias})); }
+                    entries
+                }).collect::<Vec<_>>();
+                compat.push(json!({
+                    "name": "workbuddy", "priority": account.priority,
+                    "base-url": format!("{}/v2", workbuddy_api::chat_base(&managed)),
+                    "api-key-entries": [{"api-key": key, "proxy-url": if account.proxy_url.trim().is_empty() { effective_upstream_proxy.as_str() } else { account.proxy_url.as_str() }}],
+                    "headers": {"X-Cle-Workbuddy-Credential-URL": bridge.as_ref().unwrap().url(managed_id)},
+                    "models": mapped_models,
+                }));
+            }
+            "doubao-work" if account.auth_mode == "local_cli" => {
+                // Doubao Work authenticates through its own signed-in desktop
+                // renderer; its routes are intercepted by cle-cliproxy instead
+                // of being registered as a CLIProxyAPI executor provider.
+            }
             "claude-web" => {
                 providers.insert("claude-web".to_string());
                 claude_web_accounts.push(claude_web_runtime_account(
@@ -1189,7 +1247,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
         } else {
             provider.clone()
         };
-        let manifest_auth_id = if provider == "claude-web" {
+        let manifest_auth_id = if provider == "claude-web" || provider == "doubao-work" || provider == "workbuddy" {
             account.id.clone()
         } else if account.auth_mode == "oauth_json" || account.credential_json.is_some() {
             format!("{}.json", safe_file_name(&account.id))
@@ -1208,12 +1266,21 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "email": account.name,
             "authId": manifest_auth_id,
             "upstreamApiKey": if provider == "claude-web" { claude_web_internal_key.as_str() } else { key },
+            "cliPath": if provider == "doubao-work" { account.cli_path.as_str() } else { "" },
+            "cliApp": if provider == "doubao-work" { account.cli_app.as_str() } else { "" },
+            "cliProfile": if provider == "doubao-work" { account.cli_profile.as_str() } else { "" },
             "provider": manifest_provider,
             "baseUrl": account.base_url,
             "proxyUrl": if account.proxy_url.trim().is_empty() { effective_upstream_proxy.as_str() } else { account.proxy_url.as_str() },
             "headers": account.headers,
             "priority": account.priority,
             "modelQuotas": model_quotas,
+            "modelLimits": models.iter().flat_map(|model| {
+                let limits = json!({"maxInputTokens": model.max_input_tokens, "maxOutputTokens": model.max_output_tokens});
+                let mut entries = vec![(model.id.clone(), limits.clone())];
+                if !model.alias.trim().is_empty() { entries.push((model.alias.clone(), limits)); }
+                entries
+            }).collect::<BTreeMap<_, _>>(),
             "models": models.iter().flat_map(|model| {
                 let mut ids = vec![model.id.clone()];
                 if !model.alias.trim().is_empty() {
@@ -1797,9 +1864,11 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
         let mut state = runtime().lock().await;
         stop_runtime_locked(&mut state).await;
     }
+    let has_workbuddy = effective_config.accounts.iter().any(|account| account.enabled && account.provider == "workbuddy");
+    if has_workbuddy { workbuddy_api::ensure_bridge().await?; }
     let launch = write_launch_files(&effective_config)?;
     let helper_port = launch.claude_web.as_ref().map(|helper| helper.port);
-    if adopt_existing
+    if adopt_existing && !has_workbuddy
         && probe_sidecar_health(effective_config.port).await.is_ok()
         && match helper_port {
             Some(port) => port_is_listening(port).await,
@@ -2284,6 +2353,242 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
     })
 }
 
+pub async fn doubao_work_cli_models() -> Result<DoubaoWorkCliModels, String> {
+    let cli_path = find_doubao_cli().ok_or_else(|| {
+        "找不到 doubao-cli。请先安装豆包工作 CLI（npm install --global doubao-cli@latest），并确认 Node.js 22+ 可用。".to_string()
+    })?;
+
+    let mut errors = Vec::new();
+    for app in ["doubao", "work"] {
+        let status = match run_doubao_cli(&cli_path, &["--app", app, "status", "--json"]).await {
+            Ok(value) => value,
+            Err(error) => {
+                errors.push(format!("{app}: {error}"));
+                continue;
+            }
+        };
+        if status.get("running").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        let runtime = match run_doubao_cli(&cli_path, &["--app", app, "runtimes", "--json"]).await {
+            Ok(value) => value,
+            Err(error) => {
+                errors.push(format!("{app}: {error}"));
+                continue;
+            }
+        };
+        if !runtime
+            .pointer("/runtimes")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+        {
+            continue;
+        }
+        let profile = status
+            .pointer("/profile/directory")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let profile_name = status
+            .pointer("/profile/name")
+            .and_then(Value::as_str)
+            .unwrap_or(&profile)
+            .trim()
+            .to_string();
+        let mut models = vec!["auto".to_string()];
+        if app == "work" {
+            if let Ok(catalog) =
+                run_doubao_cli(&cli_path, &["--app", app, "models", "--json"]).await
+            {
+                collect_doubao_model_ids(&catalog, false, &mut models);
+            }
+        }
+        models.sort();
+        models.dedup();
+        return Ok(DoubaoWorkCliModels {
+            cli_path: cli_path.to_string_lossy().into_owned(),
+            app: app.to_string(),
+            profile,
+            profile_name,
+            models,
+        });
+    }
+    Err(format!(
+        "没有找到已登录且工作任务可用的豆包客户端。请先打开豆包 App 的工作任务页面，再重试。{}",
+        if errors.is_empty() {
+            String::new()
+        } else {
+            format!(" 诊断：{}", errors.join("；"))
+        }
+    ))
+}
+
+fn find_doubao_cli() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("DOUBAO_CLI_PATH") {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&path) {
+            candidates.push(directory.join("doubao"));
+            #[cfg(windows)]
+            candidates.push(directory.join("doubao.cmd"));
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        for directory in [
+            home.join(".volta/bin"),
+            home.join(".local/share/pnpm"),
+            home.join("Library/pnpm"),
+            home.join(".npm-global/bin"),
+        ] {
+            candidates.push(directory.join("doubao"));
+        }
+        let nvm_root = home.join(".nvm/versions/node");
+        if let Ok(entries) = std::fs::read_dir(nvm_root) {
+            let mut versions = entries
+                .flatten()
+                .map(|entry| entry.path().join("bin/doubao"))
+                .collect::<Vec<_>>();
+            versions.sort_by(|left, right| right.cmp(left));
+            candidates.extend(versions);
+        }
+    }
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/doubao"),
+        PathBuf::from("/usr/local/bin/doubao"),
+    ]);
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+async fn run_doubao_cli(cli_path: &Path, args: &[&str]) -> Result<Value, String> {
+    let mut command = {
+        #[cfg(windows)]
+        {
+            let mut command = Command::new("cmd.exe");
+            command.arg("/C").arg(cli_path);
+            command
+        }
+        #[cfg(not(windows))]
+        {
+            Command::new(cli_path)
+        }
+    };
+    command
+        .args(args)
+        .kill_on_drop(true)
+        .env("DOUBAO_CLI_DISABLE_AUTO_UPDATE", "1");
+    if let Some(parent) = cli_path.parent() {
+        let mut paths = vec![parent.to_path_buf()];
+        if let Some(existing) = std::env::var_os("PATH") {
+            paths.extend(std::env::split_paths(&existing));
+        }
+        if let Ok(path) = std::env::join_paths(paths) {
+            command.env("PATH", path);
+        }
+    }
+    let output = tokio::time::timeout(Duration::from_secs(30), command.output())
+        .await
+        .map_err(|_| {
+            "豆包工作 CLI 响应超时；请确认豆包工作已打开并且本机 CLI 调试连接可用。".to_string()
+        })?
+        .map_err(|error| format!("启动豆包工作 CLI 失败: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim().chars().take(500).collect::<String>();
+        let detail = if detail.is_empty() {
+            stdout.trim().chars().take(500).collect()
+        } else {
+            detail
+        };
+        return Err(if detail.is_empty() {
+            "豆包工作 CLI 连接失败。请确认豆包工作已安装、登录并通过 `doubao --app work cdp launch` 启动。".into()
+        } else {
+            format!("豆包工作 CLI 连接失败: {detail}")
+        });
+    }
+    parse_doubao_cli_json(&stdout).map_err(|error| format!("读取豆包工作 CLI 返回值失败: {error}"))
+}
+
+fn parse_doubao_cli_json(output: &str) -> Result<Value, String> {
+    let output = output.trim();
+    let start = output
+        .char_indices()
+        .find(|(_, character)| *character == '{' || *character == '[')
+        .map(|(index, _)| index)
+        .ok_or_else(|| "输出中没有 JSON".to_string())?;
+    serde_json::from_str(&output[start..]).map_err(|error| error.to_string())
+}
+
+fn find_json_string(value: &Value, keys: &[&str]) -> Option<String> {
+    match value {
+        Value::Object(object) => {
+            for key in keys {
+                if let Some(text) = object.get(*key).and_then(Value::as_str) {
+                    if !text.trim().is_empty() {
+                        return Some(text.trim().to_string());
+                    }
+                }
+            }
+            object
+                .values()
+                .find_map(|child| find_json_string(child, keys))
+        }
+        Value::Array(items) => items.iter().find_map(|child| find_json_string(child, keys)),
+        _ => None,
+    }
+}
+
+fn collect_doubao_model_ids(value: &Value, in_model_list: bool, models: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_doubao_model_ids(item, true, models);
+            }
+        }
+        Value::Object(object) => {
+            let has_model_shape = ["id", "value", "model", "modelId", "model_id"]
+                .iter()
+                .any(|key| object.get(*key).and_then(Value::as_str).is_some());
+            if in_model_list || has_model_shape {
+                let model = ["id", "value", "model", "modelId", "model_id", "name"]
+                    .iter()
+                    .find_map(|key| object.get(*key).and_then(Value::as_str));
+                if let Some(model) = model
+                    .map(str::trim)
+                    .filter(|model| is_valid_doubao_model_id(model))
+                {
+                    models.push(model.to_string());
+                }
+            }
+            for (key, child) in object {
+                if matches!(
+                    key.as_str(),
+                    "models" | "data" | "items" | "choices" | "availableModels"
+                ) {
+                    collect_doubao_model_ids(child, true, models);
+                } else if in_model_list && child.is_object() {
+                    collect_doubao_model_ids(child, true, models);
+                }
+            }
+        }
+        Value::String(model) if in_model_list && is_valid_doubao_model_id(model.trim()) => {
+            models.push(model.trim().to_string());
+        }
+        _ => {}
+    }
+}
+
+fn is_valid_doubao_model_id(model: &str) -> bool {
+    !model.is_empty()
+        && model.len() <= 200
+        && model.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | ':' | '/')
+        })
+}
+
 fn account_usage_cache() -> &'static StdMutex<Vec<MultiModelAccountUsage>> {
     ACCOUNT_USAGE_CACHE.get_or_init(|| StdMutex::new(Vec::new()))
 }
@@ -2320,6 +2625,8 @@ fn cached_account_usages_snapshot(config: &MultiModelApiConfig) -> Vec<MultiMode
 }
 
 fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccountUsage> {
+    let workbuddy = workbuddy_account::list_accounts_checked().unwrap_or_default().into_iter()
+        .map(|item| (item.id.clone(), item)).collect::<BTreeMap<_, _>>();
     let antigravity = account::list_accounts()
         .unwrap_or_default()
         .into_iter()
@@ -2340,6 +2647,15 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
         .accounts
         .iter()
         .filter_map(|route| {
+            if let Some(id) = route.source.strip_prefix("cle:workbuddy:") {
+                let item = workbuddy.get(id)?;
+                return Some(MultiModelAccountUsage {
+                    account_id: route.id.clone(),
+                    updated_at: item.usage_updated_at.and_then(|timestamp| chrono::DateTime::from_timestamp(timestamp, 0)).map(|value| value.to_rfc3339()),
+                    status: item.status.clone().unwrap_or_else(|| "normal".into()),
+                    buckets: workbuddy_api::credit_bucket(item).into_iter().collect(),
+                });
+            }
             if let Some(id) = route.source.strip_prefix("cle:antigravity:") {
                 let item = antigravity.get(id)?;
                 let quota = item.quota.as_ref()?;
@@ -3262,6 +3578,8 @@ fn xai_default_models() -> Vec<MultiModelDefinition> {
             id: model.id,
             alias: String::new(),
             capabilities: model.capabilities,
+            max_input_tokens: model.max_input_tokens,
+            max_output_tokens: model.max_output_tokens,
             enabled: true,
         })
         .collect()
@@ -3334,6 +3652,9 @@ fn upsert_xai_credential(
         auth_mode: "oauth_json".into(),
         base_url: String::new(),
         api_key: String::new(),
+        cli_path: String::new(),
+        cli_app: String::new(),
+        cli_profile: String::new(),
         credential_json: Some(normalize_oauth_credential("xai", credential)),
         proxy_url: String::new(),
         prefix: String::new(),
@@ -3609,6 +3930,11 @@ async fn fetch_upstream_models(
     global_proxy: String,
 ) -> Result<Vec<String>, String> {
     let provider = normalize_provider(&account.provider);
+    if provider == "workbuddy" {
+        let id = account.source.strip_prefix("cle:workbuddy:").ok_or("WorkBuddy 账号缺少来源")?;
+        let proxy = if account.proxy_url.trim().is_empty() { &global_proxy } else { &account.proxy_url };
+        return Ok(workbuddy_api::fetch_models(id, proxy).await?.into_iter().map(|model| model.id).collect());
+    }
     let endpoint = upstream_models_url(&account)
         .ok_or_else(|| format!("{} 不提供标准模型目录", account.name))?;
     let mut client_builder = reqwest::Client::builder()
@@ -3746,7 +4072,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
         }
     };
     let snapshots = managed_model_snapshots();
-    let mut discoveries = BTreeMap::<String, Vec<String>>::new();
+    let mut discoveries = BTreeMap::<String, Vec<MultiModelDefinition>>::new();
     let mut errors = Vec::new();
     let mut sources_succeeded = 0usize;
     let mut sources_failed = 0usize;
@@ -3756,7 +4082,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
             .get(&account.source)
             .filter(|items| !items.is_empty())
         {
-            discoveries.insert(account.id.clone(), models.clone());
+            discoveries.insert(account.id.clone(), models.iter().cloned().map(model_definition).collect());
             sources_succeeded += 1;
         }
     }
@@ -3767,7 +4093,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
         .filter(|item| {
             item.enabled
                 && !discoveries.contains_key(&item.id)
-                && upstream_models_url(item).is_some()
+                && (item.provider == "workbuddy" || upstream_models_url(item).is_some())
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -3777,7 +4103,15 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
         async move {
             let id = account.id.clone();
             let name = account.name.clone();
-            (id, name, fetch_upstream_models(account, proxy).await)
+            let result = if account.provider == "workbuddy" {
+                match account.source.strip_prefix("cle:workbuddy:") {
+                    Some(source_id) => workbuddy_api::fetch_models(source_id, if account.proxy_url.trim().is_empty() { &proxy } else { &account.proxy_url }).await,
+                    None => Err("WorkBuddy 账号缺少来源".into()),
+                }
+            } else {
+                fetch_upstream_models(account, proxy).await.map(|ids| ids.into_iter().map(model_definition).collect())
+            };
+            (id, name, result)
         }
     }))
     .await;
@@ -3796,9 +4130,14 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
 
     let discovered = discoveries.values().map(Vec::len).sum::<usize>();
     let mut added = 0usize;
+    let before_models = serde_json::to_value(&config.accounts).ok();
     for account in &mut config.accounts {
         if let Some(models) = discoveries.remove(&account.id) {
-            added += merge_discovered_models(&mut account.models, models);
+            if account.provider == "workbuddy" {
+                added += merge_workbuddy_models(&mut account.models, models);
+            } else {
+                added += merge_discovered_models(&mut account.models, models.into_iter().map(|model| model.id).collect());
+            }
         }
     }
     let status = if sources_failed == 0 {
@@ -3819,7 +4158,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
         error,
     )
     .await;
-    if added > 0 {
+    if added > 0 || before_models != serde_json::to_value(&config.accounts).ok() {
         logger::log_info(&format!(
             "[MultiModelAPI][models] 自动发现 {discovered} 个模型，新增 {added} 个"
         ));
@@ -3853,7 +4192,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         .collect::<BTreeMap<_, _>>();
     config
         .accounts
-        .retain(|account| !account.source.starts_with("cle:"));
+        .retain(|account| !account.source.starts_with("cle:") || account.source.starts_with("cle:workbuddy:"));
 
     if let Ok(accounts) = account::list_accounts() {
         for managed in accounts.into_iter().filter(|item| {
@@ -3896,6 +4235,9 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                 auth_mode: "oauth_json".into(),
                 base_url: String::new(),
                 api_key: String::new(),
+                cli_path: String::new(),
+                cli_app: String::new(),
+                cli_profile: String::new(),
                 credential_json: Some(json!({
                     "type": "antigravity",
                     "access_token": managed.token.access_token,
@@ -3940,6 +4282,9 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                 auth_mode: "oauth_json".into(),
                 base_url: String::new(),
                 api_key: String::new(),
+                cli_path: String::new(),
+                cli_app: String::new(),
+                cli_profile: String::new(),
                 credential_json: Some(json!({
                     "type": "gemini-cli",
                     "access_token": account.access_token,
@@ -3991,6 +4336,9 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                     auth_mode: "oauth_json".into(),
                     base_url: "https://claude.ai".into(),
                     api_key: String::new(),
+                    cli_path: String::new(),
+                    cli_app: String::new(),
+                    cli_profile: String::new(),
                     credential_json: Some(json!({
                         "type": "claude-web",
                         "auth_export_path": auth_export_path.to_string_lossy()
@@ -4039,6 +4387,9 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                 },
                 base_url: account.api_base_url.unwrap_or_default(),
                 api_key,
+                cli_path: String::new(),
+                cli_app: String::new(),
+                cli_profile: String::new(),
                 credential_json,
                 proxy_url: String::new(),
                 prefix: String::new(),
@@ -4056,6 +4407,68 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
             });
         }
     }
+    if let Err(error) = import_workbuddy_routes(&mut config).await {
+        logger::log_warn(&format!("[MultiModelAPI] WorkBuddy 账号同步: {error}"));
+    }
+    save_config(config).await
+}
+
+async fn import_workbuddy_routes(config: &mut MultiModelApiConfig) -> Result<(), String> {
+    let managed = workbuddy_account::list_accounts_checked()?;
+    let sources = managed.iter().map(|account| format!("cle:workbuddy:{}", account.id)).collect::<BTreeSet<_>>();
+    config.accounts.retain(|account| !account.source.starts_with("cle:workbuddy:") || sources.contains(&account.source));
+    let mut successes = 0;
+    let mut errors = Vec::new();
+    let proxy = config.upstream_proxy.clone();
+    let results = futures::future::join_all(managed.into_iter().map(|account| {
+        let proxy = config.accounts.iter().find(|route| route.source == format!("cle:workbuddy:{}", account.id))
+            .map(|route| route.proxy_url.trim()).filter(|url| !url.is_empty()).unwrap_or(&proxy).to_string();
+        async move { let result = workbuddy_api::fetch_models(&account.id, &proxy).await; (account, result) }
+    })).await;
+    for (account, result) in results {
+        let source = format!("cle:workbuddy:{}", account.id);
+        let models = match result {
+            Ok(models) => models,
+            Err(error) => { errors.push(error); continue; }
+        };
+        successes += 1;
+        if let Some(existing) = config.accounts.iter_mut().find(|route| route.source == source) {
+            merge_workbuddy_models(&mut existing.models, models);
+            continue;
+        }
+        config.accounts.push(MultiModelAccount {
+            id: format!("cle-workbuddy-{}", account.id),
+            name: format!("WorkBuddy · {}", account.nickname.as_deref().filter(|s| !s.is_empty()).unwrap_or(&account.email)),
+            provider: "workbuddy".into(), auth_mode: "oauth_json".into(),
+            base_url: String::new(), api_key: String::new(), cli_path: String::new(),
+            cli_app: String::new(), cli_profile: String::new(), credential_json: None,
+            proxy_url: String::new(), prefix: String::new(), priority: 0,
+            headers: BTreeMap::new(), models, enabled: true, source,
+        });
+    }
+    if successes == 0 && !errors.is_empty() { return Err(errors.into_iter().take(3).collect::<Vec<_>>().join("；")); }
+    for error in errors { logger::log_warn(&format!("[MultiModelAPI] WorkBuddy 部分账号模型读取失败：{error}")); }
+    Ok(())
+}
+
+// WorkBuddy's catalog is an authorization list. Removed models must not remain
+// callable, but a user's disabled models and aliases survive a successful sync.
+fn merge_workbuddy_models(existing: &mut Vec<MultiModelDefinition>, discovered: Vec<MultiModelDefinition>) -> usize {
+    let mut previous = existing.drain(..).map(|model| (model.id.clone(), model)).collect::<BTreeMap<_, _>>();
+    let mut added = 0;
+    *existing = discovered.into_iter().map(|mut model| {
+        if let Some(old) = previous.remove(&model.id) {
+            model.enabled = old.enabled;
+            model.alias = old.alias;
+        } else { added += 1; }
+        model
+    }).collect();
+    added
+}
+
+pub async fn sync_workbuddy_accounts() -> Result<MultiModelApiState, String> {
+    let mut config = load_config()?;
+    import_workbuddy_routes(&mut config).await?;
     save_config(config).await
 }
 
@@ -4216,6 +4629,8 @@ fn model_definition(id: String) -> MultiModelDefinition {
         id,
         alias: String::new(),
         capabilities,
+        max_input_tokens: None,
+        max_output_tokens: None,
         enabled: true,
     }
 }
@@ -4393,13 +4808,34 @@ pub async fn shutdown() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn workbuddy_sync_removes_revoked_models_and_preserves_user_selection() {
+        let mut existing = vec![
+            super::MultiModelDefinition {id:"workbuddy/kept".into(), alias:"my-model".into(), capabilities:vec!["text".into()], max_input_tokens:Some(8000), max_output_tokens:Some(4096), enabled:false},
+            super::model_definition("workbuddy/revoked".into()),
+        ];
+        let discovered = vec![
+            super::MultiModelDefinition {id:"workbuddy/kept".into(), alias:String::new(), capabilities:vec!["text".into(), "vision".into()], max_input_tokens:Some(1000000), max_output_tokens:Some(128000), enabled:true},
+            super::MultiModelDefinition {id:"workbuddy/new".into(), alias:String::new(), capabilities:vec!["text".into()], max_input_tokens:None, max_output_tokens:None, enabled:true},
+        ];
+        assert_eq!(super::merge_workbuddy_models(&mut existing, discovered), 1);
+        assert_eq!(existing.len(), 2);
+        assert!(!existing[0].enabled);
+        assert_eq!(existing[0].alias, "my-model");
+        assert_eq!(existing[0].capabilities, ["text", "vision"]);
+        assert_eq!(existing[0].max_input_tokens, Some(1000000));
+        assert_eq!(existing[0].max_output_tokens, Some(128000));
+        assert!(!existing.iter().any(|model| model.id == "workbuddy/revoked"));
+    }
+
     use super::{
-        builtin_catalog, catalog_for_config, default_config, is_blocking_managed_account_status,
-        is_blocking_managed_route_error, is_routable_antigravity_model,
-        managed_models_or_previous_selection, merge_discovered_models, model_definition,
-        model_ids_from_upstream_payload, normalize_config, normalize_oauth_credential,
-        normalize_provider, provider_chat_test_models, watchdog_restart_delay, MultiModelAccount,
-        MultiModelDefinition, DEFAULT_ANTIGRAVITY_MODELS,
+        builtin_catalog, catalog_for_config, collect_doubao_model_ids, default_config,
+        is_blocking_managed_account_status, is_blocking_managed_route_error,
+        is_routable_antigravity_model, managed_models_or_previous_selection,
+        merge_discovered_models, model_definition, model_ids_from_upstream_payload,
+        normalize_config, normalize_oauth_credential, normalize_provider, parse_doubao_cli_json,
+        provider_chat_test_models, watchdog_restart_delay, MultiModelAccount, MultiModelDefinition,
+        DEFAULT_ANTIGRAVITY_MODELS,
     };
     use serde_json::json;
     use std::time::Duration;
@@ -4433,6 +4869,47 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(models.len(), 2);
         assert!(models.iter().all(|item| item.capabilities == ["video"]));
+    }
+
+    #[test]
+    fn doubao_work_cli_models_are_discovered_from_json_output() {
+        let payload = parse_doubao_cli_json(
+            "models from local app:\n{\"models\":[{\"id\":\"gpt-6-astra\"},{\"value\":\"doubao-2.1-turbo\"},{\"id\":\"bad model\"}]}",
+        )
+        .expect("parse CLI output");
+        let mut models = Vec::new();
+        collect_doubao_model_ids(&payload, false, &mut models);
+        models.sort();
+        assert_eq!(models, ["doubao-2.1-turbo", "gpt-6-astra"]);
+    }
+
+    #[test]
+    fn doubao_work_local_cli_account_does_not_require_an_api_key() {
+        let mut config = default_config();
+        config.accounts.push(MultiModelAccount {
+            id: "doubao-work-test".into(),
+            name: "豆包工作账号".into(),
+            provider: "doubao-work".into(),
+            auth_mode: "local_cli".into(),
+            base_url: String::new(),
+            api_key: String::new(),
+            cli_path: "/usr/local/bin/doubao".into(),
+            cli_app: "doubao".into(),
+            cli_profile: " Profile 1 ".into(),
+            credential_json: None,
+            proxy_url: String::new(),
+            prefix: String::new(),
+            priority: 0,
+            headers: Default::default(),
+            models: vec![model_definition("doubao-work/gpt-6-astra".into())],
+            enabled: true,
+            source: "local:doubao-work".into(),
+        });
+
+        normalize_config(&mut config).expect("local CLI account should be valid");
+
+        assert_eq!(config.accounts[0].auth_mode, "local_cli");
+        assert_eq!(config.accounts[0].cli_profile, "Profile 1");
     }
 
     #[test]
@@ -4526,6 +5003,9 @@ mod tests {
             auth_mode: "oauth_json".to_string(),
             base_url: String::new(),
             api_key: String::new(),
+            cli_path: String::new(),
+            cli_app: String::new(),
+            cli_profile: String::new(),
             credential_json: None,
             proxy_url: String::new(),
             prefix: String::new(),
@@ -4542,6 +5022,9 @@ mod tests {
             auth_mode: "oauth_json".to_string(),
             base_url: String::new(),
             api_key: String::new(),
+            cli_path: String::new(),
+            cli_app: String::new(),
+            cli_profile: String::new(),
             credential_json: None,
             proxy_url: String::new(),
             prefix: String::new(),
@@ -4638,6 +5121,9 @@ mod tests {
             auth_mode: "oauth_json".to_string(),
             base_url: String::new(),
             api_key: String::new(),
+            cli_path: String::new(),
+            cli_app: String::new(),
+            cli_profile: String::new(),
             credential_json: Some(json!({"access_token": "test"})),
             proxy_url: String::new(),
             prefix: String::new(),
@@ -4664,6 +5150,8 @@ mod tests {
             id: id.to_string(),
             alias: String::new(),
             capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
+            max_input_tokens: None,
+            max_output_tokens: None,
             enabled: true,
         };
         let account = |provider: &str, models: Vec<MultiModelDefinition>| MultiModelAccount {
@@ -4673,6 +5161,9 @@ mod tests {
             auth_mode: "oauth_json".to_string(),
             base_url: String::new(),
             api_key: String::new(),
+            cli_path: String::new(),
+            cli_app: String::new(),
+            cli_profile: String::new(),
             credential_json: None,
             proxy_url: String::new(),
             prefix: String::new(),

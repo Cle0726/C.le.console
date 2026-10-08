@@ -4,6 +4,8 @@ export interface MultiModelDefinition {
   id: string;
   alias: string;
   capabilities: ModelCapability[];
+  maxInputTokens?: number | null;
+  maxOutputTokens?: number | null;
   enabled: boolean;
 }
 
@@ -11,9 +13,12 @@ export interface MultiModelAccount {
   id: string;
   name: string;
   provider: string;
-  authMode: 'api_key' | 'oauth_json';
+  authMode: 'api_key' | 'oauth_json' | 'local_cli';
   baseUrl: string;
   apiKey: string;
+  cliPath?: string;
+  cliApp?: 'doubao' | 'work';
+  cliProfile?: string;
   credentialJson?: Record<string, unknown> | null;
   proxyUrl: string;
   prefix: string;
@@ -57,6 +62,8 @@ export interface MultiModelCatalogEntry {
   provider: string;
   id: string;
   capabilities: ModelCapability[];
+  maxInputTokens?: number | null;
+  maxOutputTokens?: number | null;
 }
 
 export interface MultiModelApiState {
@@ -136,6 +143,14 @@ export interface XaiOAuthStartResponse {
   userCode: string;
   expiresIn: number;
   intervalSeconds: number;
+}
+
+export interface DoubaoWorkCliModels {
+  cliPath: string;
+  app: 'doubao' | 'work';
+  profile: string;
+  profileName: string;
+  models: string[];
 }
 
 export interface MultiModelSelfHealState {
