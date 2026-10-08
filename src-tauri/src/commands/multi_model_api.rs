@@ -1,12 +1,22 @@
 use crate::modules::multi_model_api::{
     self, DoubaoWorkCliModels, MultiModelApiConfig, MultiModelApiState, MultiModelApiTestResult,
-    MultiModelRepairReport,
+    MultiModelRepairReport, MultiModelQuotaRefreshResult,
 };
 use crate::modules::multi_model_xai::XaiOAuthStartResponse;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+#[tauri::command]
+pub async fn extension_provider_request(method: String, path: String, body: Option<Value>) -> Result<Value, String> {
+    crate::modules::agent_provider_bridge::request(method, path, body).await
+}
+
+#[tauri::command]
+pub async fn multi_model_api_sync_extension_accounts() -> Result<MultiModelApiState, String> {
+    multi_model_api::sync_extension_accounts().await
+}
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use tauri::AppHandle;
@@ -86,6 +96,11 @@ pub async fn multi_model_api_sync_workbuddy_accounts() -> Result<MultiModelApiSt
 }
 
 #[tauri::command]
+pub async fn multi_model_api_refresh_quotas(provider: Option<String>, account_ids: Option<Vec<String>>) -> Result<MultiModelQuotaRefreshResult, String> {
+    multi_model_api::refresh_quotas(provider, account_ids).await
+}
+
+#[tauri::command]
 pub async fn multi_model_api_sync_upstream_models() -> Result<MultiModelApiState, String> {
     multi_model_api::sync_upstream_models().await
 }
@@ -107,7 +122,7 @@ pub async fn multi_model_api_test_chat(
 pub async fn multi_model_api_diagnose_and_repair(
     deep: Option<bool>,
 ) -> Result<MultiModelRepairReport, String> {
-    multi_model_api::diagnose_and_repair(deep.unwrap_or(true)).await
+    multi_model_api::diagnose_and_repair(deep.unwrap_or(false)).await
 }
 
 #[tauri::command]

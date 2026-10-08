@@ -1,4 +1,5 @@
 pub mod account;
+pub mod agent_provider_bridge;
 pub mod account_index_repair;
 pub mod antigravity_credential;
 pub mod antigravity_legacy_instance;
@@ -101,6 +102,7 @@ pub mod windsurf_instance;
 pub mod windsurf_oauth;
 pub mod workbuddy_account;
 pub mod workbuddy_api;
+pub mod managed_provider_api;
 pub mod workbuddy_auto_checkin;
 pub mod workbuddy_instance;
 pub mod workbuddy_oauth;

@@ -3,7 +3,7 @@ use crate::modules::atomic_write::{parse_json_with_auto_restore, write_string_at
 use crate::modules::multi_model_xai::{self, XaiAccountUsage, XaiOAuthStartResponse};
 use crate::modules::{
     account, claude_account, codex_local_access, gemini_account, logger, process,
-    workbuddy_account, workbuddy_api,
+    workbuddy_account, workbuddy_api, managed_provider_api, kiro_account, github_copilot_account, agent_provider_bridge,
 };
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex as StdMutex, OnceLock,
 };
 use std::time::Instant;
@@ -34,6 +34,8 @@ const DEFAULT_MODEL_SYNC_INTERVAL_MINUTES: u32 = 60;
 static WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
 static MODEL_SYNC_STARTED: AtomicBool = AtomicBool::new(false);
 static ACCOUNT_USAGE_REFRESHING: AtomicBool = AtomicBool::new(false);
+static ACCOUNT_USAGE_GENERATION: AtomicU64 = AtomicU64::new(0);
+static QUOTA_REFRESH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static ROUTE_DISPATCHES: OnceLock<StdMutex<BTreeMap<String, MultiModelRouteDispatch>>> =
     OnceLock::new();
 static ACCOUNT_USAGE_CACHE: OnceLock<StdMutex<Vec<MultiModelAccountUsage>>> = OnceLock::new();
@@ -276,6 +278,7 @@ pub struct MultiModelAccountUsage {
     pub account_id: String,
     pub updated_at: Option<String>,
     pub status: String,
+    pub status_reason: Option<String>,
     pub buckets: Vec<MultiModelUsageBucket>,
 }
 
@@ -285,7 +288,19 @@ pub struct MultiModelUsageBucket {
     pub id: String,
     pub label: String,
     pub remaining_percent: i32,
+    pub remaining: Option<f64>,
+    pub total: Option<f64>,
     pub reset_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiModelQuotaRefreshResult {
+    pub state: MultiModelApiState,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -498,10 +513,11 @@ fn load_config() -> Result<MultiModelApiConfig, String> {
     let mut config: MultiModelApiConfig = parse_json_with_auto_restore(&path, &raw)
         .map_err(|error| format!("解析多模型 API 配置失败: {error}"))?;
     let removed_separated_gpt_accounts = config.accounts.iter().any(is_separated_gpt_account);
+    let legacy_openai = config.accounts.iter().any(|account| account.provider == "openai");
     normalize_config(&mut config)?;
     let affinity_migrated = migrate_legacy_round_robin_affinity(&mut config)?;
     let legacy_migration = migrate_legacy_key_records(&mut config)?;
-    if affinity_migrated || legacy_migration.is_some() || removed_separated_gpt_accounts {
+    if affinity_migrated || legacy_migration.is_some() || removed_separated_gpt_accounts || legacy_openai {
         // Normalize again because imported records came from older schemas.
         normalize_config(&mut config)?;
         save_config_file(&config)?;
@@ -766,6 +782,14 @@ fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
             return Err(format!("账号 ID 重复: {}", account.id));
         }
         account.provider = normalize_provider(&account.provider);
+        // Remove the duplicate provider, not users' compatible gateway routes.
+        // Keep IDs, keys, models and downstream account permissions intact.
+        if account.provider == "openai" {
+            account.provider = "custom".into();
+            if account.base_url.trim().is_empty() {
+                account.base_url = "https://api.openai.com/v1".into();
+            }
+        }
         account.cli_path = account.cli_path.trim().to_string();
         account.cli_profile = account.cli_profile.trim().to_string();
         if account.name.trim().is_empty() {
@@ -858,16 +882,6 @@ fn builtin_catalog() -> Vec<MultiModelCatalogEntry> {
             &["text", "vision", "image"],
         ),
         ("antigravity", "veo-3.1-generate-preview", &["video"]),
-        ("openai", "gpt-6-astra", &["text", "vision", "reasoning"]),
-        ("openai", "gpt-6-sol", &["text", "vision", "reasoning"]),
-        ("openai", "gpt-6-luna", &["text", "vision", "reasoning"]),
-        ("openai", "gpt-5.6-sol", &["text", "vision", "reasoning"]),
-        ("openai", "gpt-5.6-terra", &["text", "vision", "reasoning"]),
-        ("openai", "gpt-5.6-luna", &["text", "vision", "reasoning"]),
-        ("openai", "gpt-5.5", &["text", "vision", "reasoning"]),
-        ("openai", "gpt-5.4", &["text", "vision", "reasoning"]),
-        ("openai", "gpt-5.4-mini", &["text", "vision", "reasoning"]),
-        ("openai", "gpt-image-2", &["image"]),
         (
             "claude",
             "claude-opus-4-6",
@@ -1105,11 +1119,14 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
         }
         let provider = normalize_provider(&account.provider);
         let workbuddy_id = account.source.strip_prefix("cle:workbuddy:");
-        let bridge = if provider == "workbuddy" {
+        let native_id = managed_provider_api::supported(&provider).then(|| account.source.strip_prefix(&format!("cle:{provider}:"))).flatten();
+        let native_bridge_id = native_id.map(|id| format!("{provider}~{id}"));
+        let bridge = if provider == "workbuddy" || native_id.is_some() {
             Some(workbuddy_api::descriptor().ok_or("WorkBuddy 凭证管理尚未启动")?)
         } else { None };
         let workbuddy_key = bridge.as_ref().zip(workbuddy_id).map(|(bridge, id)| bridge.key(id));
-        let key = workbuddy_key.as_deref().unwrap_or_else(|| account.api_key.trim());
+        let native_key = bridge.as_ref().zip(native_bridge_id.as_ref()).map(|(bridge,id)| bridge.key(id));
+        let key = native_key.as_deref().or(workbuddy_key.as_deref()).unwrap_or_else(|| account.api_key.trim());
         let common = json!({
             "api-key": key,
             "priority": account.priority,
@@ -1120,6 +1137,20 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "models": models.iter().map(|item| model_json(item, false)).collect::<Vec<_>>()
         });
         match provider.as_str() {
+            "kiro" | "github-copilot" => {
+                let bridge_id = native_bridge_id.as_ref().ok_or("原生代理账号必须关联 C.le 已登录账号")?;
+                providers.insert(provider.clone());
+                let mapped_models = models.iter().flat_map(|model| {
+                    let prefix = format!("{provider}/");
+                    let upstream = model.id.strip_prefix(&prefix).unwrap_or(&model.id);
+                    let mut entries = vec![json!({"name":upstream,"alias":model.id})];
+                    if !model.alias.trim().is_empty() { entries.push(json!({"name":upstream,"alias":model.alias})); }
+                    entries
+                }).collect::<Vec<_>>();
+                compat.push(json!({"name":provider,"priority":account.priority,"base-url":"https://api.githubcopilot.com",
+                    "api-key-entries":[{"api-key":key,"proxy-url":if account.proxy_url.trim().is_empty() {effective_upstream_proxy.as_str()} else {account.proxy_url.as_str()}}],
+                    "headers":{"X-Cle-Managed-Credential-URL":bridge.as_ref().unwrap().url(bridge_id)},"models":mapped_models}));
+            }
             "workbuddy" => {
                 let managed_id = workbuddy_id.ok_or("WorkBuddy 代理账号必须关联 C.le 已登录账号")?;
                 let managed = workbuddy_account::load_account(managed_id).ok_or("WorkBuddy 账号已删除")?;
@@ -1222,13 +1253,21 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             }
             _ => {
                 providers.insert(provider.clone());
+                let compat_models = models.iter().flat_map(|model| {
+                    if account.source.starts_with("agent2api:") {
+                        let upstream = model.id.strip_prefix(&format!("{provider}/")).unwrap_or(&model.id);
+                        let mut entries = vec![json!({"name": upstream, "alias": model.id})];
+                        if !model.alias.is_empty() { entries.push(json!({"name": upstream, "alias": model.alias})); }
+                        entries
+                    } else { vec![model_json(model, true)] }
+                }).collect::<Vec<_>>();
                 compat.push(json!({
                     "name": provider,
                     "priority": account.priority,
                     "prefix": account.prefix,
                     "base-url": account.base_url,
-                    "api-key-entries": [{"api-key": key, "proxy-url": account.proxy_url}],
-                    "models": models.iter().map(|item| model_json(item, true)).collect::<Vec<_>>(),
+                    "api-key-entries": [{"api-key": key, "proxy-url": if account.source.starts_with("agent2api:") { "direct" } else { &account.proxy_url }}],
+                    "models": compat_models,
                     "headers": account.headers,
                     "disable-cooling": true
                 }));
@@ -1247,7 +1286,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
         } else {
             provider.clone()
         };
-        let manifest_auth_id = if provider == "claude-web" || provider == "doubao-work" || provider == "workbuddy" {
+        let manifest_auth_id = if provider == "claude-web" || provider == "doubao-work" || provider == "workbuddy" || native_id.is_some() {
             account.id.clone()
         } else if account.auth_mode == "oauth_json" || account.credential_json.is_some() {
             format!("{}.json", safe_file_name(&account.id))
@@ -1864,7 +1903,7 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
         let mut state = runtime().lock().await;
         stop_runtime_locked(&mut state).await;
     }
-    let has_workbuddy = effective_config.accounts.iter().any(|account| account.enabled && account.provider == "workbuddy");
+    let has_workbuddy = effective_config.accounts.iter().any(|account| account.enabled && (account.provider == "workbuddy" || managed_provider_api::supported(&account.provider)));
     if has_workbuddy { workbuddy_api::ensure_bridge().await?; }
     let launch = write_launch_files(&effective_config)?;
     let helper_port = launch.claude_web.as_ref().map(|helper| helper.port);
@@ -2612,11 +2651,14 @@ fn cached_account_usages_snapshot(config: &MultiModelApiConfig) -> Vec<MultiMode
         .is_ok()
     {
         let config = config.clone();
+        let generation = ACCOUNT_USAGE_GENERATION.load(Ordering::Acquire);
         tokio::task::spawn_blocking(move || {
             let _refresh_guard = AccountUsageRefreshGuard;
             let usages = collect_account_usages(&config);
             if let Ok(mut cache) = account_usage_cache().lock() {
-                *cache = usages;
+                if ACCOUNT_USAGE_GENERATION.load(Ordering::Acquire) == generation {
+                    *cache = usages;
+                }
             }
         });
     }
@@ -2647,18 +2689,32 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
         .accounts
         .iter()
         .filter_map(|route| {
+            if route.source.starts_with("agent2api:") { return Some(agent_provider_bridge::cached_usage(&route.provider, &route.id)); }
+            if managed_provider_api::supported(&route.provider) {
+                if let Some(id) = route.source.strip_prefix(&format!("cle:{}:",route.provider)) {
+                    return managed_provider_api::usage(&route.provider,id,&route.id);
+                }
+            }
             if let Some(id) = route.source.strip_prefix("cle:workbuddy:") {
                 let item = workbuddy.get(id)?;
                 return Some(MultiModelAccountUsage {
                     account_id: route.id.clone(),
                     updated_at: item.usage_updated_at.and_then(|timestamp| chrono::DateTime::from_timestamp(timestamp, 0)).map(|value| value.to_rfc3339()),
                     status: item.status.clone().unwrap_or_else(|| "normal".into()),
+                    status_reason: item.quota_query_last_error.clone().or_else(|| item.status_reason.clone()),
                     buckets: workbuddy_api::credit_bucket(item).into_iter().collect(),
                 });
             }
             if let Some(id) = route.source.strip_prefix("cle:antigravity:") {
                 let item = antigravity.get(id)?;
-                let quota = item.quota.as_ref()?;
+                let Some(quota) = item.quota.as_ref() else {
+                    return Some(MultiModelAccountUsage {
+                        account_id: route.id.clone(), updated_at: None,
+                        status: if item.disabled { "reauth_required" } else { "unknown" }.into(),
+                        status_reason: item.quota_error.as_ref().map(|error| error.message.clone()).or_else(|| item.disabled_reason.clone()),
+                        buckets: Vec::new(),
+                    });
+                };
                 return Some(MultiModelAccountUsage {
                     account_id: route.id.clone(),
                     updated_at: chrono::DateTime::from_timestamp(quota.last_updated, 0)
@@ -2669,6 +2725,7 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
                         "normal"
                     }
                     .into(),
+                    status_reason: item.quota_error.as_ref().map(|error| error.message.clone()).or_else(|| item.disabled_reason.clone()),
                     buckets: quota
                         .models
                         .iter()
@@ -2680,6 +2737,8 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
                                 .clone()
                                 .unwrap_or_else(|| model.name.clone()),
                             remaining_percent: model.percentage.clamp(0, 100),
+                            remaining: None,
+                            total: None,
                             reset_at: (!model.reset_time.trim().is_empty())
                                 .then(|| model.reset_time.clone()),
                         })
@@ -2690,22 +2749,32 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
                 let item = gemini.get(id)?;
                 return Some(MultiModelAccountUsage {
                     account_id: route.id.clone(),
-                    updated_at: None,
+                    updated_at: item.usage_updated_at.and_then(|value| chrono::DateTime::from_timestamp(value, 0)).map(|value| value.to_rfc3339()),
                     status: item.status.clone().unwrap_or_else(|| "normal".into()),
+                    status_reason: item.quota_query_last_error.clone().or_else(|| item.status_reason.clone()),
                     buckets: gemini_account::extract_account_model_remaining(item)
                         .into_iter()
                         .map(|(model, remaining)| MultiModelUsageBucket {
                             id: model.clone(),
                             label: model,
                             remaining_percent: remaining.clamp(0, 100),
+                            remaining: None,
+                            total: None,
                             reset_at: None,
                         })
                         .collect(),
                 });
             }
-            if let Some(id) = route.source.strip_prefix("cle:claude:") {
+            if let Some(id) = route.source.strip_prefix("cle:claude:").or_else(|| route.source.strip_prefix("cle:claude-web:")) {
                 let item = claude.get(id)?;
-                let quota = item.quota.as_ref()?;
+                let Some(quota) = item.quota.as_ref() else {
+                    return Some(MultiModelAccountUsage {
+                        account_id: route.id.clone(), updated_at: None,
+                        status: item.status.clone().unwrap_or_else(|| "unknown".into()),
+                        status_reason: item.quota_error.as_ref().map(|error| error.message.clone()).or_else(|| item.status_reason.clone()),
+                        buckets: Vec::new(),
+                    });
+                };
                 let reset = |timestamp: Option<i64>| {
                     timestamp
                         .and_then(|value| chrono::DateTime::from_timestamp(value, 0))
@@ -2718,12 +2787,16 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
                         // Claude stores API utilization (used percentage), while
                         // the unified quota card is normalized to remaining.
                         remaining_percent: (100 - quota.five_hour_percentage).clamp(0, 100),
+                        remaining: None,
+                        total: None,
                         reset_at: reset(quota.five_hour_reset_time),
                     },
                     MultiModelUsageBucket {
                         id: "seven-day".into(),
                         label: "7 天".into(),
                         remaining_percent: (100 - quota.seven_day_percentage).clamp(0, 100),
+                        remaining: None,
+                        total: None,
                         reset_at: reset(quota.seven_day_reset_time),
                     },
                 ];
@@ -2732,6 +2805,8 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
                         id: "seven-day-sonnet".into(),
                         label: "Sonnet 7 天".into(),
                         remaining_percent: (100 - value).clamp(0, 100),
+                        remaining: None,
+                        total: None,
                         reset_at: reset(quota.seven_day_sonnet_reset_time),
                     });
                 }
@@ -2742,12 +2817,153 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
                         .and_then(|value| chrono::DateTime::from_timestamp(value, 0))
                         .map(|value| value.to_rfc3339()),
                     status: item.status.clone().unwrap_or_else(|| "normal".into()),
+                    status_reason: item.quota_error.as_ref().map(|error| error.message.clone()).or_else(|| item.status_reason.clone()),
                     buckets,
                 });
             }
             None
         })
         .collect()
+}
+
+fn quota_refresh_supported(route: &MultiModelAccount) -> bool {
+    (route.provider == "xai" && route.auth_mode == "oauth_json")
+        || route.source.starts_with("agent2api:")
+        || route.source.starts_with("cle:workbuddy:")
+        || route.source.starts_with("cle:antigravity:")
+        || route.source.starts_with("cle:gemini:")
+        || (managed_provider_api::supported(&route.provider) && route.source.starts_with(&format!("cle:{}:",route.provider)))
+        || (route.auth_mode == "oauth_json" && (route.source.starts_with("cle:claude:") || route.source.starts_with("cle:claude-web:")))
+}
+
+fn quota_refresh_targets(config: &MultiModelApiConfig, provider: Option<&str>, ids: Option<&[String]>) -> Vec<MultiModelAccount> {
+    config.accounts.iter().filter(|route| {
+        provider.is_none_or(|provider| provider == "all" || provider == route.provider)
+            && match ids {
+                Some(ids) => ids.contains(&route.id),
+                None => route.enabled,
+            }
+    }).cloned().collect()
+}
+
+// Quota endpoints only: no inference request, no paid "test" and no restart.
+pub async fn refresh_quotas(provider: Option<String>, account_ids: Option<Vec<String>>) -> Result<MultiModelQuotaRefreshResult, String> {
+    use futures::{stream, StreamExt};
+    let _guard = QUOTA_REFRESH_LOCK.get_or_init(|| Mutex::new(())).try_lock()
+        .map_err(|_| "额度正在刷新，请稍后再试".to_string())?;
+    let config = load_config()?;
+    let selected = quota_refresh_targets(&config, provider.as_deref(), account_ids.as_deref());
+    let skipped = selected.iter().filter(|route| !quota_refresh_supported(route)).count();
+    let xai_ids = selected.iter().filter(|route| quota_refresh_supported(route) && route.provider == "xai")
+        .map(|route| route.id.clone()).collect::<BTreeSet<_>>();
+    let mut succeeded = 0;
+    let mut failed = 0;
+    let mut errors = Vec::new();
+    if !xai_ids.is_empty() {
+        match refresh_xai_accounts_selected(false, Some(&xai_ids)).await {
+            Ok(state) => {
+                for id in &xai_ids {
+                    match state.xai_accounts.iter().find(|usage| &usage.account_id == id) {
+                        Some(usage) if usage.status == "normal" => succeeded += 1,
+                        usage => {
+                            failed += 1;
+                            errors.push(usage.and_then(|usage| usage.status_reason.clone()).unwrap_or_else(|| "Grok 额度暂时无法获取".into()));
+                        }
+                    }
+                }
+            }
+            Err(error) => { failed += xai_ids.len(); errors.push(error); }
+        }
+    }
+    let mut sources = BTreeSet::new();
+    let managed = selected.into_iter().filter(|route| route.provider != "xai" && quota_refresh_supported(route))
+        .filter(|route| sources.insert(route.source.clone())).collect::<Vec<_>>();
+    let results = stream::iter(managed.into_iter().map(|route| async move {
+        let result = timeout(Duration::from_secs(90), refresh_managed_quota(&route)).await
+            .unwrap_or_else(|_| Err("额度查询超时，保留上次余额".into()));
+        (route, result)
+    })).buffer_unordered(4).collect::<Vec<_>>().await;
+
+    // Merge only rotated credentials into the latest config, never overwrite
+    // concurrent edits to models, enabled state or downstream key permissions.
+    let mut latest = load_config()?;
+    let mut credentials_changed = false;
+    for (route, result) in &results {
+        match result {
+            Ok(()) => succeeded += 1,
+            Err(error) => { failed += 1; errors.push(error.clone()); }
+        }
+        if let Some(credential) = refreshed_managed_credential(route) {
+            if let Some(current) = latest.accounts.iter_mut().find(|item| item.id == route.id && item.source == route.source) {
+                if current.credential_json.as_ref() != Some(&credential) {
+                    current.credential_json = Some(credential);
+                    credentials_changed = true;
+                }
+            }
+        }
+    }
+    if credentials_changed {
+        save_config_file(&latest)?;
+        if latest.enabled {
+            if let Err(error) = write_launch_files(&latest) {
+                errors.push(format!("额度已更新，但凭证热更新失败：{error}"));
+            }
+        }
+    }
+    // Prevent an older disk-read worker overwriting these fresh results.
+    let usages = collect_account_usages(&latest);
+    if let Ok(mut cache) = account_usage_cache().lock() {
+        ACCOUNT_USAGE_GENERATION.fetch_add(1, Ordering::AcqRel);
+        *cache = usages;
+    }
+    Ok(MultiModelQuotaRefreshResult { state: get_state().await?, succeeded, failed, skipped, errors })
+}
+
+async fn refresh_managed_quota(route: &MultiModelAccount) -> Result<(), String> {
+    if route.source.starts_with("agent2api:") { return agent_provider_bridge::refresh_quota(&route.provider).await; }
+    if managed_provider_api::supported(&route.provider) {
+        if let Some(id) = route.source.strip_prefix(&format!("cle:{}:",route.provider)) {
+            return managed_provider_api::refresh_quota(&route.provider,id).await;
+        }
+    }
+    if let Some(id) = route.source.strip_prefix("cle:workbuddy:") {
+        let (_, diagnostics) = workbuddy_account::refresh_account_detailed(id).await?;
+        return if diagnostics.quota_refreshed { Ok(()) } else {
+            Err(diagnostics.error_message().unwrap_or_else(|| "WorkBuddy 未返回额度".into()))
+        };
+    }
+    if let Some(id) = route.source.strip_prefix("cle:gemini:") {
+        let item = gemini_account::refresh_account_token(id).await?;
+        return match item.quota_query_last_error { Some(error) => Err(error), None if item.usage_updated_at.is_some() => Ok(()), _ => Err("Gemini 未返回额度".into()) };
+    }
+    if let Some(id) = route.source.strip_prefix("cle:antigravity:") {
+        let mut item = account::load_account(id)?;
+        let quota = account::fetch_quota_with_fresh_token(&mut item, true).await.map_err(|error| error.to_string())?;
+        account::update_account_quota(id, quota)?;
+        return item.quota_error.map_or(Ok(()), |error| Err(error.message));
+    }
+    if let Some(id) = route.source.strip_prefix("cle:claude:").or_else(|| route.source.strip_prefix("cle:claude-web:")) {
+        let item = claude_account::refresh_account_quota(id).await?;
+        return match item.quota_error { Some(error) => Err(error.message), None if item.quota.is_some() => Ok(()), _ => Err("Claude 未返回订阅额度".into()) };
+    }
+    Err("该账号没有可用的额度查询接口，请到供应商后台查看".into())
+}
+
+fn refreshed_managed_credential(route: &MultiModelAccount) -> Option<Value> {
+    let mut credential = route.credential_json.clone()?;
+    let patch = if let Some(id) = route.source.strip_prefix("cle:gemini:") {
+        let item = gemini_account::load_account(id)?;
+        json!({"access_token": item.access_token, "refresh_token": item.refresh_token.unwrap_or_default(), "id_token": item.id_token.unwrap_or_default(), "expiry_date": item.expiry_date, "project_id": item.project_id})
+    } else if let Some(id) = route.source.strip_prefix("cle:antigravity:") {
+        let item = account::load_account(id).ok()?;
+        json!({"access_token": item.token.access_token, "refresh_token": item.token.refresh_token, "expires_in": item.token.expires_in, "expired": chrono::DateTime::from_timestamp(item.token.expiry_timestamp, 0).map(|date| date.to_rfc3339()), "project_id": item.token.project_id})
+    } else if let Some(id) = route.source.strip_prefix("cle:claude:") {
+        let item = claude_account::load_account(id)?;
+        let oauth = item.claude_credentials_raw.as_ref()?.get("claudeAiOauth")?;
+        json!({"access_token": oauth.get("accessToken"), "refresh_token": oauth.get("refreshToken"), "expired": oauth.get("expiresAt")})
+    } else { return None; };
+    credential.as_object_mut()?.extend(patch.as_object()?.clone());
+    Some(credential)
 }
 
 fn repair_check(
@@ -3726,21 +3942,38 @@ pub async fn import_xai_accounts_json(raw: &str) -> Result<MultiModelApiState, S
 }
 
 pub async fn refresh_xai_accounts(force_credentials: bool) -> Result<MultiModelApiState, String> {
+    refresh_xai_accounts_selected(force_credentials, None).await
+}
+
+async fn refresh_xai_accounts_selected(force_credentials: bool, ids: Option<&BTreeSet<String>>) -> Result<MultiModelApiState, String> {
     let mut config = load_config()?;
+    let original = config.clone();
+    if let Some(ids) = ids {
+        config.accounts.retain(|account| ids.contains(&account.id));
+    }
     let mut credentials_changed = hydrate_persisted_xai_credentials(&mut config)?;
     credentials_changed |= refresh_xai_credentials(&mut config, force_credentials).await;
     if credentials_changed {
-        save_config_file(&config)?;
+        let mut latest = load_config()?;
+        for route in &mut latest.accounts {
+            if let Some(updated) = config.accounts.iter().find(|item| item.id == route.id && item.source == route.source) {
+                route.credential_json = updated.credential_json.clone();
+            }
+        }
+        save_config_file(&latest)?;
         // CLIProxyAPI watches the auth directory; rewriting the launch files updates
         // rotated tokens without stopping the local API service.
-        let _ = write_launch_files(&config)?;
+        if latest.enabled { let _ = write_launch_files(&latest)?; }
     }
 
     let previous = load_xai_usage_cache()
         .into_iter()
         .map(|item| (item.account_id.clone(), item))
         .collect::<BTreeMap<_, _>>();
-    let mut usage = Vec::new();
+    let mut usage = previous.values().filter(|item| {
+        original.accounts.iter().any(|account| account.id == item.account_id)
+            && ids.is_some_and(|ids| !ids.contains(&item.account_id))
+    }).cloned().collect::<Vec<_>>();
     for account in config.accounts.iter().filter(|account| {
         normalize_provider(&account.provider) == "xai" && account.auth_mode == "oauth_json"
     }) {
@@ -3754,7 +3987,7 @@ pub async fn refresh_xai_accounts(force_credentials: bool) -> Result<MultiModelA
                 status_reason: Some("缺少 OAuth credential".into()),
                 has_grok_code_access: cached.as_ref().and_then(|item| item.has_grok_code_access),
                 token_expires_at: None,
-                updated_at: chrono::Utc::now().to_rfc3339(),
+                updated_at: cached.as_ref().map(|item| item.updated_at.clone()).unwrap_or_default(),
                 buckets: cached.take().map(|item| item.buckets).unwrap_or_default(),
             });
             continue;
@@ -3772,7 +4005,7 @@ pub async fn refresh_xai_accounts(force_credentials: bool) -> Result<MultiModelA
                 status_reason: Some("等待完成 xAI Device Flow 授权".into()),
                 has_grok_code_access: None,
                 token_expires_at: None,
-                updated_at: chrono::Utc::now().to_rfc3339(),
+                updated_at: String::new(),
                 buckets: Vec::new(),
             });
             continue;
@@ -3810,12 +4043,12 @@ pub async fn refresh_xai_accounts(force_credentials: bool) -> Result<MultiModelA
                     status_reason: None,
                     has_grok_code_access: None,
                     token_expires_at: oauth_expiration(credential).map(|value| value.to_rfc3339()),
-                    updated_at: chrono::Utc::now().to_rfc3339(),
+                    updated_at: String::new(),
                     buckets: Vec::new(),
                 });
                 item.status = status.into();
                 item.status_reason = Some(error);
-                item.updated_at = chrono::Utc::now().to_rfc3339();
+                // Keep the timestamp of the last successful quota fetch.
                 usage.push(item);
             }
         }
@@ -3934,6 +4167,10 @@ async fn fetch_upstream_models(
         let id = account.source.strip_prefix("cle:workbuddy:").ok_or("WorkBuddy 账号缺少来源")?;
         let proxy = if account.proxy_url.trim().is_empty() { &global_proxy } else { &account.proxy_url };
         return Ok(workbuddy_api::fetch_models(id, proxy).await?.into_iter().map(|model| model.id).collect());
+    }
+    if managed_provider_api::supported(&provider) {
+        let id = account.source.strip_prefix(&format!("cle:{provider}:")).ok_or("账号缺少来源")?;
+        return Ok(managed_provider_api::fetch_models(&provider,id,if account.proxy_url.trim().is_empty() {&global_proxy} else {&account.proxy_url}).await?.into_iter().map(|m|m.id).collect());
     }
     let endpoint = upstream_models_url(&account)
         .ok_or_else(|| format!("{} 不提供标准模型目录", account.name))?;
@@ -4077,6 +4314,18 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
     let mut sources_succeeded = 0usize;
     let mut sources_failed = 0usize;
 
+    if config.accounts.iter().any(|route| route.enabled && route.source.starts_with("agent2api:")) {
+        match agent_provider_bridge::pools(true).await {
+            Ok(pools) => for pool in pools {
+                if let Some(route) = config.accounts.iter().find(|route| route.source == format!("agent2api:{}", pool.provider)) {
+                    discoveries.insert(route.id.clone(), pool.models.iter().filter_map(|model| extension_model(&pool.provider, model)).collect());
+                    sources_succeeded += 1;
+                }
+            },
+            Err(error) => { sources_failed += 1; errors.push(error); },
+        }
+    }
+
     for account in config.accounts.iter().filter(|item| item.enabled) {
         if let Some(models) = snapshots
             .get(&account.source)
@@ -4092,8 +4341,9 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
         .iter()
         .filter(|item| {
             item.enabled
+                && !item.source.starts_with("agent2api:")
                 && !discoveries.contains_key(&item.id)
-                && (item.provider == "workbuddy" || upstream_models_url(item).is_some())
+                && (item.provider == "workbuddy" || managed_provider_api::supported(&item.provider) || upstream_models_url(item).is_some())
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -4107,6 +4357,11 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
                 match account.source.strip_prefix("cle:workbuddy:") {
                     Some(source_id) => workbuddy_api::fetch_models(source_id, if account.proxy_url.trim().is_empty() { &proxy } else { &account.proxy_url }).await,
                     None => Err("WorkBuddy 账号缺少来源".into()),
+                }
+            } else if managed_provider_api::supported(&account.provider) {
+                match account.source.strip_prefix(&format!("cle:{}:",account.provider)) {
+                    Some(source_id) => managed_provider_api::fetch_models(&account.provider,source_id,if account.proxy_url.trim().is_empty() {&proxy} else {&account.proxy_url}).await,
+                    None => Err("账号缺少来源".into()),
                 }
             } else {
                 fetch_upstream_models(account, proxy).await.map(|ids| ids.into_iter().map(model_definition).collect())
@@ -4133,7 +4388,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
     let before_models = serde_json::to_value(&config.accounts).ok();
     for account in &mut config.accounts {
         if let Some(models) = discoveries.remove(&account.id) {
-            if account.provider == "workbuddy" {
+            if account.provider == "workbuddy" || managed_provider_api::supported(&account.provider) || account.source.starts_with("agent2api:") {
                 added += merge_workbuddy_models(&mut account.models, models);
             } else {
                 added += merge_discovered_models(&mut account.models, models.into_iter().map(|model| model.id).collect());
@@ -4192,7 +4447,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         .collect::<BTreeMap<_, _>>();
     config
         .accounts
-        .retain(|account| !account.source.starts_with("cle:") || account.source.starts_with("cle:workbuddy:"));
+        .retain(|account| !account.source.starts_with("cle:") || account.source.starts_with("cle:workbuddy:") || managed_provider_api::supported(&account.provider));
 
     if let Ok(accounts) = account::list_accounts() {
         for managed in accounts.into_iter().filter(|item| {
@@ -4410,7 +4665,76 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
     if let Err(error) = import_workbuddy_routes(&mut config).await {
         logger::log_warn(&format!("[MultiModelAPI] WorkBuddy 账号同步: {error}"));
     }
+    import_native_routes(&mut config).await?;
+    if config.accounts.iter().any(|route| route.source.starts_with("agent2api:")) {
+        import_extension_routes(&mut config, false).await?;
+    }
     save_config(config).await
+}
+
+pub async fn sync_extension_accounts() -> Result<MultiModelApiState, String> {
+    let mut config = load_config()?;
+    import_extension_routes(&mut config, true).await?;
+    save_config(config).await
+}
+
+fn extension_model(provider: &str, model: &Value) -> Option<MultiModelDefinition> {
+    let id = model.get("id")?.as_str()?.trim();
+    if id.is_empty() { return None; }
+    let caps = model.get("capabilities").unwrap_or(&Value::Null);
+    let mut capabilities = vec!["text".to_string()];
+    if caps.get("supportsImages").and_then(Value::as_bool) == Some(true) { capabilities.push("vision".into()); }
+    if caps.get("supportsReasoning").and_then(Value::as_bool) == Some(true) { capabilities.push("reasoning".into()); }
+    Some(MultiModelDefinition { id: format!("{provider}/{id}"), alias: String::new(), capabilities,
+        max_input_tokens: caps.get("maxInputTokens").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()), max_output_tokens: caps.get("maxOutputTokens").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()), enabled: true })
+}
+
+async fn import_extension_routes(config: &mut MultiModelApiConfig, refresh: bool) -> Result<(), String> {
+    let pools = agent_provider_bridge::pools(refresh).await?;
+    let sources = pools.iter().map(|pool| format!("agent2api:{}", pool.provider)).collect::<BTreeSet<_>>();
+    config.accounts.retain(|route| !route.source.starts_with("agent2api:") || sources.contains(&route.source));
+    for pool in pools {
+        let source = format!("agent2api:{}", pool.provider);
+        let models = pool.models.iter().filter_map(|model| extension_model(&pool.provider, model)).collect();
+        if let Some(route) = config.accounts.iter_mut().find(|route| route.source == source) {
+            route.name = format!("{} 账号池 · {} 个启用账号", pool.provider, pool.count);
+            route.base_url = pool.base_url; route.api_key = pool.key;
+            merge_workbuddy_models(&mut route.models, models);
+        } else {
+            config.accounts.push(MultiModelAccount { id: format!("extension-{}", pool.provider), name: format!("{} 账号池 · {} 个启用账号", pool.provider, pool.count),
+                provider: pool.provider, auth_mode: "api_key".into(), base_url: pool.base_url, api_key: pool.key,
+                cli_path: String::new(), cli_app: String::new(), cli_profile: String::new(), credential_json: None, proxy_url: String::new(),
+                prefix: String::new(), priority: 0, headers: BTreeMap::new(), models, enabled: true, source });
+        }
+    }
+    Ok(())
+}
+
+async fn import_native_routes(config: &mut MultiModelApiConfig) -> Result<(),String> {
+    let mut identities = Vec::new();
+    for item in kiro_account::list_accounts_checked()? {
+        if !item.access_token.trim().is_empty() { identities.push(("kiro",item.id,item.email)); }
+    }
+    for item in github_copilot_account::list_accounts_checked()? {
+        if !item.github_access_token.trim().is_empty() { identities.push(("github-copilot",item.id,item.github_login)); }
+    }
+    let sources = identities.iter().map(|(provider,id,_)|format!("cle:{provider}:{id}")).collect::<BTreeSet<_>>();
+    config.accounts.retain(|route|!managed_provider_api::supported(&route.provider) || sources.contains(&route.source));
+    for (provider,id,name) in identities {
+        let source = format!("cle:{provider}:{id}");
+        let proxy = config.accounts.iter().find(|route|route.source==source).filter(|route|!route.proxy_url.trim().is_empty()).map(|route|route.proxy_url.clone()).unwrap_or_else(||config.upstream_proxy.clone());
+        let discovery = managed_provider_api::fetch_models(provider,&id,&proxy).await;
+        if let Some(route) = config.accounts.iter_mut().find(|route|route.source==source) {
+            route.name=format!("{provider} · {name}");
+            if let Ok(models)=discovery { merge_workbuddy_models(&mut route.models,models); }
+            continue;
+        }
+        let models = discovery.unwrap_or_default();
+        config.accounts.push(MultiModelAccount {id:format!("cle-{provider}-{id}"),name:format!("{provider} · {name}"),provider:provider.into(),
+            auth_mode:"oauth_json".into(),base_url:String::new(),api_key:String::new(),cli_path:String::new(),cli_app:String::new(),cli_profile:String::new(),
+            credential_json:None,proxy_url:String::new(),prefix:String::new(),priority:0,headers:BTreeMap::new(),models,enabled:true,source});
+    }
+    Ok(())
 }
 
 async fn import_workbuddy_routes(config: &mut MultiModelApiConfig) -> Result<(), String> {
@@ -4809,6 +5133,17 @@ pub async fn shutdown() {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn extension_models_preserve_real_capacity_and_isolate_names() {
+        let model = super::extension_model("trae", &serde_json::json!({"id":"current","capabilities":{"maxInputTokens":960000,"maxOutputTokens":128000,"supportsImages":true}})).unwrap();
+        assert_eq!(model.id, "trae/current");
+        assert_eq!(model.max_input_tokens, Some(960000));
+        assert_eq!(model.max_output_tokens, Some(128000));
+        assert_eq!(model.capabilities, ["text", "vision"]);
+        let unknown = super::extension_model("qoder", &serde_json::json!({"id":"unknown"})).unwrap();
+        assert_eq!(unknown.max_input_tokens, None);
+        assert!(super::extension_model("trae", &serde_json::json!({"id":""})).is_none());
+    }
+    #[test]
     fn workbuddy_sync_removes_revoked_models_and_preserves_user_selection() {
         let mut existing = vec![
             super::MultiModelDefinition {id:"workbuddy/kept".into(), alias:"my-model".into(), capabilities:vec!["text".into()], max_input_tokens:Some(8000), max_output_tokens:Some(4096), enabled:false},
@@ -4839,6 +5174,62 @@ mod tests {
     };
     use serde_json::json;
     use std::time::Duration;
+
+    fn quota_test_account(provider: &str, source: &str) -> MultiModelAccount {
+        serde_json::from_value(json!({
+            "id": source, "name": "fixture", "provider": provider,
+            "authMode": "oauth_json", "source": source,
+            "credentialJson": {"access_token": "fixture"}
+        })).unwrap()
+    }
+
+    #[test]
+    fn quota_refresh_respects_filter_ids_and_disabled_accounts() {
+        let mut config = default_config();
+        let enabled = quota_test_account("workbuddy", "cle:workbuddy:enabled");
+        let mut disabled = quota_test_account("workbuddy", "cle:workbuddy:disabled");
+        disabled.enabled = false;
+        config.accounts = vec![enabled, disabled, quota_test_account("gemini", "cle:gemini:fixture")];
+        let targets = super::quota_refresh_targets(&config, Some("workbuddy"), None);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id, "cle:workbuddy:enabled");
+        let ids = vec!["cle:workbuddy:disabled".into()];
+        assert_eq!(super::quota_refresh_targets(&config, Some("workbuddy"), Some(&ids))[0].id, ids[0]);
+        assert!(super::quota_refresh_targets(&config, Some("gemini"), Some(&ids)).is_empty());
+        assert!(super::quota_refresh_targets(&config, None, Some(&[])).is_empty());
+    }
+
+    #[test]
+    fn quota_refresh_does_not_claim_manual_api_keys_support_balance_queries() {
+        for (provider, source) in [("workbuddy", "cle:workbuddy:fixture"), ("antigravity", "cle:antigravity:fixture"), ("gemini", "cle:gemini:fixture"), ("claude-web", "cle:claude-web:fixture")] {
+            assert!(super::quota_refresh_supported(&quota_test_account(provider, source)));
+        }
+        let mut route = quota_test_account("xai", "manual");
+        assert!(super::quota_refresh_supported(&route));
+        route.auth_mode = "api_key".into();
+        assert!(!super::quota_refresh_supported(&route));
+        assert!(!super::quota_refresh_supported(&quota_test_account("custom", "manual")));
+    }
+
+    #[test]
+    fn removing_duplicate_openai_entry_preserves_compatible_routes_and_key_permissions() {
+        let mut config = default_config();
+        let mut route = quota_test_account("openai", "manual");
+        route.auth_mode = "api_key".into();
+        route.api_key = "fixture-key".into();
+        route.models = vec![model_definition("user-model".into())];
+        config.accounts = vec![route];
+        config.api_keys[0].account_ids = vec!["manual".into()];
+        normalize_config(&mut config).unwrap();
+        assert_eq!(config.accounts[0].provider, "custom");
+        assert_eq!(config.accounts[0].base_url, "https://api.openai.com/v1");
+        assert_eq!(config.accounts[0].api_key, "fixture-key");
+        assert_eq!(config.accounts[0].models[0].id, "user-model");
+        assert_eq!(config.api_keys[0].account_ids, ["manual"]);
+        assert!(!builtin_catalog().iter().any(|model| model.provider == "openai"));
+        normalize_config(&mut config).unwrap();
+        assert_eq!(config.accounts.len(), 1);
+    }
 
     #[test]
     fn clamps_retry_budget_to_safe_failover_range() {

@@ -104,6 +104,8 @@ export interface MultiModelUsageBucket {
   id: string;
   label: string;
   remainingPercent: number;
+  remaining?: number | null;
+  total?: number | null;
   resetAt?: string | null;
 }
 
@@ -111,7 +113,16 @@ export interface MultiModelAccountUsage {
   accountId: string;
   updatedAt?: string | null;
   status: string;
+  statusReason?: string | null;
   buckets: MultiModelUsageBucket[];
+}
+
+export interface MultiModelQuotaRefreshResult {
+  state: MultiModelApiState;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  errors: string[];
 }
 
 export interface XaiQuotaBucket {

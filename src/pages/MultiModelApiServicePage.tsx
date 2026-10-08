@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
+import { confirm, open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile } from '@tauri-apps/plugin-fs';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
-  Bot, Boxes, Check, CircleAlert, Copy, Database, Download, Eye, EyeOff, FileText,
+  Bot, Boxes, CalendarCheck, Check, CircleAlert, Copy, Database, Download, Eye, EyeOff, FileText,
   FileUp, Film, Globe, Image, KeyRound, Network, Plus, Power, RefreshCw, Route,
   Save, Settings2, ShieldCheck, Sparkles, Trash2, Users, X, Zap,
 } from 'lucide-react';
@@ -14,11 +14,18 @@ import { ClaudeIcon } from '../components/icons/ClaudeIcon';
 import { CodexIcon } from '../components/icons/CodexIcon';
 import { GeminiIcon } from '../components/icons/GeminiIcon';
 import { WorkbuddyIcon } from '../components/icons/WorkbuddyIcon';
+import { KiroIcon } from '../components/icons/KiroIcon';
+import copilotIcon from '../assets/icons/github-copilot.svg';
+import { KiroAccountsPage } from './KiroAccountsPage';
+import { GitHubCopilotAccountsPage } from './GitHubCopilotAccountsPage';
+import { ExtensionProviderPage, EXTENSION_PROVIDERS } from './ExtensionProviderPage';
+import { useWorkbuddyAccountStore } from '../stores/useWorkbuddyAccountStore';
 import * as accountService from '../services/accountService';
 import * as claudeService from '../services/claudeService';
 import * as codexService from '../services/codexService';
 import * as geminiService from '../services/geminiService';
 import { multiModelApiService } from '../services/multiModelApiService';
+import { canRefreshQuota, preserveModelMetadata, quotaStatusLabel } from '../utils/multiModelQuota';
 import { WorkbuddyAccountsPage } from './WorkbuddyAccountsPage';
 import type {
   ModelCapability, MultiModelAccount, MultiModelApiConfig, MultiModelApiState,
@@ -27,17 +34,19 @@ import type {
 } from '../types/multiModelApi';
 import './MultiModelApiServicePage.css';
 
-type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'doubao-work' | 'workbuddy';
+type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'doubao-work' | 'workbuddy' | 'native' | 'extensions';
 type AccountAddMode = 'oauth' | 'token' | 'api_key' | 'import';
 type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
 
 const PROVIDERS = [
   { id: 'xai', label: 'Grok / xAI', short: 'Grok', baseUrl: 'https://api.x.ai/v1' },
-  { id: 'openai', label: 'OpenAI', short: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
   { id: 'claude', label: 'Claude', short: 'Claude', baseUrl: 'https://api.anthropic.com' },
   { id: 'gemini', label: 'Gemini', short: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com' },
   { id: 'antigravity', label: 'Antigravity', short: 'Antigravity', baseUrl: '' },
   { id: 'workbuddy', label: 'WorkBuddy', short: 'WorkBuddy', baseUrl: '' },
+  { id: 'kiro', label: 'Kiro', short: 'Kiro', baseUrl: '' },
+  { id: 'github-copilot', label: 'GitHub Copilot', short: 'Copilot', baseUrl: '' },
+  ...EXTENSION_PROVIDERS.map(provider => ({ ...provider, short: provider.label, baseUrl: '' })),
   { id: 'doubao-work', label: '豆包工作 Agent', short: '豆包工作', baseUrl: '' },
   { id: 'doubao-seedance', label: 'Doubao Seedance', short: 'Seedance', baseUrl: 'https://doubao.happieapi.top' },
   { id: 'custom', label: '兼容 API', short: '自定义', baseUrl: '' },
@@ -61,18 +70,6 @@ const PROVIDER_MODELS: Record<string, MultiModelDefinition[]> = {
     ['gemini-3-flash', ['text', 'vision']],
     ['gemini-3.1-flash-image', ['text', 'vision', 'image']],
     ['veo-3.1-generate-preview', ['video']],
-  ].map(([id, capabilities]) => ({ id: id as string, alias: '', capabilities: capabilities as ModelCapability[], enabled: true })),
-  openai: [
-    ['gpt-6-astra', ['text', 'vision', 'reasoning']],
-    ['gpt-6-sol', ['text', 'vision', 'reasoning']],
-    ['gpt-6-luna', ['text', 'vision', 'reasoning']],
-    ['gpt-5.6-sol', ['text', 'vision', 'reasoning']],
-    ['gpt-5.6-terra', ['text', 'vision', 'reasoning']],
-    ['gpt-5.6-luna', ['text', 'vision', 'reasoning']],
-    ['gpt-5.5', ['text', 'vision', 'reasoning']],
-    ['gpt-5.4', ['text', 'vision', 'reasoning']],
-    ['gpt-5.4-mini', ['text', 'vision', 'reasoning']],
-    ['gpt-image-2', ['image']],
   ].map(([id, capabilities]) => ({ id: id as string, alias: '', capabilities: capabilities as ModelCapability[], enabled: true })),
   claude: [
     ['claude-opus-4-6', ['text', 'vision', 'reasoning']],
@@ -157,7 +154,9 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   const [state, setState] = useState<MultiModelApiState | null>(null);
   const [draft, setDraft] = useState<MultiModelApiConfig | null>(null);
   const [tab, setTab] = useState<Tab>('accounts');
-  const [operation, setOperation] = useState<string | null>('load');
+  const [nativeProvider, setNativeProvider] = useState<'kiro' | 'github-copilot'>('kiro');
+  const [extensionProvider, setExtensionProvider] = useState('qoder');
+  const [operation, setOperationState] = useState<string | null>('load');
   const [notice, setNotice] = useState<Notice>(null);
   const [copied, setCopied] = useState('');
   const [providerFilter, setProviderFilter] = useState('all');
@@ -173,9 +172,25 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   const refreshInFlight = useRef(false);
   const runtimeSnapshotRef = useRef('');
   const modelSyncSuccessRef = useRef('');
+  const operationRef = useRef(operation);
+  const operationEpoch = useRef(0);
+  const quotaRefreshInFlight = useRef(false);
+  const draftRef = useRef(draft);
+  const stateRef = useRef(state);
+  operationRef.current = operation;
+  draftRef.current = draft;
+  stateRef.current = state;
+  const setOperation = (next: string | null) => {
+    operationRef.current = next;
+    operationEpoch.current += 1;
+    setOperationState(next);
+  };
+  const hasDraftChanges = () => draftRef.current && stateRef.current
+    && JSON.stringify(draftRef.current) !== JSON.stringify(stateRef.current.config);
 
   const load = useCallback((quiet = false) => {
     if (loadInFlight.current) return loadInFlight.current;
+    if (quiet && operationRef.current) return Promise.resolve();
 
     const request = (async () => {
       setOperation('load');
@@ -184,7 +199,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         const next = await multiModelApiService.getState();
         modelSyncSuccessRef.current = next.modelSync.lastSuccessAt ?? '';
         setState(next);
-        setDraft(structuredClone(next.config));
+        if (!quiet || !hasDraftChanges()) setDraft(structuredClone(next.config));
       } catch (error) {
         setNotice({ tone: 'error', text: `读取服务状态失败：${String(error)}` });
       } finally {
@@ -228,10 +243,13 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         || !document.hasFocus()
         || loadInFlight.current
         || refreshInFlight.current
+        || operationRef.current
       ) return;
       refreshInFlight.current = true;
+      const epoch = operationEpoch.current;
       try {
         const next = await multiModelApiService.getState();
+        if (operationRef.current || epoch !== operationEpoch.current) return;
         // Runtime counters refresh independently of the configuration. Avoid
         // replacing the whole state tree when nothing visible changed; doing
         // so forced every account card and its glass filters to repaint.
@@ -247,7 +265,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         });
         if (runtimeSnapshot !== runtimeSnapshotRef.current) {
           const modelsChanged = modelSyncSuccessRef.current !== (next.modelSync.lastSuccessAt ?? '');
-          if (modelsChanged) {
+          if (modelsChanged && !hasDraftChanges()) {
             modelSyncSuccessRef.current = next.modelSync.lastSuccessAt ?? '';
             setDraft(structuredClone(next.config));
           }
@@ -307,7 +325,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     if (!draft || !state) return;
     if (!state.running && !draft.accounts.some((item) => item.enabled)) {
       setTab('accounts');
-      setNotice({ tone: 'error', text: '账号池为空。请先同步 C.le. 账号，或添加 Grok / OpenAI / Claude 等上游账号。' });
+      setNotice({ tone: 'error', text: '账号池为空。请先同步 C.le. 账号，或添加 Grok / Claude 等上游账号。' });
       return;
     }
     setOperation('toggle');
@@ -385,23 +403,34 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     }
   };
 
-  const refreshXaiAccounts = async (forceCredentials = false) => {
-    setOperation('xai-refresh');
-    setNotice({ tone: 'info', text: forceCredentials ? '正在刷新 Grok 登录凭据与全部账号额度…' : '正在刷新 Grok 多账号额度…' });
+  const refreshQuotas = async (provider = providerFilter, accountId?: string) => {
+    if (quotaRefreshInFlight.current) return;
+    quotaRefreshInFlight.current = true;
+    setOperation(accountId ? `quota:${accountId}` : 'quota');
+    setNotice({ tone: 'info', text: `正在查询${provider === 'all' ? '全部已启用账号' : providerLabel(provider)}额度，不会发送生成请求…` });
     try {
-      const next = await multiModelApiService.refreshXaiAccounts(forceCredentials);
-      setState(next);
-      setDraft(structuredClone(next.config));
-      const healthy = (next.xaiAccounts ?? []).filter((item) => item.status === 'normal').length;
-      setNotice({ tone: healthy ? 'success' : 'info', text: `Grok 账号刷新完成：${healthy}/${next.xaiAccounts?.length ?? 0} 个可用` });
+      const result = await multiModelApiService.refreshQuotas(provider, accountId ? [accountId] : undefined);
+      if (provider === 'workbuddy' || provider === 'all') void useWorkbuddyAccountStore.getState().fetchAccounts();
+      const dirty = hasDraftChanges();
+      setState(result.state);
+      if (!dirty) setDraft(structuredClone(result.state.config));
+      setNotice({ tone: result.failed ? 'error' : result.succeeded && !result.errors.length ? 'success' : 'info', text: `额度刷新：成功 ${result.succeeded} 个${result.failed ? `，失败 ${result.failed} 个（保留上次缓存）` : ''}${result.skipped ? `；${result.skipped} 个账号无额度接口，已跳过` : ''}${result.errors.length ? `；${result.errors[0]}` : ''}` });
     } catch (error) {
-      setNotice({ tone: 'error', text: `刷新 Grok 账号失败：${String(error)}` });
+      setNotice({ tone: 'error', text: `额度刷新未完成：${String(error)}` });
     } finally {
+      quotaRefreshInFlight.current = false;
       setOperation(null);
     }
   };
 
   const openAccount = (account?: MultiModelAccount, provider = 'xai') => {
+    const selected = account?.provider ?? provider;
+    if (EXTENSION_PROVIDERS.some(item => item.id === selected)) {
+      setExtensionProvider(selected); setTab('extensions'); return;
+    }
+    if (selected === 'kiro' || selected === 'github-copilot') {
+      setNativeProvider(selected); setTab('native'); return;
+    }
     if ((account?.provider ?? provider) === 'workbuddy') {
       setTab('workbuddy');
       return;
@@ -415,6 +444,11 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
 
   const changeProvider = (provider: string) => {
     if (!editing) return;
+    if (provider === 'kiro' || provider === 'github-copilot' || EXTENSION_PROVIDERS.some(item => item.id === provider)) {
+      setEditing(null);
+      openAccount(undefined, provider);
+      return;
+    }
     const preset = PROVIDERS.find((item) => item.id === provider);
     const models = structuredClone(PROVIDER_MODELS[provider] ?? []);
     setEditing({
@@ -461,7 +495,8 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         return;
       }
     }
-    const account = { ...current, credentialJson, models: parseModels(modelText) };
+    const models = preserveModelMetadata(parseModels(modelText), current.models);
+    const account = { ...current, credentialJson, models };
     const exists = draft.accounts.some((item) => item.id === account.id);
     const accounts = exists
       ? draft.accounts.map((item) => item.id === account.id ? account : item)
@@ -487,6 +522,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   };
 
   const runTest = async () => {
+    if (!await confirm('真实调用测试会消耗账号额度或积分，确定继续？', { title: '确认真实调用', kind: 'warning' })) return;
     setOperation('test');
     setTestResult(null);
     setNotice(null);
@@ -506,9 +542,9 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
 
   const runRepair = async () => {
     setOperation('repair');
-    setNotice({ tone: 'info', text: '正在检查配置、端口、sidecar、路由、模型目录与真实上游调用…' });
+    setNotice({ tone: 'info', text: '正在检查配置、端口、sidecar、路由与模型目录，不发送付费生成请求…' });
     try {
-      const report = await multiModelApiService.diagnoseAndRepair(true);
+      const report = await multiModelApiService.diagnoseAndRepair(false);
       setRepairReport(report);
       setState(report.state);
       setDraft(structuredClone(report.state.config));
@@ -543,6 +579,10 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   }), [accounts, availableModels, configuredProviders, draft]);
 
   const busy = operation !== null;
+  const usageById = useMemo(() => new Map(state?.accountUsages?.map((item) => [item.accountId, item])), [state?.accountUsages]);
+  const xaiUsageById = useMemo(() => new Map(state?.xaiAccounts?.map((item) => [item.accountId, item])), [state?.xaiAccounts]);
+  const dispatchById = useMemo(() => new Map(state?.routeDispatches?.map((item) => [item.accountId, item])), [state?.routeDispatches]);
+  const quotaRefreshable = visibleAccounts.some((account) => account.enabled && canRefreshQuota(account));
 
   if (!draft || !state) {
     if (notice?.tone === 'error') {
@@ -579,7 +619,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         <div className="page-tabs filter-tabs">
           {([
             ['overview', Settings2, '服务'], ['accounts', Users, '账号池'], ['models', Boxes, '模型'],
-            ['keys', KeyRound, 'API Keys'], ['routes', Route, '路线'], ['doubao-work', Bot, '豆包工作 Agent'], ['workbuddy', WorkbuddyIcon, 'WorkBuddy API'],
+            ['keys', KeyRound, 'API Keys'], ['routes', Route, '路线'], ['doubao-work', Bot, '豆包工作 Agent'], ['workbuddy', WorkbuddyIcon, 'WorkBuddy API'], ['native', Users, 'Kiro / Copilot'], ['extensions', CalendarCheck, '扩展账号 / 签到'],
           ] as const).map(([id, Icon, label]) => (
             <button key={id} type="button" className={`filter-tab${tab === id ? ' active' : ''}`} onClick={() => setTab(id)}>
               <Icon /><span>{label}</span>
@@ -589,7 +629,21 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
       </div>
 
       <main className="mm-api-content">
-        {tab === 'workbuddy' ? (
+        {tab === 'extensions' ? <ExtensionProviderPage initialProvider={extensionProvider} onSynced={next => { setState(next); setDraft(structuredClone(next.config)); }} /> : tab === 'native' ? (
+          <section className="mm-native-host">
+            <header className="mm-api-panel-head mm-workbuddy-heading">
+              <div><h1>Kiro / GitHub Copilot 账号接入</h1><p>在下方完成多账号登录，再同步到 API 账号池。模型目录按账号权限读取，凭证与额度由 C.le 托管；不会发送生成测试。</p></div>
+              <div className="mm-inline-actions">
+                <button className={`btn ${nativeProvider === 'kiro' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setNativeProvider('kiro')}><KiroIcon style={{width:18,height:18}} />Kiro</button>
+                <button className={`btn ${nativeProvider === 'github-copilot' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setNativeProvider('github-copilot')}>GitHub Copilot</button>
+                <button className="btn btn-secondary" onClick={() => void syncAccounts()} disabled={busy}><RefreshCw />接入 API / 同步账号和模型</button>
+                <button className="btn btn-secondary" onClick={() => void refreshQuotas(nativeProvider)} disabled={busy || !accounts.some(a => a.provider === nativeProvider)}><RefreshCw />刷新额度</button>
+              </div>
+            </header>
+            {notice && <div className={`mm-api-message ${notice.tone}`}><CircleAlert /><span>{notice.text}</span></div>}
+            <div className="mm-native-login-page">{nativeProvider === 'kiro' ? <KiroAccountsPage /> : <GitHubCopilotAccountsPage />}</div>
+          </section>
+        ) : tab === 'workbuddy' ? (
           <section className="mm-workbuddy-host" aria-label="WorkBuddy 多账号与每日积分">
             <header className="mm-api-panel-head mm-workbuddy-heading">
               <div>
@@ -597,6 +651,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
                 <p>先在下方登录多个账号，再同步到 API 账号池。使用同一个网关地址和 Key，调用 workbuddy/ 开头的模型；各账号分别扣除自己的积分。</p>
               </div>
               <div className="mm-inline-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => void refreshQuotas('workbuddy')} disabled={busy || !accounts.some((account) => account.provider === 'workbuddy' && account.enabled)}><RefreshCw className={operation === 'quota' ? 'spin' : ''} />刷新 WorkBuddy 额度</button>
                 <button type="button" className="btn btn-primary" onClick={() => void syncWorkbuddyAccounts()} disabled={busy}><RefreshCw className={operation === 'workbuddy-sync' ? 'spin' : ''} />接入 API / 同步账号和模型</button>
                 <button type="button" className="btn btn-secondary" onClick={() => { setProviderFilter('workbuddy'); setTab('accounts'); }}><Users />查看 API 账号池</button>
               </div>
@@ -644,7 +699,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
               <ShieldCheck className={operation === 'repair' ? 'spin' : ''} />全面检查 / 自动修复
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => void load()} disabled={busy}>
-              <RefreshCw className={operation === 'load' ? 'spin' : ''} />刷新
+              <RefreshCw className={operation === 'load' ? 'spin' : ''} />刷新状态
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => void runTest()} disabled={busy || !state.running}>
               <Zap className={operation === 'test' ? 'spin' : ''} />测试
@@ -699,14 +754,14 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             <header className="mm-api-panel-head">
               <div><h2>{providerFilter === 'all' ? '多账号池' : `${providerLabel(providerFilter)} 账号`}</h2><p>同一模型按独立游标严格轮询；仅跳过明确耗尽、冷却或失败的账号。</p></div>
               <div className="mm-inline-actions">
-                {(providerFilter === 'all' || providerFilter === 'xai') && <button type="button" className="btn btn-secondary" onClick={() => void refreshXaiAccounts()} disabled={busy}><RefreshCw className={operation === 'xai-refresh' ? 'spin' : ''} />刷新 Grok 额度</button>}
+                <button type="button" className="btn btn-secondary" onClick={() => void refreshQuotas()} disabled={busy || !quotaRefreshable} title="仅查询额度，不发送生成请求；无额度查询接口的账号会跳过"><RefreshCw className={operation === 'quota' ? 'spin' : ''} />{providerFilter === 'all' ? '刷新全部额度' : `刷新 ${providerLabel(providerFilter)} 额度`}</button>
                 <button type="button" className="btn btn-secondary" onClick={() => void syncAccounts()} disabled={busy}><RefreshCw className={operation === 'sync' ? 'spin' : ''} />同步 C.le. 账号</button>
                 <button type="button" className="btn btn-primary" onClick={() => openAccount(undefined, providerFilter === 'all' ? 'xai' : providerFilter)} disabled={busy}><Plus />添加账号</button>
               </div>
             </header>
             <div className="mm-account-grid">
               {visibleAccounts.map((account) => (
-                <AccountCard key={account.id} account={account} usage={state.accountUsages?.find((item) => item.accountId === account.id)} dispatch={state.routeDispatches?.find((item) => item.accountId === account.id)} xaiUsage={state.xaiAccounts?.find((item) => item.accountId === account.id)} onEdit={() => openAccount(account)} onToggle={() => void updateAccount({ ...account, enabled: !account.enabled })} onRemove={() => void removeAccount(account)} />
+                <AccountCard key={account.id} account={account} usage={usageById.get(account.id)} dispatch={dispatchById.get(account.id)} xaiUsage={xaiUsageById.get(account.id)} busy={busy} refreshing={operation === `quota:${account.id}`} onRefresh={() => void refreshQuotas(account.provider, account.id)} onEdit={() => openAccount(account)} onToggle={() => void updateAccount({ ...account, enabled: !account.enabled })} onRemove={() => void removeAccount(account)} />
               ))}
               {!visibleAccounts.length && (
                 <Empty icon={<Users />} title={providerFilter === 'all' ? '账号池还是空的' : `尚未配置 ${providerLabel(providerFilter)}`} text="同步已有 OAuth / API Key 账号，或手动添加上游凭证。">
@@ -743,7 +798,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
               <div className="head"><span>厂商</span><span>Model ID</span><span>能力</span><span>状态 / 操作</span></div>
               {visibleCatalog.map((item) => {
                 const configured = configuredProviders.has(item.provider);
-                const available = availableModels.has(item.id) || configured;
+                const available = availableModels.has(item.id);
                 return (
                   <div className="row" key={`${item.provider}:${item.id}`}>
                     <span className={`provider ${item.provider}`}><ProviderIcon provider={item.provider} />{providerLabel(item.provider)}</span>
@@ -793,6 +848,8 @@ function ProviderIcon({ provider }: { provider: string }) {
   if (provider === 'codex') return <CodexIcon size={18} />;
   if (provider === 'antigravity') return <AntigravityIcon style={{ width: 18, height: 18 }} />;
   if (provider === 'workbuddy') return <WorkbuddyIcon style={{ width: 18, height: 18 }} />;
+  if (provider === 'kiro') return <KiroIcon style={{width:18,height:18}} />;
+  if (provider === 'github-copilot') return <img src={copilotIcon} width={18} height={18} alt="" />;
   if (provider === 'openai') return <Sparkles />;
   if (provider === 'doubao-work') return <Bot />;
   if (provider === 'doubao-seedance') return <Film />;
@@ -953,13 +1010,16 @@ function Overview({ config, setConfig, onSave, busy, testModel, setTestModel, te
 
 function formatQuotaNumber(value?: number | null) {
   if (value == null || !Number.isFinite(value)) return '-';
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-function AccountCard({ account, usage, dispatch, xaiUsage, onEdit, onToggle, onRemove }: { account: MultiModelAccount; usage?: MultiModelAccountUsage; dispatch?: MultiModelRouteDispatch; xaiUsage?: XaiAccountUsage; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
+function AccountCard({ account, usage, dispatch, xaiUsage, busy, refreshing, onRefresh, onEdit, onToggle, onRemove }: { account: MultiModelAccount; usage?: MultiModelAccountUsage; dispatch?: MultiModelRouteDispatch; xaiUsage?: XaiAccountUsage; busy: boolean; refreshing: boolean; onRefresh: () => void; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
   const capabilities = new Set(account.models.flatMap((item) => item.capabilities));
+  const reason = xaiUsage?.statusReason ?? usage?.statusReason;
+  const statusLabel = quotaStatusLabel(account, usage, xaiUsage);
+  const updatedAt = xaiUsage?.updatedAt ?? usage?.updatedAt;
   return <article className={`mm-account${account.enabled ? '' : ' disabled'}`}>
-    <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{xaiUsage?.email || account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'doubao-work' ? '豆包工作本机 CLI' : account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}{xaiUsage?.plan ? ` · ${xaiUsage.plan}` : ''}</p></div><button type="button" className={`mm-account-state${account.enabled && (!xaiUsage || xaiUsage.status === 'normal') ? ' enabled' : ''}`} onClick={onToggle}>{!account.enabled ? '停用' : xaiUsage?.status === 'reauth_required' ? '需重登' : xaiUsage?.status === 'error' ? '异常' : '可用'}</button></div>
+    <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{xaiUsage?.email || account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'doubao-work' ? '豆包工作本机 CLI' : account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}{xaiUsage?.plan ? ` · ${xaiUsage.plan}` : ''}</p></div><button type="button" className={`mm-account-state${statusLabel === '已启用' ? ' enabled' : ''}`} onClick={onToggle} disabled={busy} title="启用 / 停用账号；额度状态不代表真实调用测试结果">{statusLabel}</button></div>
     {account.provider === 'xai' && account.authMode === 'oauth_json' && <div className="mm-xai-quota">
       {xaiUsage?.buckets?.length ? xaiUsage.buckets.slice(0, 4).map((bucket) => {
         const usedPercent = Math.max(0, Math.min(100, bucket.usedPercent ?? (bucket.used != null && bucket.total ? bucket.used / bucket.total * 100 : 0)));
@@ -967,26 +1027,28 @@ function AccountCard({ account, usage, dispatch, xaiUsage, onEdit, onToggle, onR
           <span><b>{bucket.label}</b><em>{bucket.remaining != null && bucket.total != null ? `剩 ${formatQuotaNumber(bucket.remaining)} / ${formatQuotaNumber(bucket.total)}` : `剩余 ${formatQuotaNumber(100 - usedPercent)}% · 已用 ${formatQuotaNumber(usedPercent)}%`}</em></span>
           <i><u style={{ width: `${100 - usedPercent}%` }} /></i>
         </div>;
-      }) : <p className={xaiUsage?.status === 'error' || xaiUsage?.status === 'reauth_required' ? 'error' : ''}>{xaiUsage?.statusReason || '额度尚未刷新'}</p>}
+      }) : <p>额度尚未刷新</p>}
       {xaiUsage?.hasGrokCodeAccess != null && <small>Grok Code：{xaiUsage.hasGrokCodeAccess ? '可用' : '未开通'}</small>}
     </div>}
     {account.provider !== 'xai' && usage && <div className="mm-xai-quota mm-provider-quota">
       {usage.buckets.length ? usage.buckets.slice(0, 5).map((bucket) => {
         const remaining = Math.max(0, Math.min(100, bucket.remainingPercent));
         return <div className="mm-xai-quota-row" key={bucket.id} title={bucket.resetAt ? `北京时间重置：${new Date(bucket.resetAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : undefined}>
-          <span><b>{bucket.label}</b><em>剩余 {remaining}% · 已用 {100 - remaining}%</em></span>
-          <i><u style={{ width: `${remaining}%` }} /></i>
+          <span><b>{bucket.label}</b><em>{bucket.remaining != null ? bucket.total != null ? `剩 ${formatQuotaNumber(bucket.remaining)} / ${formatQuotaNumber(bucket.total)}` : `剩 ${formatQuotaNumber(bucket.remaining)}` : `剩余 ${remaining}% · 已用 ${100 - remaining}%`}</em></span>
+          {bucket.remainingPercent >= 0 && <i><u style={{ width: `${remaining}%` }} /></i>}
         </div>;
-      }) : <p>当前账号暂无额度缓存，请先在对应账号页手动刷新。</p>}
-      {usage.updatedAt && <small>更新时间：{new Date(usage.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</small>}
+      }) : <p>暂无额度缓存，可点击下方刷新额度。</p>}
     </div>}
+    {account.provider !== 'xai' && !usage && <p className="mm-quota-hint">{canRefreshQuota(account) ? '尚未查询额度，点击下方刷新。' : '该凭证没有额度查询接口，请到供应商后台查看。'}</p>}
+    {reason && <p className="mm-quota-error" title={reason}>额度查询未完成：{reason}{updatedAt ? '（显示上次缓存）' : ''}</p>}
+    {updatedAt && <small className="mm-quota-updated">上次成功更新：{new Date(updatedAt).toLocaleString('zh-CN', { hour12: false })}</small>}
     <div className="mm-account-models"><strong>{account.models.length || '自动'} 个模型</strong><span>{[...capabilities].map((cap) => <em key={cap}>{cap}</em>)}</span></div>
     <div className="mm-account-routing-stat" title={dispatch?.lastSelectedAt ? `最近调度：${new Date(dispatch.lastSelectedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : undefined}>
       <span>本次运行调度 <b>{dispatch?.selected ?? 0}</b> 次</span>
       {dispatch && <em>成功 {dispatch.succeeded} · 失败 {dispatch.failed}{dispatch.lastModel ? ` · ${dispatch.lastModel}` : ''}</em>}
     </div>
     <code>{account.provider === 'doubao-work' ? account.cliPath || '豆包工作 CLI' : account.baseUrl || 'CLIProxy native endpoint'}</code>
-    <footer><span>{account.source === 'local:doubao-work' ? '本机豆包工作账号' : account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span><button type="button" onClick={onEdit}>{account.provider === 'workbuddy' ? '管理 / 登录' : '编辑'}</button><button type="button" className="trash" onClick={onRemove} aria-label="删除账号"><Trash2 /></button></footer>
+    <footer><span>{account.source === 'local:doubao-work' ? '本机豆包工作账号' : account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span>{canRefreshQuota(account) && <button type="button" onClick={onRefresh} disabled={busy} title="仅查询额度，不消耗生成积分" aria-label={`刷新 ${account.name} 额度`}><RefreshCw className={refreshing ? 'spin' : ''} />刷新额度</button>}<button type="button" onClick={onEdit} disabled={busy}>{account.provider === 'workbuddy' ? '管理 / 登录' : '编辑'}</button><button type="button" className="trash" onClick={onRemove} disabled={busy} aria-label="删除账号"><Trash2 /></button></footer>
   </article>;
 }
 
@@ -1751,7 +1813,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
 
         {addMode === 'token' && (
           <div className="mm-add-section wide">
-            <p className="section-desc">{isXai ? '支持官方 Grok CLI auth.json、Sub2API 导出 JSON、OAuth Token JSON，也支持账号商常用的“账号 + 密码 + RT”逐行批量格式。只有 refresh_token 也可以，导入后会自动交换 access_token 并检测额度。' : 'Token / JSON 会按供应商分别导入：Codex、Gemini、Claude、Antigravity 走各自账号模块；OpenAI、自定义则直接作为 OAuth credential 写入多模型代理。'}</p>
+            <p className="section-desc">{isXai ? '支持官方 Grok CLI auth.json、Sub2API 导出 JSON、OAuth Token JSON，也支持账号商常用的“账号 + 密码 + RT”逐行批量格式。只有 refresh_token 也可以，导入后会自动交换 access_token 并检测额度。' : 'Token / JSON 会按供应商分别导入：Gemini、Claude、Antigravity 走各自账号模块；自定义凭证直接写入多模型代理。Codex / OpenAI 请使用外面的独立服务。'}</p>
             <label><span>{isXai ? 'Grok / Sub2API 账号、Token 或 JSON' : `${providerLabel(account.provider)} Token / JSON`}</span><textarea value={credentialText} onChange={(event) => setCredentialText(event.target.value)} rows={8} placeholder={isXai ? '每行一个：email@example.com----账号密码----rt_xxx\n也支持 |、Tab、:: 分隔，或直接粘贴 Sub2API / Grok CLI JSON' : isCodex ? '{"tokens":{"access_token":"...","refresh_token":"..."}}' : `{"type":"${account.provider}","access_token":"...","refresh_token":"..."}`} /></label>
             <button type="button" className="btn btn-primary btn-full" onClick={() => void handleTokenSubmit()} disabled={disabled || !credentialText.trim()}><Download size={16} />导入</button>
           </div>

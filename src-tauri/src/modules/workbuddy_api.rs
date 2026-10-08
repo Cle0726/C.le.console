@@ -116,7 +116,7 @@ async fn serve_credentials(mut socket: TcpStream, bridge: CredentialBridge) -> R
         || account_id.is_empty()
         || !account_id
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '~')
     {
         (400, json!({"error": "invalid credential request"}))
     } else if authorization != format!("Bearer {}", bridge.key(account_id)) {
@@ -125,9 +125,14 @@ async fn serve_credentials(mut socket: TcpStream, bridge: CredentialBridge) -> R
             json!({"error": "credential bridge authentication failed"}),
         )
     } else {
-        match current_account(account_id, target.ends_with("?refresh=1")).await {
-            Ok(account) => (200, credential_payload(&account)),
-            Err(error) => (401, json!({"error": error})),
+        let payload = if let Some((provider, id)) = account_id.split_once('~') {
+            crate::modules::managed_provider_api::credential_payload(provider, id, target.ends_with("?refresh=1")).await
+        } else {
+            current_account(account_id, target.ends_with("?refresh=1")).await.map(|account| credential_payload(&account))
+        };
+        match payload {
+            Ok(payload) => (200, payload),
+            Err(_) => (401, json!({"error": "登录凭证不可用，请在 C.le 账号页刷新或重新登录"})),
         }
     };
     let body = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
@@ -215,12 +220,14 @@ pub fn credit_bucket(account: &WorkbuddyAccount) -> Option<MultiModelUsageBucket
     }
     active.then(|| MultiModelUsageBucket {
         id: "credits".into(),
-        label: format!("积分：{remaining:.2} / {total:.2}"),
+        label: "可用积分".into(),
         remaining_percent: if total > 0.0 {
             (remaining / total * 100.0).clamp(0.0, 100.0).round() as i32
         } else {
             0
         },
+        remaining: Some(remaining),
+        total: Some(total),
         reset_at: None,
     })
 }
@@ -481,7 +488,9 @@ mod tests {
             ]}}}}}
         })).unwrap();
         let bucket = credit_bucket(&account).unwrap();
-        assert_eq!(bucket.label, "积分：499.97 / 600.00");
+        assert_eq!(bucket.label, "可用积分");
+        assert_eq!(bucket.remaining, Some(499.97));
+        assert_eq!(bucket.total, Some(600.0));
         assert_eq!(bucket.remaining_percent, 83);
     }
 

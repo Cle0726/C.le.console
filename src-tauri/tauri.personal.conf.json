@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "externalBin": [
+      "../sidecars/cle-cliproxy/bin/cle-cliproxy",
+      "../sidecars/jimeng-api/bin/jimeng-api",
+      "../sidecars/agent2api/bin/cle-agent-bridge"
+    ],
+    "resources": {
+      "../sidecars/agent2api/LICENSE": "licenses/Agent2API-LICENSE",
+      "../sidecars/agent2api/NOTICE.md": "licenses/Agent2API-NOTICE.md"
+    }
+  }
+}

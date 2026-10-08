@@ -468,6 +468,7 @@ pub fn run() {
 
             // 存储全局 AppHandle
             let _ = APP_HANDLE.set(app.handle().clone());
+            tauri::async_runtime::spawn(modules::agent_provider_bridge::start_if_configured());
 
             #[cfg(target_os = "macos")]
             native_liquid_glass::apply_to_main_window(&app.handle());
@@ -1071,6 +1072,8 @@ pub fn run() {
             commands::codex::codex_local_access_chat_test_stream,
             // Multi-model API proxy service
             commands::multi_model_api::multi_model_api_get_state,
+            commands::multi_model_api::extension_provider_request,
+            commands::multi_model_api::multi_model_api_sync_extension_accounts,
             commands::multi_model_api::multi_model_api_open_window,
             commands::multi_model_api::multi_model_api_save_config,
             commands::multi_model_api::multi_model_api_set_enabled,
@@ -1086,6 +1089,7 @@ pub fn run() {
             commands::multi_model_api::multi_model_api_import_local_xai_accounts,
             commands::multi_model_api::multi_model_api_import_xai_accounts_json,
             commands::multi_model_api::multi_model_api_refresh_xai_accounts,
+            commands::multi_model_api::multi_model_api_refresh_quotas,
             commands::multi_model_api::multi_model_api_generic_oauth_start,
             commands::multi_model_api::multi_model_api_generic_oauth_exchange,
             // Jimeng / Dreamina image and video API service
@@ -1485,6 +1489,7 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::Exit) { modules::agent_provider_bridge::stop(); }
         #[cfg(target_os = "macos")]
         {
             match event {

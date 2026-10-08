@@ -251,4 +251,6 @@ system_profiler SPHardwareDataType
 项目代码按 **CC BY-NC-SA 4.0** 提供，详见 [LICENSE](LICENSE)。第三方目录遵循其各自许可证：
 
 - `sidecars/cle-cliproxy/cdk/CLIProxyAPI`：目录内 MIT License
+- Kiro / Copilot 适配：`sidecars/cle-cliproxy/licenses/CLIProxyAPIPlus-LICENSE`（MIT）
+- 可选个人扩展版：`sidecars/agent2api/LICENSE`（MIT 条款 + 非商业使用限制，**不是纯 MIT**）。默认构建不包含它；带该组件的个人包不能用于商业分发。接入渠道与签到说明见 [个人扩展版](docs/personal-extension-providers.md)。
 - `third_party/jimeng-api`：目录内独立许可证

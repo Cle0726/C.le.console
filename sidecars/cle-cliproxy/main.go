@@ -2188,6 +2188,9 @@ func newSidecarRuntime(ctx context.Context, configPath string, cfg *config.Confi
 	if stringSliceContainsFold(m.Providers, "workbuddy") {
 		manager.RegisterExecutor(newWorkbuddyExecutor(cfg))
 	}
+	for _, provider := range []string{"kiro", "github-copilot"} {
+		if stringSliceContainsFold(m.Providers, provider) { manager.RegisterExecutor(newManagedNativeExecutor(provider,cfg)) }
+	}
 
 	return &sidecarRuntime{manager: manager, service: service, cancel: cancel, done: done}, nil
 }

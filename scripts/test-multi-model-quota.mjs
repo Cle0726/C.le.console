@@ -1,0 +1,32 @@
+// Offline fixtures only. This script never loads tokens or calls an upstream.
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
+
+const source = readFileSync(new URL('../src/utils/multiModelQuota.ts', import.meta.url), 'utf8');
+const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } });
+const { canRefreshQuota, quotaStatusLabel, preserveModelMetadata } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+const account = { provider: 'workbuddy', authMode: 'oauth_json', source: 'cle:workbuddy:fixture', enabled: true };
+const usage = { status: 'normal', buckets: [{ remainingPercent: 50, remaining: 100, total: 200 }] };
+assert.equal(canRefreshQuota(account), true);
+for (const provider of ['kiro', 'github-copilot']) assert.equal(canRefreshQuota({ ...account, provider, source: `cle:${provider}:fixture` }), true);
+for (const provider of ['qoder', 'trae', 'raccoon', 'catpaw', 'autoclaw', 'autoclaw-intl', 'accio', 'loomy']) assert.equal(canRefreshQuota({ ...account, provider, source: `agent2api:${provider}`, authMode: 'api_key' }), true);
+assert.equal(canRefreshQuota({ ...account, provider: 'custom', source: 'manual' }), false);
+assert.equal(canRefreshQuota({ ...account, provider: 'xai', source: 'manual', authMode: 'api_key' }), false);
+assert.equal(quotaStatusLabel(account), '待刷新');
+assert.equal(quotaStatusLabel(account, usage), '已启用');
+assert.equal(quotaStatusLabel(account, { ...usage, statusReason: 'offline fixture' }), '刷新异常');
+assert.equal(quotaStatusLabel(account, { ...usage, status: 'login_required' }), '需重登');
+assert.equal(quotaStatusLabel(account, { ...usage, buckets: [{ remainingPercent: 0, remaining: 0 }] }), '额度已用完');
+assert.equal(quotaStatusLabel(account, { ...usage, buckets: [{ remainingPercent: 0, remaining: 0.03 }] }), '已启用');
+assert.equal(quotaStatusLabel({ ...account, enabled: false }, usage), '停用');
+assert.equal(quotaStatusLabel({ ...account, provider: 'custom', source: 'manual' }), '已启用');
+assert.equal(quotaStatusLabel(account, undefined, { status: 'pending', buckets: [] }), '待授权');
+assert.equal(quotaStatusLabel(account, undefined, { status: 'normal', buckets: [{ remaining: 0, total: 2 }] }), '额度已用完');
+const [model] = preserveModelMetadata([{ id: 'fixture', alias: 'new', enabled: true, capabilities: ['vision'] }], [{ id: 'fixture', enabled: false, maxInputTokens: 1000000, maxOutputTokens: 128000 }]);
+assert.equal(model.maxInputTokens, 1000000);
+assert.equal(model.maxOutputTokens, 128000);
+assert.equal(model.enabled, false);
+assert.equal(model.alias, 'new');
+assert.deepEqual(model.capabilities, ['vision']);
+console.log('28 offline quota / model editor checks passed; no upstream calls.');

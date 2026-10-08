@@ -536,7 +536,7 @@ fn set_callback_result_for_login(
     }
 }
 
-fn extract_profile_arn_from_account(account: &KiroAccount) -> Option<String> {
+pub(crate) fn extract_profile_arn_from_account(account: &KiroAccount) -> Option<String> {
     extract_profile_arn(
         account.kiro_auth_token_raw.as_ref(),
         account.kiro_profile_raw.as_ref(),
