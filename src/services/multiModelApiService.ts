@@ -38,6 +38,10 @@ export interface MultiModelGenericOAuthExchangeRequest {
 export const multiModelApiService = {
   extensionRequest: <T = Record<string, unknown>>(method: string, path: string, body?: unknown) =>
     invoke<T>('extension_provider_request', { method, path, body: body ?? null }),
+  startExtensionLogin: (provider: string, edition: string, name: string) =>
+    invoke<{ state: string; authUrl: string; hosted: boolean }>('extension_provider_login_start', { provider, edition, name }),
+  openExtensionLogin: (state: string) => invoke<void>('extension_provider_login_open', { state }),
+  finishExtensionLogin: (state: string, cancel = false) => invoke<void>('extension_provider_login_finish', { state, cancel }),
   syncExtensionAccounts: () => invoke<MultiModelApiState>('multi_model_api_sync_extension_accounts'),
   openWindow: () => invoke<void>('multi_model_api_open_window'),
   getState: () => invoke<MultiModelApiState>('multi_model_api_get_state'),

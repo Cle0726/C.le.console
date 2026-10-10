@@ -15,6 +15,7 @@ import { useProviderAccountsPage } from '../hooks/useProviderAccountsPage';
 import { WorkbuddyCheckinModal } from '../components/codebuddy-suite/CodebuddySuiteCheckinModal';
 import { CodebuddySuiteAccountsSharedView, type CodebuddySuiteAccountsPlatformConfig } from '../components/codebuddy-suite/CodebuddySuiteAccountsSharedView';
 import { compareCurrentAccountFirst } from '../utils/currentAccountSort';
+import { WorkbuddyDataActions } from '../components/codebuddy-suite/WorkbuddyDataActions';
 
 const WORKBUDDY_FLOW_NOTICE_COLLAPSED_KEY = 'agtools.workbuddy.flow_notice_collapsed';
 const WORKBUDDY_CURRENT_ACCOUNT_ID_KEY = 'agtools.workbuddy.current_account_id';
@@ -135,6 +136,7 @@ export function WorkbuddyAccountsPage({ embedded = false }: { embedded?: boolean
           onTabChange={setActiveTab}
         />
       )}
+      {(embedded || activeTab === 'overview') && <WorkbuddyDataActions ids={store.accounts.map(account => account.id)} onImported={store.fetchAccounts} />}
       {!embedded && activeTab === 'instances' ? (
         <WorkbuddyInstancesContent accountsForSelect={accountsForInstances} />
       ) : (

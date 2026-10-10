@@ -1,5 +1,6 @@
 pub mod account;
 pub mod agent_provider_bridge;
+pub mod extension_login;
 pub mod account_index_repair;
 pub mod antigravity_credential;
 pub mod antigravity_legacy_instance;

@@ -891,28 +891,17 @@ pub fn update_account_tags(
 }
 
 pub fn import_from_json(json_content: &str) -> Result<Vec<WorkbuddyAccount>, String> {
-    if let Ok(account) = serde_json::from_str::<WorkbuddyAccount>(json_content) {
-        let saved = upsert_account_record(account)?;
-        return Ok(vec![saved]);
-    }
-
-    if let Ok(accounts) = serde_json::from_str::<Vec<WorkbuddyAccount>>(json_content) {
-        let mut result = Vec::new();
-        for account in accounts {
-            let saved = upsert_account_record(account)?;
-            result.push(saved);
-        }
-        return Ok(result);
-    }
-
-    if let Ok(value) = serde_json::from_str::<Value>(json_content) {
-        return import_from_json_value(value);
-    }
-
-    Err("无法解析 WorkBuddy JSON 导入内容".to_string())
+    if json_content.len() > 10 * 1024 * 1024 { return Err("账号备份超过 10MB，请分批导入".into()); }
+    let value = serde_json::from_str::<Value>(json_content.trim_start_matches('\u{feff}'))
+        .map_err(|_| "无法解析 WorkBuddy JSON 导入内容".to_string())?;
+    import_from_json_value(value)
 }
 
-fn import_from_json_value(value: Value) -> Result<Vec<WorkbuddyAccount>, String> {
+fn parse_import_records(value: Value) -> Result<Vec<(WorkbuddyOAuthCompletePayload, Option<WorkbuddyAccount>)>, String> {
+    if let Some(format) = value.get("format").and_then(Value::as_str) {
+        if format != "cle-workbuddy-accounts" { return Err("这不是 WorkBuddy 账号备份".into()); }
+        if value.get("schemaVersion").and_then(Value::as_u64) != Some(1) { return Err("不支持此备份版本，请升级后导入".into()); }
+    }
     let items = match value {
         Value::Array(items) => items,
         Value::Object(mut object) => {
@@ -935,8 +924,9 @@ fn import_from_json_value(value: Value) -> Result<Vec<WorkbuddyAccount>, String>
     if items.is_empty() {
         return Err("导入数组为空".to_string());
     }
+    if items.len() > 1000 { return Err("单次最多导入 1000 个账号，请分批导入".into()); }
     // Validate the whole batch before writing its first record.
-    let parsed = items
+    items
         .into_iter()
         .enumerate()
         .map(|(index, raw)| {
@@ -948,17 +938,29 @@ fn import_from_json_value(value: Value) -> Result<Vec<WorkbuddyAccount>, String>
                 serde_json::from_value::<WorkbuddyAccount>(raw).ok(),
             ))
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, String>>()
+}
+
+fn import_from_json_value(value: Value) -> Result<Vec<WorkbuddyAccount>, String> {
+    let parsed = parse_import_records(value)?;
     let mut imported = Vec::new();
     for (payload, snapshot) in parsed {
         let mut account = upsert_account(payload)?;
         if let Some(snapshot) = snapshot {
             account.tags = merge_string_list(account.tags, snapshot.tags);
             account.created_at = account.created_at.min(snapshot.created_at);
-            account.usage_updated_at = account.usage_updated_at.or(snapshot.usage_updated_at);
-            account.last_checkin_time = account.last_checkin_time.or(snapshot.last_checkin_time);
-            account.checkin_streak = account.checkin_streak.or(snapshot.checkin_streak);
-            account.checkin_rewards = account.checkin_rewards.or(snapshot.checkin_rewards);
+            // Quota fields above came from this snapshot; keep their matching timestamp.
+            account.usage_updated_at = snapshot.usage_updated_at.or(account.usage_updated_at);
+            if snapshot.last_checkin_time >= account.last_checkin_time {
+                account.last_checkin_time = snapshot.last_checkin_time.or(account.last_checkin_time);
+                account.checkin_streak = snapshot.checkin_streak.or(account.checkin_streak);
+                account.checkin_rewards = snapshot.checkin_rewards.or(account.checkin_rewards);
+            }
+            account.last_used = account.last_used.max(snapshot.last_used);
+            account.token_refreshed_at = snapshot.token_refreshed_at.or(account.token_refreshed_at);
+            account.token_refresh_last_error = snapshot.token_refresh_last_error;
+            account.quota_query_last_error = snapshot.quota_query_last_error;
+            account.quota_query_last_error_at = snapshot.quota_query_last_error_at;
             account = upsert_account_record(account)?;
         }
         imported.push(account);
@@ -1052,7 +1054,7 @@ fn payload_from_import_value(raw: Value) -> Result<WorkbuddyOAuthCompletePayload
         enterprise_name,
         access_token,
         refresh_token,
-        token_type: Some("Bearer".to_string()),
+        token_type: obj.get("token_type").or_else(|| obj.get("tokenType")).and_then(Value::as_str).map(str::to_string).or_else(|| Some("Bearer".to_string())),
         expires_at,
         domain,
         plan_type: obj
@@ -1082,8 +1084,8 @@ fn payload_from_import_value(raw: Value) -> Result<WorkbuddyOAuthCompletePayload
         auth_raw: obj.get("auth_raw").cloned(),
         profile_raw: obj.get("profile_raw").cloned(),
         usage_raw: obj.get("usage_raw").cloned(),
-        status: Some("normal".to_string()),
-        status_reason: None,
+        status: obj.get("status").and_then(Value::as_str).map(str::to_string).or_else(|| Some("normal".into())),
+        status_reason: obj.get("status_reason").and_then(Value::as_str).map(str::to_string),
     })
 }
 
@@ -1095,7 +1097,17 @@ pub fn export_accounts(account_ids: &[String]) -> Result<String, String> {
         .iter()
         .map(|id| load_account(id).ok_or_else(|| format!("导出失败，账号不存在或无法读取：{}", id)))
         .collect::<Result<_, _>>()?;
-    serde_json::to_string_pretty(&accounts).map_err(|e| format!("导出失败:{}", e))
+    serde_json::to_string_pretty(&serde_json::json!({
+        "format": "cle-workbuddy-accounts", "schemaVersion": 1,
+        "exportedAt": chrono::Utc::now().to_rfc3339(), "accounts": accounts,
+    })).map_err(|e| format!("导出失败:{}", e))
+}
+
+pub fn export_backup_file(path: &Path, account_ids: &[String]) -> Result<(), String> {
+    if !path.is_absolute() || !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("json")) {
+        return Err("请选择 JSON 备份文件的完整路径".into());
+    }
+    super::atomic_write::write_private_string_atomic(path, &export_accounts(account_ids)?)
 }
 
 pub fn get_default_workbuddy_data_dir() -> Option<PathBuf> {
@@ -1992,6 +2004,26 @@ mod management_tests {
     }
 
     #[test]
+    fn versioned_backup_and_legacy_array_are_supported_but_foreign_files_are_not() {
+        let mut account = sample("uid-a");
+        account.status = Some("login_required".into());
+        account.status_reason = Some("fixture expired".into());
+        account.last_checkin_time = Some(10);
+        account.checkin_streak = Some(3);
+        account.checkin_rewards = Some(json!({"points": 10}));
+        let records = json!([account]);
+        let parsed = parse_import_records(json!({"format":"cle-workbuddy-accounts", "schemaVersion":1, "accounts":records})).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].0.status.as_deref(), Some("login_required"));
+        assert_eq!(parsed[0].0.status_reason.as_deref(), Some("fixture expired"));
+        assert_eq!(parsed[0].1.as_ref().unwrap().checkin_streak, Some(3));
+        assert!(parse_import_records(records.clone()).is_ok());
+        assert!(parse_import_records(json!({"format":"another-provider", "schemaVersion":1, "accounts":records})).is_err());
+        assert!(parse_import_records(json!({"format":"cle-workbuddy-accounts", "schemaVersion":2, "accounts":records})).is_err());
+        assert!(parse_import_records(json!([{"id":"../../escape", "email":"unknown", "access_token":"fixture", "created_at":1, "last_used":2}])).is_err());
+    }
+
+    #[test]
     fn native_session_expiry_roundtrip_keeps_desktop_milliseconds_and_account_seconds() {
         let mut account = sample("uid-a");
         let expiry = now_ts() + 3600;
@@ -2038,6 +2070,15 @@ mod management_tests {
             .map(|account| account.id.clone())
             .collect::<Vec<_>>();
         let exported = export_accounts(&ids).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&exported).unwrap()["schemaVersion"], 1);
+        let backup_path = actual.join("private-backup.json");
+        export_backup_file(&backup_path, &ids).unwrap();
+        assert!(backup_path.is_file());
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&backup_path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        assert!(!actual.join("private-backup.json.bak").exists());
         let restored = import_from_json(&exported).unwrap();
         assert_eq!(restored.len(), 2);
         for account in &restored {
@@ -2057,6 +2098,17 @@ mod management_tests {
         assert!(import_from_json(&invalid_batch.to_string()).is_err());
         assert_eq!(list_accounts_checked().unwrap().len(), 2);
         assert!(export_accounts(&["missing-id".to_string()]).is_err());
+        let record = json!({"id":"../../outside", "uid":"uid-c", "email":"c@example.com", "access_token":"fixture", "created_at":1, "last_used":2,
+            "tags":["roundtrip"], "status":"login_required", "status_reason":"fixture expired", "last_checkin_time":123, "checkin_streak":4, "checkin_rewards":{"points":9}});
+        let full = import_from_json(&record.to_string()).unwrap().remove(0);
+        assert!(full.id.starts_with("workbuddy_"));
+        assert!(!full.id.contains('/'));
+        assert_eq!(full.status.as_deref(), Some("login_required"));
+        assert_eq!(full.checkin_streak, Some(4));
+        assert_eq!(full.checkin_rewards, Some(json!({"points":9})));
+        let roundtrip = import_from_json(&export_accounts(&[full.id.clone()]).unwrap()).unwrap().remove(0);
+        assert_eq!(roundtrip.last_checkin_time, full.last_checkin_time);
+        assert_eq!(roundtrip.status_reason, full.status_reason);
     }
 }
 

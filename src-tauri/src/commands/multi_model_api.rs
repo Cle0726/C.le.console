@@ -14,6 +14,19 @@ pub async fn extension_provider_request(method: String, path: String, body: Opti
 }
 
 #[tauri::command]
+pub async fn extension_provider_login_start(app: tauri::AppHandle, provider: String, edition: String, name: String) -> Result<Value, String> {
+    crate::modules::extension_login::start(app, provider, edition, name).await
+}
+#[tauri::command]
+pub async fn extension_provider_login_open(app: tauri::AppHandle, state: String) -> Result<(), String> {
+    crate::modules::extension_login::reopen(app, state).await
+}
+#[tauri::command]
+pub async fn extension_provider_login_finish(app: tauri::AppHandle, state: String, cancel: bool) -> Result<(), String> {
+    crate::modules::extension_login::finish(app, state, cancel).await
+}
+
+#[tauri::command]
 pub async fn multi_model_api_sync_extension_accounts() -> Result<MultiModelApiState, String> {
     multi_model_api::sync_extension_accounts().await
 }

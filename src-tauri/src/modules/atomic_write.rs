@@ -148,6 +148,37 @@ pub fn write_string_atomic(path: &Path, content: &str) -> Result<(), String> {
     write_string_atomic_internal(path, content, true)
 }
 
+/// Sensitive user-selected exports: private from creation, no extra plaintext .bak.
+pub fn write_private_string_atomic(path: &Path, content: &str) -> Result<(), String> {
+    let parent = path.parent().filter(|dir| dir.is_dir()).ok_or("备份目录不存在")?;
+    let temp = build_temp_file_path(parent, path, "private");
+    let result = (|| {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)] {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp).map_err(|_| "无法创建私密备份文件")?;
+        file.write_all(content.as_bytes()).map_err(|_| "备份写入失败，原文件未替换")?;
+        file.sync_all().map_err(|_| "备份同步失败，原文件未替换")?;
+        drop(file);
+        #[cfg(not(windows))]
+        fs::rename(&temp, path).map_err(|_| "备份替换失败，原文件保留")?;
+        #[cfg(windows)] {
+            use std::os::windows::ffi::OsStrExt;
+            use windows::{core::PCWSTR, Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH}};
+            let source: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
+            let target: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            unsafe { MoveFileExW(PCWSTR(source.as_ptr()), PCWSTR(target.as_ptr()), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) }
+                .map_err(|_| "备份替换失败，原文件保留")?;
+        }
+        Ok(())
+    })();
+    if result.is_err() { let _ = fs::remove_file(&temp); }
+    result
+}
+
 pub fn write_bytes_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("无法定位目标目录")?;
     fs::create_dir_all(parent).map_err(|e| format_io_error("创建目录", parent, &e))?;

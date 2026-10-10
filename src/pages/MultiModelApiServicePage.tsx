@@ -5,8 +5,8 @@ import { confirm, open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile } from '@tauri-apps/plugin-fs';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
-  Bot, Boxes, CalendarCheck, Check, CircleAlert, Copy, Database, Download, Eye, EyeOff, FileText,
-  FileUp, Film, Globe, Image, KeyRound, Network, Plus, Power, RefreshCw, Route,
+  Bot, Boxes, CalendarCheck, Check, ChevronDown, CircleAlert, Copy, Database, Download, Eye, EyeOff, FileText,
+  FileUp, Film, Globe, Image, KeyRound, MoreHorizontal, Network, Plus, Power, RefreshCw, Route,
   Save, Settings2, ShieldCheck, Sparkles, Trash2, Users, X, Zap,
 } from 'lucide-react';
 import { AntigravityIcon } from '../components/icons/AntigravityIcon';
@@ -35,6 +35,7 @@ import type {
 import './MultiModelApiServicePage.css';
 
 type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'doubao-work' | 'workbuddy' | 'native' | 'extensions';
+type MenuId = 'connect' | 'maintain' | 'accounts' | 'providers' | null;
 type AccountAddMode = 'oauth' | 'token' | 'api_key' | 'import';
 type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
 
@@ -168,6 +169,8 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   const [testPrompt, setTestPrompt] = useState('Reply with exactly: gateway-ok');
   const [testResult, setTestResult] = useState<MultiModelApiTestResult | null>(null);
   const [repairReport, setRepairReport] = useState<MultiModelRepairReport | null>(null);
+  const [openMenu, setOpenMenu] = useState<MenuId>(null);
+  const menuRootRef = useRef<HTMLDivElement | null>(null);
   const loadInFlight = useRef<Promise<void> | null>(null);
   const refreshInFlight = useRef(false);
   const runtimeSnapshotRef = useRef('');
@@ -212,6 +215,39 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     });
     return request;
   }, []);
+
+  useEffect(() => {
+    if (!openMenu) return;
+    const closeOnOutside = (event: MouseEvent) => {
+      const menu = event.target instanceof Element ? event.target.closest('.mm-menu') : null;
+      if (!menu || !menuRootRef.current?.contains(menu)) setOpenMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      const active = menuRootRef.current?.querySelector<HTMLElement>('.mm-menu.open');
+      if (event.key === 'Escape') {
+        setOpenMenu(null); active?.querySelector<HTMLButtonElement>('button')?.focus();
+      }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !active?.contains(document.activeElement)) return;
+      const items = Array.from(active.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
+      if (!items.length) return;
+      event.preventDefault();
+      const index = items.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : index < 0 ? (event.key === 'ArrowUp' ? items.length - 1 : 0) : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+      items[next].focus();
+    };
+    document.addEventListener('mousedown', closeOnOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [openMenu]);
+
+  const toggleMenu = (id: Exclude<MenuId, null>) => setOpenMenu((current) => current === id ? null : id);
+  const selectTab = (next: Tab) => {
+    setTab(next);
+    setOpenMenu(null);
+  };
 
   useEffect(() => {
     // A newly created standalone WebView can mount just before macOS grants it
@@ -603,8 +639,19 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   const baseUrl = state.baseUrl.replace('0.0.0.0', '127.0.0.1');
   const firstKey = draft.apiKeys.find((item) => item.enabled)?.key ?? 'YOUR_API_KEY';
 
+  const connectTabs = [
+    { id: 'workbuddy' as const, label: 'WorkBuddy', detail: '多账号登录后同步', Icon: WorkbuddyIcon },
+    { id: 'native' as const, label: 'Kiro / Copilot', detail: '官方登录态接入', Icon: Users },
+    { id: 'doubao-work' as const, label: '豆包工作', detail: '本机已登录账号', Icon: Bot },
+    { id: 'extensions' as const, label: '扩展账号 / 签到', detail: 'Qoder、Trae 等', Icon: CalendarCheck },
+  ];
+  const activeConnect = connectTabs.find((item) => item.id === tab);
+  const primaryProviders = PROVIDERS.filter((provider) => accounts.some((account) => account.provider === provider.id));
+  const extraProviders = PROVIDERS.filter((provider) => !accounts.some((account) => account.provider === provider.id));
+  const activeExtraProvider = extraProviders.find((provider) => provider.id === providerFilter);
+
   return (
-    <div className={`mm-api-page${standalone ? ' mm-api-page-standalone' : ''}`}>
+    <div className={`mm-api-page${standalone ? ' mm-api-page-standalone' : ''}`} ref={menuRootRef}>
       <div className="page-top-strip">
         <div className="page-top-strip-left">
           <span className="page-top-strip-label">API 服务</span>
@@ -618,13 +665,37 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         </div>
         <div className="page-tabs filter-tabs">
           {([
-            ['overview', Settings2, '服务'], ['accounts', Users, '账号池'], ['models', Boxes, '模型'],
-            ['keys', KeyRound, 'API Keys'], ['routes', Route, '路线'], ['doubao-work', Bot, '豆包工作 Agent'], ['workbuddy', WorkbuddyIcon, 'WorkBuddy API'], ['native', Users, 'Kiro / Copilot'], ['extensions', CalendarCheck, '扩展账号 / 签到'],
+            ['accounts', Users, '账号池'], ['models', Boxes, '模型'],
+            ['keys', KeyRound, 'API Keys'], ['routes', Route, '路线'], ['overview', Settings2, '服务'],
           ] as const).map(([id, Icon, label]) => (
-            <button key={id} type="button" className={`filter-tab${tab === id ? ' active' : ''}`} onClick={() => setTab(id)}>
+            <button key={id} type="button" className={`filter-tab${tab === id ? ' active' : ''}`} onClick={() => selectTab(id)}>
               <Icon /><span>{label}</span>
             </button>
           ))}
+          <div className={`mm-menu${openMenu === 'connect' ? ' open' : ''}`}>
+            <button
+              type="button"
+              className={`filter-tab mm-menu-trigger${activeConnect ? ' active' : ''}`}
+              aria-haspopup="menu"
+              aria-expanded={openMenu === 'connect'}
+              onClick={() => toggleMenu('connect')}
+            >
+              {activeConnect ? <activeConnect.Icon /> : <Plus />}
+              <span>{activeConnect?.label ?? '接入'}</span>
+              <ChevronDown />
+            </button>
+            {openMenu === 'connect' && (
+              <div className="mm-menu-panel" role="menu">
+                {connectTabs.map((item) => (
+                  <button key={item.id} type="button" role="menuitem" className={tab === item.id ? 'active' : ''} onClick={() => selectTab(item.id)}>
+                    <item.Icon />
+                    <span><b>{item.label}</b><small>{item.detail}</small></span>
+                    {tab === item.id && <Check />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -695,15 +766,27 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             </div>
           </div>
           <div className="mm-api-hero-actions">
-            <button type="button" className="btn btn-secondary mm-repair-trigger" onClick={() => void runRepair()} disabled={busy}>
-              <ShieldCheck className={operation === 'repair' ? 'spin' : ''} />全面检查 / 自动修复
+            <button type="button" className="btn btn-secondary mm-icon-btn" onClick={() => void load()} disabled={busy} aria-label="刷新状态" title="刷新状态">
+              <RefreshCw className={operation === 'load' ? 'spin' : ''} />
             </button>
-            <button type="button" className="btn btn-secondary" onClick={() => void load()} disabled={busy}>
-              <RefreshCw className={operation === 'load' ? 'spin' : ''} />刷新状态
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={() => void runTest()} disabled={busy || !state.running}>
-              <Zap className={operation === 'test' ? 'spin' : ''} />测试
-            </button>
+            <div className={`mm-menu${openMenu === 'maintain' ? ' open' : ''}`}>
+              <button type="button" className="btn btn-secondary mm-menu-trigger" aria-haspopup="menu" aria-expanded={openMenu === 'maintain'} onClick={() => toggleMenu('maintain')} disabled={busy}>
+                <ShieldCheck className={operation === 'repair' ? 'spin' : ''} /><span>维护</span><ChevronDown />
+              </button>
+              {openMenu === 'maintain' && (
+                <div className="mm-menu-panel mm-menu-panel-end" role="menu">
+                  <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); void runRepair(); }} disabled={busy}>
+                    <ShieldCheck /><span><b>全面检查 / 自动修复</b><small>检查配置、进程和路由</small></span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); void runTest(); }} disabled={busy || !state.running}>
+                    <Zap /><span><b>真实调用测试</b><small>会消耗额度，发送前仍会确认</small></span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); void copy(`${baseUrl}/v1`, 'url'); }}>
+                    {copied === 'url' ? <Check /> : <Copy />}<span><b>{copied === 'url' ? '地址已复制' : '复制网关地址'}</b><small>{baseUrl}/v1</small></span>
+                  </button>
+                </div>
+              )}
+            </div>
             <button type="button" className={`btn ${state.running ? 'btn-danger' : 'btn-primary'}`} onClick={() => void toggle()} disabled={busy}>
               <Power />{state.running ? '停止服务' : '启动服务'}
             </button>
@@ -723,19 +806,40 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         )}
 
         <section className="mm-provider-strip" aria-label="模型供应商">
-          <button type="button" className={providerFilter === 'all' ? 'active' : ''} onClick={() => setProviderFilter('all')}>
+          <button type="button" className={providerFilter === 'all' ? 'active' : ''} onClick={() => { setProviderFilter('all'); setOpenMenu(null); }}>
             <span className="mm-provider-icon all"><Network /></span>
             <b>全部</b><small>{summary.accounts} 个账号</small>
           </button>
-          {PROVIDERS.map((provider) => {
+          {primaryProviders.map((provider) => {
             const count = accounts.filter((item) => item.provider === provider.id).length;
             return (
-              <button key={provider.id} type="button" className={providerFilter === provider.id ? 'active' : ''} onClick={() => setProviderFilter(provider.id)}>
+              <button key={provider.id} type="button" className={providerFilter === provider.id ? 'active' : ''} onClick={() => { setProviderFilter(provider.id); setOpenMenu(null); }}>
                 <span className={`mm-provider-icon ${provider.id}`}><ProviderIcon provider={provider.id} /></span>
-                <b>{provider.short}</b><small>{count ? `${count} 个账号` : '未配置'}</small>
+                <b>{provider.short}</b><small>{count} 个账号</small>
               </button>
             );
           })}
+          {extraProviders.length > 0 && (
+            <div className={`mm-menu mm-provider-more${openMenu === 'providers' ? ' open' : ''}`}>
+              <button type="button" className={activeExtraProvider ? 'active' : ''} aria-haspopup="menu" aria-expanded={openMenu === 'providers'} onClick={() => toggleMenu('providers')}>
+                <span className={`mm-provider-icon ${activeExtraProvider?.id ?? 'all'}`}>
+                  {activeExtraProvider ? <ProviderIcon provider={activeExtraProvider.id} /> : <MoreHorizontal />}
+                </span>
+                <b>{activeExtraProvider?.short ?? '更多厂商'}</b>
+                <small>{activeExtraProvider ? '未配置' : `${extraProviders.length} 个未配置`}</small>
+              </button>
+              {openMenu === 'providers' && (
+                <div className="mm-menu-panel" role="menu">
+                  {extraProviders.map((provider) => (
+                    <button key={provider.id} type="button" role="menuitem" className={providerFilter === provider.id ? 'active' : ''} onClick={() => { setProviderFilter(provider.id); setOpenMenu(null); }}>
+                      <span className={`mm-provider-icon ${provider.id}`}><ProviderIcon provider={provider.id} /></span>
+                      <span><b>{provider.label}</b><small>未配置</small></span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         <section className="mm-api-summary-grid">
@@ -754,8 +858,19 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             <header className="mm-api-panel-head">
               <div><h2>{providerFilter === 'all' ? '多账号池' : `${providerLabel(providerFilter)} 账号`}</h2><p>同一模型按独立游标严格轮询；仅跳过明确耗尽、冷却或失败的账号。</p></div>
               <div className="mm-inline-actions">
-                <button type="button" className="btn btn-secondary" onClick={() => void refreshQuotas()} disabled={busy || !quotaRefreshable} title="仅查询额度，不发送生成请求；无额度查询接口的账号会跳过"><RefreshCw className={operation === 'quota' ? 'spin' : ''} />{providerFilter === 'all' ? '刷新全部额度' : `刷新 ${providerLabel(providerFilter)} 额度`}</button>
-                <button type="button" className="btn btn-secondary" onClick={() => void syncAccounts()} disabled={busy}><RefreshCw className={operation === 'sync' ? 'spin' : ''} />同步 C.le. 账号</button>
+                <button type="button" className="btn btn-secondary" onClick={() => void refreshQuotas()} disabled={busy || !quotaRefreshable} title="仅查询额度，不发送生成请求；无额度查询接口的账号会跳过"><RefreshCw className={operation === 'quota' ? 'spin' : ''} />{providerFilter === 'all' ? '刷新额度' : `刷新 ${providerLabel(providerFilter)}`}</button>
+                <div className={`mm-menu${openMenu === 'accounts' ? ' open' : ''}`}>
+                  <button type="button" className="btn btn-secondary mm-icon-btn" aria-label="更多账号操作" aria-haspopup="menu" aria-expanded={openMenu === 'accounts'} title="更多账号操作" onClick={() => toggleMenu('accounts')} disabled={busy}>
+                    <MoreHorizontal />
+                  </button>
+                  {openMenu === 'accounts' && (
+                    <div className="mm-menu-panel mm-menu-panel-end" role="menu">
+                      <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); void syncAccounts(); }} disabled={busy}>
+                        <RefreshCw className={operation === 'sync' ? 'spin' : ''} /><span><b>同步 C.le 账号</b><small>从本机已登录账号导入</small></span>
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <button type="button" className="btn btn-primary" onClick={() => openAccount(undefined, providerFilter === 'all' ? 'xai' : providerFilter)} disabled={busy}><Plus />添加账号</button>
               </div>
             </header>

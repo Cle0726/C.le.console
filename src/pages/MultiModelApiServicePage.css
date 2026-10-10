@@ -15,6 +15,98 @@
 
 .mm-api-page * { box-sizing: border-box; }
 
+.mm-menu { position: relative; display: inline-flex; min-width: 0; }
+.mm-menu.open { z-index: 60; }
+.mm-menu-trigger { display: inline-flex; align-items: center; gap: 6px; }
+.mm-menu-trigger > svg:last-child { width: 13px; height: 13px; opacity: .72; transition: transform 160ms ease; }
+.mm-menu.open > .mm-menu-trigger > svg:last-child { transform: rotate(180deg); }
+.mm-menu-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  display: grid;
+  inline-size: min(280px, calc(100vw - 48px));
+  min-inline-size: min(228px, calc(100vw - 48px));
+  max-width: min(320px, calc(100vw - 48px));
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-strong);
+  box-shadow: 0 18px 40px -24px rgba(15, 23, 42, .72);
+}
+.mm-menu-panel-end { right: 0; left: auto; }
+.mm-menu-panel > button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.mm-menu-panel > button:hover:not(:disabled),
+.mm-menu-panel > button:focus-visible,
+.mm-menu-panel > button.active { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.mm-menu-panel > button:focus-visible { outline: 1px solid var(--primary); outline-offset: -1px; }
+.mm-menu-panel > button:disabled { cursor: not-allowed; opacity: .45; }
+.mm-menu-panel > button > svg { width: 15px; height: 15px; color: var(--text-secondary); }
+.mm-menu-panel > button > span { display: grid; min-width: 0; }
+.mm-menu-panel b { font-size: 12px; font-weight: 680; line-height: 1.4; overflow-wrap: anywhere; }
+.mm-menu-panel small { color: var(--text-secondary); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+
+/* Shared responsive rules reset min-inline-size on every tab descendant, and
+ * the glass wrappers create stacking contexts. Keep popup geometry explicit
+ * and lift the owning section, not only the popup trapped inside it. */
+html body #root .mm-api-page .mm-menu-panel {
+  inline-size: min(280px, calc(100vw - 48px));
+  min-inline-size: min(228px, calc(100vw - 48px));
+}
+html body #root .mm-api-page .mm-api-top-tabs {
+  position: relative;
+  z-index: 30;
+  overflow: visible;
+}
+html body #root .mm-api-page .mm-api-content {
+  position: relative;
+  z-index: 1;
+}
+html body #root .mm-api-page :is(.mm-api-hero, .mm-provider-strip, .mm-api-panel):has(.mm-menu.open) {
+  z-index: 30;
+  overflow: visible;
+}
+/* Menu rows are flat hit targets inside one floating glass surface, not an
+ * extra glossy pill per item. This also keeps labels readable at narrow sizes. */
+html body #root .mm-api-page .mm-menu-panel > button {
+  display: grid !important;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  justify-content: start;
+  white-space: normal;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html body #root .mm-api-page .mm-menu-panel > button:is(:hover, :focus-visible, .active):not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 14%, transparent) !important;
+}
+html body #root .mm-api-page .mm-menu-panel > button::before,
+html body #root .mm-api-page .mm-menu-panel > button::after {
+  content: none !important;
+}
+.mm-icon-btn { width: 32px; padding: 0 !important; justify-content: center; }
+
 .mm-extension-host { display: grid; gap: 16px; min-width: 0; }
 .mm-extension-providers, .mm-extension-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .mm-extension-providers small { margin-left: 6px; color: var(--text-secondary); }
@@ -171,7 +263,7 @@
 .mm-inline-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .mm-api-hero-actions { flex-wrap: nowrap; }
 .mm-api-hero-actions .btn,
-.mm-inline-actions .btn { min-height: 30px; padding: 0 10px; border-radius: 9px; font-size: 12px; white-space: nowrap; }
+.mm-inline-actions .btn { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 10px; border-radius: 9px; font-size: 12px; white-space: nowrap; }
 .mm-api-hero-actions svg,
 .mm-inline-actions svg,
 .mm-api-panel-head .btn svg { width: 13px; height: 13px; }
@@ -205,7 +297,8 @@
   box-shadow: var(--mm-shadow);
 }
 
-.mm-provider-strip > button {
+.mm-provider-strip > button,
+.mm-provider-more > button {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
   grid-template-rows: auto auto;
@@ -222,10 +315,16 @@
   cursor: pointer;
   transition: 150ms ease;
 }
-.mm-provider-strip > button:hover { border-color: var(--mm-border); background: color-mix(in srgb, var(--primary) 5%, transparent); color: var(--text-primary); }
-.mm-provider-strip > button.active { border-color: color-mix(in srgb, var(--primary) 28%, var(--mm-border)); background: color-mix(in srgb, var(--primary) 10%, var(--mm-surface)); color: var(--primary); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 7%, transparent); }
-.mm-provider-strip b { align-self: end; overflow: hidden; font-size: 11px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
-.mm-provider-strip small { align-self: start; overflow: hidden; color: var(--text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.mm-provider-more { display: grid; }
+.mm-provider-more > .mm-menu-panel { top: calc(100% + 4px); min-width: 210px; }
+.mm-provider-strip > button:hover,
+.mm-provider-more > button:hover { border-color: var(--mm-border); background: color-mix(in srgb, var(--primary) 5%, transparent); color: var(--text-primary); }
+.mm-provider-strip > button.active,
+.mm-provider-more > button.active { border-color: color-mix(in srgb, var(--primary) 28%, var(--mm-border)); background: color-mix(in srgb, var(--primary) 10%, var(--mm-surface)); color: var(--primary); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 7%, transparent); }
+.mm-provider-strip b,
+.mm-provider-more > button > b { align-self: end; overflow: hidden; font-size: 11px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
+.mm-provider-strip small,
+.mm-provider-more > button > small { align-self: start; overflow: hidden; color: var(--text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 
 .mm-provider-icon {
   grid-row: 1 / 3;
@@ -503,7 +602,7 @@
 .mm-api-load-error strong { display: block; color: var(--text-primary); font-size: 13px; }
 .mm-api-load-error p { margin: 4px 0 0; color: var(--text-secondary); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .mm-api-load-error .btn { min-height: 30px; padding: 0 12px; font-size: 11px; }
-.mm-repair-trigger { min-width: 156px; }
+.mm-api-content, .mm-api-panel, .mm-provider-strip, .page-tabs.filter-tabs { overflow: visible; }
 .mm-repair-report {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--success) 32%, var(--mm-border));
@@ -547,7 +646,7 @@
 
 @media (max-width: 900px) {
   .mm-api-hero { grid-template-columns: 1fr; }
-  .mm-api-hero-actions { justify-content: flex-start; }
+  .mm-api-hero-actions { justify-content: flex-start; flex-wrap: wrap; }
   .mm-api-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mm-route-grid { grid-template-columns: 1fr; }
   .mm-model-table { overflow-x: auto; }
@@ -561,6 +660,7 @@
   .mm-api-top-tabs { align-items: stretch; flex-direction: column; }
   .mm-api-top-tabs .page-tabs-leading { min-width: 0; }
   .mm-provider-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mm-menu-panel, .mm-menu-panel-end { right: auto; left: 0; }
   .mm-api-summary-grid,
   .mm-form-grid,
   .mm-generic-oauth-grid,

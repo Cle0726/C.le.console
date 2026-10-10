@@ -229,3 +229,14 @@
     grid-template-columns: 1fr;
   }
 }
+.workbuddy-data-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+  padding: 12px 16px; margin: 0 0 14px; border: 1px solid var(--border);
+  border-radius: 16px; background: var(--bg-card); min-width: 0;
+}
+.workbuddy-data-actions > div:first-child { display: grid; flex: 1 1 260px; gap: 4px; }
+.workbuddy-data-actions strong { font-size: 13px; }
+.workbuddy-data-actions small, .workbuddy-data-actions p { font-size: 12px; color: var(--text-secondary); line-height: 1.5; overflow-wrap: anywhere; }
+.workbuddy-data-actions p { flex-basis: 100%; margin: 0; }
+.workbuddy-data-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.workbuddy-data-buttons .btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

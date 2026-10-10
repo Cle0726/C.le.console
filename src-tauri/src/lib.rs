@@ -1073,6 +1073,9 @@ pub fn run() {
             // Multi-model API proxy service
             commands::multi_model_api::multi_model_api_get_state,
             commands::multi_model_api::extension_provider_request,
+            commands::multi_model_api::extension_provider_login_start,
+            commands::multi_model_api::extension_provider_login_open,
+            commands::multi_model_api::extension_provider_login_finish,
             commands::multi_model_api::multi_model_api_sync_extension_accounts,
             commands::multi_model_api::multi_model_api_open_window,
             commands::multi_model_api::multi_model_api_save_config,
@@ -1234,6 +1237,7 @@ pub fn run() {
             commands::workbuddy::import_workbuddy_from_json,
             commands::workbuddy::import_workbuddy_from_local,
             commands::workbuddy::export_workbuddy_accounts,
+            commands::workbuddy::export_workbuddy_backup_file,
             commands::workbuddy::refresh_workbuddy_token,
             commands::workbuddy::refresh_all_workbuddy_tokens,
             commands::workbuddy::workbuddy_oauth_login_start,

@@ -136,6 +136,11 @@ pub fn export_workbuddy_accounts(account_ids: Vec<String>) -> Result<String, Str
 }
 
 #[tauri::command]
+pub fn export_workbuddy_backup_file(path: String, account_ids: Vec<String>) -> Result<(), String> {
+    workbuddy_account::export_backup_file(std::path::Path::new(&path), &account_ids)
+}
+
+#[tauri::command]
 pub async fn refresh_workbuddy_token(
     app: AppHandle,
     account_id: String,

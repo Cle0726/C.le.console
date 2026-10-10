@@ -46,6 +46,44 @@ try {
   const keyList = await (await request('POST', '/api/keys', { name: 'C.le pool: trae', allowedProviders: ['trae'] })).json();
   assert.equal(keyList.success, true); assert.deepEqual(keyList.data.created.allowedProviders, ['trae']);
   assert(!(await request('POST', '/api/session/login/start', { provider: 'not-a-provider' })).ok);
+  if (process.argv.includes('--login-smoke')) {
+    for (const provider of ['raccoon', 'trae']) {
+      // Anonymous authorization preparation + deliberate rejection; no login/token/inference.
+      calls++;
+      const started = await fetch(`http://127.0.0.1:${port}/api/session/login/start`, { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ provider }), signal: AbortSignal.timeout(30000) });
+      const payload = await started.json();
+      assert(started.ok && payload.success, `${provider}: ${payload.error ?? 'start failed'}`);
+      const login = payload.data;
+      const url = new URL(login.authUrl);
+      console.log(`${provider}: authorization URL generated (${url.origin}${url.pathname})`);
+      if (provider === 'trae') {
+        const callback = new URL(url.searchParams.get('auth_callback_url'));
+        assert.equal(callback.hostname, '127.0.0.1');
+        assert.equal(callback.pathname, '/authorize');
+        try {
+          const page = await fetch(url, { signal: AbortSignal.timeout(15000) });
+          const body = await page.text();
+          console.log(`trae: authorization page HTTP ${page.status}${body.includes('当前区域不支持访问') ? ' (official regional restriction)' : ''}`);
+        } catch { console.log('trae: authorization page network unavailable; callback fixture still checked'); }
+        await fetch(`${callback}?error=access_denied`, { signal: AbortSignal.timeout(3000) });
+        let done;
+        for (let i = 0; i < 20; i++) {
+          done = await (await request('GET', `/api/session/login/wait?state=${login.state}`)).json();
+          if (done.data?.done) break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        assert(done.data.done && done.data.error.includes('access_denied'), 'Trae callback must reach the original task');
+      } else {
+        try {
+          const page = await fetch(url, { signal: AbortSignal.timeout(15000) });
+          console.log(`raccoon: authorization page HTTP ${page.status}, ${page.headers.get('content-type')}`);
+        } catch { console.log('raccoon: authorization page network unavailable; state rejection fixture still checked'); }
+        assert(!(await request('POST', '/api/session/login/callback', { state: login.state, callbackUrl: 'office-raccoon://auth/callback?code=fixture&state=wrong' })).ok, 'reject cross-login state without exchanging any code');
+      }
+      await request('POST', '/api/session/login/cancel', { state: login.state });
+      assert.deepEqual((await (await request('GET', '/api/accounts')).json()).data.accounts, []);
+    }
+  }
   console.log(`Extension bridge: startup, auth, account list, safe sign-in providers, validation, save/run, scoped key OK (${calls} local management calls; 0 inference).`);
 } finally {
   child.kill('SIGTERM');
