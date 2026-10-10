@@ -47,7 +47,13 @@ function loadTypeScript(relativePath, dependencies) {
   assert.equal(parser.getAccountQuotaUpdatedAtMs({ last_used: 999, usage_updated_at: 5, quota_query_last_error: 'failed' }), 5000);
   assert.equal(parser.getAccountQuotaUpdatedAtMs({ last_used: 999, quota_query_last_error: 'failed' }), null);
   assert.equal(parser.getAccountQuotaUpdatedAtMs({ last_used: 999 }), 999000);
-  console.log('WorkBuddy frontend: 7 offline regression checks passed.');
+  // Picking a file grants its path scope, but the metadata command still needs
+  // its own ACL grant. Remote OAuth windows must not inherit these capabilities.
+  const capability = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src-tauri/capabilities/default.json'), 'utf8'));
+  assert(capability.permissions.includes('fs:allow-stat'), 'backup size check requires stat permission');
+  assert(capability.windows.includes('multi-model-api-console'), 'embedded backup actions need the same capability');
+  assert(!capability.windows.some(label => label === '*' || label.startsWith('extension-login')), 'remote authorization windows must remain isolated');
+  console.log('WorkBuddy frontend: 10 offline regression checks passed.');
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
