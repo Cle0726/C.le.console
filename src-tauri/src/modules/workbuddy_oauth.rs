@@ -164,7 +164,7 @@ async fn read_api_response(response: reqwest::Response, action: &str) -> Result<
     Ok(body)
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct RefreshDiagnostics {
     pub token_refreshed: bool,
     pub quota_refreshed: bool,
@@ -545,6 +545,7 @@ pub async fn refresh_token(
         .post(&url)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("X-Refresh-Token", refresh_token)
+        .header("X-Auth-Refresh-Source", WORKBUDDY_PLATFORM)
         .json(&json!({}));
 
     if let Some(d) = domain {
@@ -761,57 +762,99 @@ fn merge_quota_snapshot(
     }
 }
 
-async fn refresh_payload_for_account_inner(
+/// The caller must durably save this pair before starting quota requests.
+pub(crate) async fn refresh_credentials_for_account(
     account: &crate::models::workbuddy::WorkbuddyAccount,
-    require_user_resource: bool,
+) -> Result<crate::models::workbuddy::WorkbuddyAccount, String> {
+    if let Some(error) = account
+        .token_refresh_last_error
+        .as_ref()
+        .filter(|error| crate::modules::credential_store::refresh_rejected(error))
+    {
+        return Err(error.clone());
+    }
+    let refresh = account
+        .refresh_token
+        .as_deref()
+        .filter(|token| !token.trim().is_empty())
+        .ok_or("未保存 refresh token，无法刷新凭证；仍可尝试查询额度")?;
+    let data = refresh_token(&account.access_token, refresh, account.domain.as_deref()).await?;
+    rotated_account(account, &data, now_timestamp())
+}
+
+pub(crate) fn refresh_token_expires_at(data: &Value, refresh: &str, now: i64) -> Option<i64> {
+    let expiry = data
+        .get("refreshExpiresAt")
+        .or_else(|| data.get("refresh_expires_at"));
+    let lifetime = data
+        .get("refreshExpiresIn")
+        .or_else(|| data.get("refresh_expires_in"));
+    token_expires_at(
+        &json!({"expiresAt": expiry, "expiresIn": lifetime}),
+        refresh,
+        now,
+    )
+}
+
+fn rotated_account(
+    account: &crate::models::workbuddy::WorkbuddyAccount,
+    data: &Value,
+    now: i64,
+) -> Result<crate::models::workbuddy::WorkbuddyAccount, String> {
+    let mut next = account.clone();
+    next.access_token = normalize_non_empty(
+        data.get("accessToken")
+            .or_else(|| data.get("access_token"))
+            .and_then(Value::as_str),
+    )
+    .ok_or("刷新响应缺少有效 access token，原凭证已保留")?;
+    if let Some(refresh) = normalize_non_empty(
+        data.get("refreshToken")
+            .or_else(|| data.get("refresh_token"))
+            .and_then(Value::as_str),
+    ) {
+        next.refresh_token = Some(refresh);
+    }
+    next.expires_at = token_expires_at(data, &next.access_token, now).or(account.expires_at);
+    next.refresh_expires_at = next
+        .refresh_token
+        .as_deref()
+        .and_then(|refresh| refresh_token_expires_at(data, refresh, now))
+        .or(account.refresh_expires_at);
+    if let Some(domain) = normalize_non_empty(data.get("domain").and_then(Value::as_str)) {
+        next.domain = Some(domain);
+    }
+    if let Some(token_type) = normalize_non_empty(
+        data.get("tokenType")
+            .or_else(|| data.get("token_type"))
+            .and_then(Value::as_str),
+    ) {
+        next.token_type = Some(token_type);
+    }
+    let mut auth = account
+        .auth_raw
+        .as_ref()
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    auth.insert("latestRefresh".into(), data.clone());
+    next.auth_raw = Some(Value::Object(auth));
+    next.token_refreshed_at = Some(now);
+    next.token_refresh_last_error = None;
+    next.status = Some("normal".into());
+    next.status_reason = None;
+    Ok(next)
+}
+
+/// Quota reads run after credential persistence and never rotate tokens.
+pub(crate) async fn quota_payload_for_account(
+    account: &crate::models::workbuddy::WorkbuddyAccount,
 ) -> Result<(WorkbuddyOAuthCompletePayload, RefreshDiagnostics), String> {
     let mut diagnostics = RefreshDiagnostics::default();
-    let mut new_access_token = account.access_token.clone();
-    let mut new_refresh_token = account.refresh_token.clone();
-    let mut new_expires_at = account.expires_at;
-    let mut new_domain = account.domain.clone();
-
-    if let Some(refresh_tk) = account.refresh_token.as_deref() {
-        match refresh_token(&account.access_token, refresh_tk, account.domain.as_deref()).await {
-            Ok(token_data) => {
-                diagnostics.token_refreshed = true;
-                new_access_token = token_data
-                    .get("accessToken")
-                    .or_else(|| token_data.get("access_token"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&account.access_token)
-                    .to_string();
-
-                new_refresh_token = token_data
-                    .get("refreshToken")
-                    .or_else(|| token_data.get("refresh_token"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .or_else(|| account.refresh_token.clone());
-
-                new_expires_at = token_expires_at(&token_data, &new_access_token, now_timestamp())
-                    .or(account.expires_at);
-
-                new_domain = token_data
-                    .get("domain")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .or_else(|| account.domain.clone());
-            }
-            Err(e) => {
-                logger::log_warn(&format!(
-                    "[WorkBuddy] Token 刷新失败，将使用现有 token 查询配额:{}",
-                    e
-                ));
-                diagnostics.token_error = Some(e);
-            }
-        }
-    } else {
-        diagnostics.token_error =
-            Some("未保存 refresh token，无法刷新凭证；仍尝试查询额度".to_string());
-    }
-    new_expires_at = new_expires_at
-        .or_else(|| token_expires_at(&Value::Null, &new_access_token, now_timestamp()));
+    let new_access_token = account.access_token.clone();
+    let new_refresh_token = account.refresh_token.clone();
+    let new_expires_at = account.expires_at;
+    let new_domain = account.domain.clone();
 
     let resolved_email =
         normalize_non_empty(Some(account.email.as_str())).unwrap_or_else(|| account.email.clone());
@@ -864,11 +907,6 @@ async fn refresh_payload_for_account_inner(
                 err
             ));
             diagnostics.quota_error = Some(err.clone());
-            if require_user_resource {
-                return Err(
-                    "使用 IDE token 刷新 user_resource 失败，无法获取资源包配额".to_string()
-                );
-            }
             None
         }
     };
@@ -939,12 +977,6 @@ async fn refresh_payload_for_account_inner(
         },
         diagnostics,
     ))
-}
-
-pub(crate) async fn refresh_payload_for_account(
-    account: &crate::models::workbuddy::WorkbuddyAccount,
-) -> Result<(WorkbuddyOAuthCompletePayload, RefreshDiagnostics), String> {
-    refresh_payload_for_account_inner(account, false).await
 }
 
 pub async fn build_payload_from_token(

@@ -81,3 +81,31 @@ func TestManagedNativeBridgeRejectsMissingOrInvalidTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedClaudeUsesVaultOAuthWithoutLeakingCapability(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/credentials/claude~account-1" || r.Header.Get("Authorization") != "Bearer local-secret" {
+			t.Error("missing managed Claude capability")
+		}
+		_, _ = w.Write([]byte(`{"metadata":{"access_token":"oauth-access","expired":1900000000000}}`))
+	}))
+	defer server.Close()
+	auth := &coreauth.Auth{Provider: "claude", Attributes: map[string]string{"api_key": "local-secret", "header:" + managedCredentialHeader: server.URL + "/credentials/claude~account-1"}}
+	prepared, err := prepareManagedNativeAuth(context.Background(), auth, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Attributes["api_key"] != "" || prepared.Attributes["header:"+managedCredentialHeader] != "" || prepared.Metadata["access_token"] != "oauth-access" {
+		t.Fatal("local capability leaked into Anthropic credentials")
+	}
+	if _, err = prepareManagedNativeAuth(context.Background(), prepared, true); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := (&managedNativeExecutor{}).Refresh(context.Background(), auth)
+	if err != nil || stored.Metadata["access_token"] != nil {
+		t.Fatal("duplicated rotating Claude credentials")
+	}
+	if !unmanagedClaude(&coreauth.Auth{Provider: "claude", Attributes: map[string]string{"api_key": "user-key"}}) || unmanagedClaude(auth) {
+		t.Fatal("ordinary Claude API keys must keep their existing executor")
+	}
+}

@@ -90,6 +90,10 @@ pub struct ClaudeAccount {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_credentials_raw: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_source_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_config_raw: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_usage_raw: Option<serde_json::Value>,

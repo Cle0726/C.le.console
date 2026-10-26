@@ -1,5 +1,5 @@
 //! Native MIT CLIProxyAPIPlus adapters. OAuth ownership stays with C.le.
-use crate::modules::{github_copilot_account, kiro_account, kiro_oauth};
+use crate::modules::{claude_account, github_copilot_account, kiro_account, kiro_oauth};
 use crate::modules::multi_model_api::{MultiModelDefinition, MultiModelAccountUsage, MultiModelUsageBucket};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -7,8 +7,15 @@ use std::sync::OnceLock;
 use tokio::sync::Mutex;
 
 pub fn supported(provider: &str) -> bool { matches!(provider, "kiro" | "github-copilot") }
+pub fn credential_supported(provider: &str) -> bool { supported(provider) || provider == "claude" }
 
 pub async fn credential_payload(provider: &str, id: &str, force: bool) -> Result<Value, String> {
+    if provider == "claude" {
+        let account = claude_account::current_api_account(id, force).await?;
+        let oauth = account.claude_credentials_raw.as_ref().and_then(|raw| raw.get("claudeAiOauth"))
+            .ok_or("Claude 缺少 OAuth 登录凭证")?;
+        return Ok(json!({"metadata": {"access_token":oauth.get("accessToken"), "expired":oauth.get("expiresAt")}}));
+    }
     // Serialize refresh for each managed account; rotated OAuth tokens must not race.
     static LOCKS: OnceLock<Mutex<BTreeMap<String, std::sync::Arc<Mutex<()>>>>> = OnceLock::new();
     let lock = LOCKS.get_or_init(Default::default).lock().await.entry(format!("{provider}:{id}"))
@@ -93,6 +100,7 @@ fn parse_models(provider: &str, body: &Value) -> Result<Vec<MultiModelDefinition
 
 pub async fn refresh_quota(provider: &str, id: &str) -> Result<(), String> {
     let error = match provider {
+        "claude" => claude_account::refresh_account_quota(id).await?.quota_error.map(|error| error.message),
         "kiro" => kiro_account::refresh_account_token(id).await?.quota_query_last_error,
         "github-copilot" => github_copilot_account::refresh_account_token(id).await?.quota_query_last_error,
         _ => return Err("该渠道不支持额度刷新".into()),

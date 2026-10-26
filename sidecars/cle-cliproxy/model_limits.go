@@ -6,12 +6,35 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	internalregistry "github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
 // These are account-authorized upstream limits, not client defaults or guesses.
 type modelTokenLimits struct {
 	MaxInputTokens  int `json:"maxInputTokens,omitempty"`
 	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
+}
+
+// Match the channel as well as the ID: Antigravity may expose a smaller
+// allowance than the identically named model on Anthropic's own API.
+func staticTokenLimits(provider, model string) modelTokenLimits {
+	var catalog []*internalregistry.ModelInfo
+	switch provider {
+	case "claude":
+		catalog = internalregistry.GetClaudeModels()
+	case "antigravity":
+		catalog = internalregistry.GetAntigravityModels()
+	case "gemini":
+		catalog = internalregistry.GetGeminiModels()
+	case "xai":
+		catalog = internalregistry.GetXAIModels()
+	}
+	for _, info := range catalog {
+		if strings.EqualFold(info.ID, model) {
+			return modelTokenLimits{MaxInputTokens: info.ContextLength, MaxOutputTokens: info.MaxCompletionTokens}
+		}
+	}
+	return modelTokenLimits{}
 }
 
 func tokenLimitsForModel(m *manifest, spec *apiKeySpec, model string) modelTokenLimits {
@@ -32,9 +55,18 @@ func tokenLimitsForModel(m *manifest, spec *apiKeySpec, model string) modelToken
 			!stringSliceContainsFold(spec.AccountIDs, account.AuthID) {
 			continue
 		}
-		for id, capacity := range account.ModelLimits {
-			if !strings.EqualFold(id, canonical) || !stringSliceContainsFold(account.Models, id) {
+		for _, id := range account.Models {
+			if !strings.EqualFold(id, canonical) {
 				continue
+			}
+			capacity := staticTokenLimits(account.Provider, id)
+			if explicit, ok := account.ModelLimits[id]; ok {
+				if explicit.MaxInputTokens > 0 {
+					capacity.MaxInputTokens = explicit.MaxInputTokens
+				}
+				if explicit.MaxOutputTokens > 0 {
+					capacity.MaxOutputTokens = explicit.MaxOutputTokens
+				}
 			}
 			// A rotating pool must not advertise a capacity that one of its
 			// participating accounts explicitly cannot accept.

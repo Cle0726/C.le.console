@@ -9,7 +9,10 @@ use tauri::Emitter;
 use crate::models::workbuddy::{
     WorkbuddyAccount, WorkbuddyAccountIndex, WorkbuddyOAuthCompletePayload,
 };
-use crate::modules::{account, logger, workbuddy_oauth};
+use crate::modules::{
+    account, account_singleflight::SingleFlight, credential_store as workbuddy_store, logger,
+    workbuddy_oauth,
+};
 
 const ACCOUNTS_INDEX_FILE: &str = "workbuddy_accounts.json";
 const ACCOUNTS_DIR: &str = "workbuddy_accounts";
@@ -22,7 +25,7 @@ const LOGIN_REQUIRED_STATUS: &str = "login_required";
 lazy_static::lazy_static! {
     static ref WORKBUDDY_ACCOUNT_INDEX_LOCK: Mutex<()> = Mutex::new(());
     static ref WORKBUDDY_QUOTA_ALERT_LAST_SENT: Mutex<HashMap<String, i64>> = Mutex::new(HashMap::new());
-    static ref WORKBUDDY_REFRESH_LOCKS: Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>> = Mutex::new(HashMap::new());
+    static ref WORKBUDDY_REFRESHES: SingleFlight<Result<(WorkbuddyAccount, workbuddy_oauth::RefreshDiagnostics), String>> = SingleFlight::default();
 }
 
 fn now_ts() -> i64 {
@@ -94,20 +97,29 @@ fn resolve_account_file_path(account_id: &str) -> Result<PathBuf, String> {
 }
 
 pub fn load_account(account_id: &str) -> Option<WorkbuddyAccount> {
-    let account_path = resolve_account_file_path(account_id).ok()?;
-    if !account_path.exists() {
-        return None;
-    }
-    let content = fs::read_to_string(&account_path).ok()?;
-    crate::modules::atomic_write::parse_json_with_auto_restore(&account_path, &content).ok()
+    load_account_checked(account_id).ok()
+}
+
+fn load_account_checked(account_id: &str) -> Result<WorkbuddyAccount, String> {
+    let path = resolve_account_file_path(account_id)?;
+    serde_json::from_value(workbuddy_store::load(&path)?)
+        .map_err(|_| "WorkBuddy 账号结构无效；原文件已保留".into())
+}
+
+fn account_value(account: &WorkbuddyAccount) -> Result<Value, String> {
+    serde_json::to_value(account).map_err(|_| "WorkBuddy 账号序列化失败".into())
+}
+
+fn same_credentials(a: &WorkbuddyAccount, b: &WorkbuddyAccount) -> Result<bool, String> {
+    Ok(workbuddy_store::fingerprint(&account_value(a)?)
+        == workbuddy_store::fingerprint(&account_value(b)?))
 }
 
 fn save_account_file(account: &WorkbuddyAccount) -> Result<(), String> {
-    let path = resolve_account_file_path(account.id.as_str())?;
-    let content =
-        serde_json::to_string_pretty(account).map_err(|e| format!("序列化账号失败:{}", e))?;
-    crate::modules::atomic_write::write_string_atomic(&path, &content)
-        .map_err(|e| format!("保存账号失败:{}", e))
+    workbuddy_store::save(
+        &resolve_account_file_path(&account.id)?,
+        &account_value(account)?,
+    )
 }
 
 fn delete_account_file(account_id: &str) -> Result<(), String> {
@@ -119,150 +131,73 @@ fn delete_account_file(account_id: &str) -> Result<(), String> {
 }
 
 fn load_account_index() -> WorkbuddyAccountIndex {
-    let path = match get_accounts_index_path() {
-        Ok(p) => p,
-        Err(_) => return WorkbuddyAccountIndex::new(),
-    };
-    if !path.exists() {
-        return repair_account_index_from_details("索引文件不存在")
-            .unwrap_or_else(WorkbuddyAccountIndex::new);
-    }
-    match fs::read_to_string(&path) {
-        Ok(content) if content.trim().is_empty() => {
-            repair_account_index_from_details("索引文件为空")
-                .unwrap_or_else(WorkbuddyAccountIndex::new)
-        }
-        Ok(content) => match crate::modules::atomic_write::parse_json_with_auto_restore::<
-            WorkbuddyAccountIndex,
-        >(&path, &content)
-        {
-            Ok(index) if !index.accounts.is_empty() => index,
-            Ok(_) => repair_account_index_from_details("索引账号列表为空")
-                .unwrap_or_else(WorkbuddyAccountIndex::new),
-            Err(err) => {
-                logger::log_warn(&format!(
-                    "[WorkBuddy Account] 账号索引解析失败，尝试按详情文件自动修复: path={}, error={}",
-                    path.display(),
-                    err
-                ));
-                repair_account_index_from_details("索引文件损坏")
-                    .unwrap_or_else(WorkbuddyAccountIndex::new)
-            }
-        },
-        Err(_) => WorkbuddyAccountIndex::new(),
-    }
+    load_account_index_checked().unwrap_or_else(|error| {
+        logger::log_warn(&format!("[WorkBuddy Account] {}", error));
+        WorkbuddyAccountIndex::new()
+    })
 }
 
+/// Reading a list never merges identities, deletes records or rewrites an index.
 fn load_account_index_checked() -> Result<WorkbuddyAccountIndex, String> {
     let path = get_accounts_index_path()?;
-    if !path.exists() {
-        if let Some(index) = repair_account_index_from_details("索引文件不存在") {
-            return Ok(index);
-        }
-        return Ok(WorkbuddyAccountIndex::new());
-    }
-
-    let content = match fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(err) => {
-            if let Some(index) = repair_account_index_from_details("索引文件读取失败") {
-                return Ok(index);
-            }
-            return Err(format!("读取账号索引失败: {}", err));
-        }
+    let current = match fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err("无法读取 WorkBuddy 索引；禁止按空账号覆盖".into()),
     };
-
-    if content.trim().is_empty() {
-        if let Some(index) = repair_account_index_from_details("索引文件为空") {
-            return Ok(index);
+    let parsed = current
+        .as_deref()
+        .and_then(|bytes| serde_json::from_slice::<WorkbuddyAccountIndex>(bytes).ok());
+    // Recover in memory; keep the damaged original and every known ID as evidence.
+    let backup_path = path.with_extension("json.bak");
+    let mut recovered = parsed.unwrap_or_else(|| {
+        fs::read(backup_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<WorkbuddyAccountIndex>(&bytes).ok())
+            .unwrap_or_default()
+    });
+    let entries = fs::read_dir(get_accounts_dir()?).map_err(|_| "无法读取 WorkBuddy 详情目录")?;
+    for entry in entries {
+        let entry = entry.map_err(|_| "无法遍历 WorkBuddy 详情目录")?;
+        let file = entry.path();
+        if file.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
         }
-        return Ok(WorkbuddyAccountIndex::new());
+        let Some(id) = file.file_stem().and_then(|id| id.to_str()) else {
+            continue;
+        };
+        if recovered.accounts.iter().any(|summary| summary.id == id) {
+            continue;
+        }
+        let account = load_account_checked(id)?;
+        recovered.accounts.push(account.summary());
     }
-
-    match crate::modules::atomic_write::parse_json_with_auto_restore::<WorkbuddyAccountIndex>(
-        &path, &content,
-    ) {
-        Ok(index) if !index.accounts.is_empty() => Ok(index),
-        Ok(index) => {
-            if let Some(repaired) = repair_account_index_from_details("索引账号列表为空") {
-                return Ok(repaired);
-            }
-            Ok(index)
-        }
-        Err(err) => {
-            if let Some(index) = repair_account_index_from_details("索引文件损坏") {
-                return Ok(index);
-            }
-            Err(crate::error::file_corrupted_error(
-                ACCOUNTS_INDEX_FILE,
-                &path.to_string_lossy(),
-                &err.to_string(),
-            ))
-        }
+    if current.is_some()
+        && recovered.accounts.is_empty()
+        && current
+            .as_deref()
+            .is_some_and(|bytes| serde_json::from_slice::<WorkbuddyAccountIndex>(bytes).is_err())
+    {
+        return Err("WorkBuddy 索引损坏，无法完整恢复；原文件已保留，禁止按空账号覆盖".into());
     }
+    Ok(recovered)
 }
 
 fn save_account_index(index: &WorkbuddyAccountIndex) -> Result<(), String> {
     let path = get_accounts_index_path()?;
-    let content =
-        serde_json::to_string_pretty(index).map_err(|e| format!("序列化账号索引失败:{}", e))?;
-    crate::modules::atomic_write::write_string_atomic(&path, &content)
-        .map_err(|e| format!("写入账号索引失败:{}", e))
-}
-
-fn repair_account_index_from_details(reason: &str) -> Option<WorkbuddyAccountIndex> {
-    let index_path = get_accounts_index_path().ok()?;
-    let accounts_dir = get_accounts_dir().ok()?;
-    let mut accounts = crate::modules::account_index_repair::load_accounts_from_details(
-        &accounts_dir,
-        |account_id| load_account(account_id),
-    )
-    .ok()?;
-
-    if accounts.is_empty() {
-        return None;
+    if let Ok(previous) = fs::read_to_string(&path) {
+        let backup = if serde_json::from_str::<WorkbuddyAccountIndex>(&previous).is_ok() {
+            path.with_extension("json.bak")
+        } else {
+            path.with_extension(format!(
+                "json.bad-{}",
+                chrono::Utc::now().timestamp_millis()
+            ))
+        };
+        crate::modules::atomic_write::write_private_string_atomic(&backup, &previous)?;
     }
-
-    crate::modules::account_index_repair::sort_accounts_by_recency(
-        &mut accounts,
-        |account| account.last_used,
-        |account| account.created_at,
-        |account| account.id.as_str(),
-    );
-
-    let mut index = WorkbuddyAccountIndex::new();
-    index.accounts = accounts.iter().map(|account| account.summary()).collect();
-
-    let backup_path = crate::modules::account_index_repair::backup_existing_index(&index_path)
-        .unwrap_or_else(|err| {
-            logger::log_warn(&format!(
-                "[WorkBuddy Account] 自动修复前备份索引失败，继续尝试重建: path={}, error={}",
-                index_path.display(),
-                err
-            ));
-            None
-        });
-
-    if let Err(err) = save_account_index(&index) {
-        logger::log_warn(&format!(
-            "[WorkBuddy Account] 自动修复索引保存失败，将以内存结果继续运行: reason={}, recovered_accounts={}, error={}",
-            reason,
-            index.accounts.len(),
-            err
-        ));
-    }
-
-    logger::log_warn(&format!(
-        "[WorkBuddy Account] 检测到账号索引异常，已根据详情文件自动重建: reason={}, recovered_accounts={}, backup_path={}",
-        reason,
-        index.accounts.len(),
-        backup_path
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "-".to_string())
-    ));
-
-    Some(index)
+    let content = serde_json::to_string_pretty(index).map_err(|_| "序列化 WorkBuddy 索引失败")?;
+    crate::modules::atomic_write::write_private_string_atomic(&path, &content)
 }
 
 fn refresh_summary(index: &mut WorkbuddyAccountIndex, account: &WorkbuddyAccount) {
@@ -271,17 +206,6 @@ fn refresh_summary(index: &mut WorkbuddyAccountIndex, account: &WorkbuddyAccount
         return;
     }
     index.accounts.push(account.summary());
-}
-
-fn upsert_account_record(account: WorkbuddyAccount) -> Result<WorkbuddyAccount, String> {
-    let _lock = WORKBUDDY_ACCOUNT_INDEX_LOCK
-        .lock()
-        .map_err(|_| "获取 WorkBuddy 账号锁失败".to_string())?;
-    let mut index = load_account_index();
-    save_account_file(&account)?;
-    refresh_summary(&mut index, &account);
-    save_account_index(&index)?;
-    Ok(account)
 }
 
 fn normalize_non_empty(value: Option<&str>) -> Option<String> {
@@ -334,6 +258,7 @@ fn account_matches_payload_identity(
     false
 }
 
+#[cfg(test)]
 fn accounts_are_duplicates(left: &WorkbuddyAccount, right: &WorkbuddyAccount) -> bool {
     let left_uid = normalize_identity(left.uid.as_deref());
     let right_uid = normalize_identity(right.uid.as_deref());
@@ -391,184 +316,48 @@ fn merge_string_list(
     }
 }
 
-fn fill_if_none<T: Clone>(target: &mut Option<T>, source: &Option<T>) {
-    if target.is_none() {
-        *target = source.clone();
-    }
-}
-
-fn merge_duplicate_account(primary: &mut WorkbuddyAccount, dup: &WorkbuddyAccount) {
-    if primary.email.trim().is_empty() && !dup.email.trim().is_empty() {
-        primary.email = dup.email.clone();
-    }
-    if primary.access_token.trim().is_empty() && !dup.access_token.trim().is_empty() {
-        primary.access_token = dup.access_token.clone();
-    }
-    fill_if_none(&mut primary.uid, &dup.uid);
-    fill_if_none(&mut primary.nickname, &dup.nickname);
-    fill_if_none(&mut primary.enterprise_id, &dup.enterprise_id);
-    fill_if_none(&mut primary.enterprise_name, &dup.enterprise_name);
-    fill_if_none(&mut primary.refresh_token, &dup.refresh_token);
-    fill_if_none(&mut primary.token_type, &dup.token_type);
-    fill_if_none(&mut primary.expires_at, &dup.expires_at);
-    fill_if_none(&mut primary.domain, &dup.domain);
-    fill_if_none(&mut primary.plan_type, &dup.plan_type);
-    fill_if_none(&mut primary.dosage_notify_code, &dup.dosage_notify_code);
-    fill_if_none(&mut primary.payment_type, &dup.payment_type);
-    fill_if_none(&mut primary.quota_raw, &dup.quota_raw);
-    fill_if_none(&mut primary.auth_raw, &dup.auth_raw);
-    fill_if_none(&mut primary.profile_raw, &dup.profile_raw);
-    fill_if_none(&mut primary.usage_raw, &dup.usage_raw);
-    fill_if_none(&mut primary.status, &dup.status);
-    fill_if_none(
-        &mut primary.quota_query_last_error,
-        &dup.quota_query_last_error,
-    );
-    fill_if_none(
-        &mut primary.quota_query_last_error_at,
-        &dup.quota_query_last_error_at,
-    );
-    primary.tags = merge_string_list(primary.tags.clone(), dup.tags.clone());
-    primary.created_at = primary.created_at.min(dup.created_at);
-    primary.last_used = primary.last_used.max(dup.last_used);
-}
-
-fn choose_primary_account_index(group: &[usize], accounts: &[WorkbuddyAccount]) -> usize {
-    group
-        .iter()
-        .copied()
-        .max_by(|l, r| {
-            accounts[*l]
-                .last_used
-                .cmp(&accounts[*r].last_used)
-                .then_with(|| accounts[*r].created_at.cmp(&accounts[*l].created_at))
-        })
-        .unwrap_or(group[0])
-}
-
-fn normalize_account_index(index: &mut WorkbuddyAccountIndex) -> Vec<WorkbuddyAccount> {
-    let mut loaded = Vec::new();
-    let mut seen = HashSet::new();
-    for summary in &index.accounts {
-        if !seen.insert(summary.id.clone()) {
-            continue;
-        }
-        if let Some(account) = load_account(&summary.id) {
-            loaded.push(account);
-        }
-    }
-    if loaded.len() <= 1 {
-        index.accounts = loaded.iter().map(|a| a.summary()).collect();
-        return loaded;
-    }
-
-    let mut parents: Vec<usize> = (0..loaded.len()).collect();
-    fn find(parents: &mut [usize], idx: usize) -> usize {
-        let p = parents[idx];
-        if p == idx {
-            return idx;
-        }
-        let root = find(parents, p);
-        parents[idx] = root;
-        root
-    }
-    fn union(parents: &mut [usize], l: usize, r: usize) {
-        let lr = find(parents, l);
-        let rr = find(parents, r);
-        if lr != rr {
-            parents[rr] = lr;
-        }
-    }
-
-    let total = loaded.len();
-    for l in 0..total {
-        for r in (l + 1)..total {
-            if accounts_are_duplicates(&loaded[l], &loaded[r]) {
-                union(&mut parents, l, r);
-            }
-        }
-    }
-
-    let mut grouped: HashMap<usize, Vec<usize>> = HashMap::new();
-    for idx in 0..total {
-        let root = find(&mut parents, idx);
-        grouped.entry(root).or_default().push(idx);
-    }
-
-    let mut processed = HashSet::new();
-    let mut normalized = Vec::new();
-    let mut removed_ids = Vec::new();
-    for idx in 0..total {
-        let root = find(&mut parents, idx);
-        if !processed.insert(root) {
-            continue;
-        }
-        let Some(group) = grouped.get(&root) else {
-            continue;
-        };
-        if group.len() == 1 {
-            normalized.push(loaded[group[0]].clone());
-            continue;
-        }
-        let primary_idx = choose_primary_account_index(group, &loaded);
-        let mut primary = loaded[primary_idx].clone();
-        for member in group {
-            if *member == primary_idx {
-                continue;
-            }
-            merge_duplicate_account(&mut primary, &loaded[*member]);
-            removed_ids.push(loaded[*member].id.clone());
-        }
-        normalized.push(primary);
-    }
-
-    if !removed_ids.is_empty() {
-        for acc in &normalized {
-            let _ = save_account_file(acc);
-        }
-        for id in &removed_ids {
-            let _ = delete_account_file(id);
-        }
-        logger::log_warn(&format!(
-            "[WorkBuddy Account] 检测到重复账号并已合并:removed_ids={}",
-            removed_ids.join(",")
-        ));
-    }
-
-    index.accounts = normalized.iter().map(|a| a.summary()).collect();
-    normalized
-}
-
 pub fn list_accounts() -> Vec<WorkbuddyAccount> {
-    let mut index = load_account_index();
-    let had_index_accounts = !index.accounts.is_empty();
-    let accounts = normalize_account_index(&mut index);
-    if had_index_accounts && accounts.is_empty() {
-        logger::log_warn(
-            "[WorkBuddy Account] 账号索引中存在账号，但详情文件均无法读取，已跳过空索引写回",
-        );
-        return accounts;
-    }
-    if let Err(err) = save_account_index(&index) {
-        logger::log_warn(&format!("[WorkBuddy Account] 保存账号索引失败:{}", err));
-    }
-    accounts
+    let index = load_account_index();
+    let mut seen = HashSet::new();
+    index
+        .accounts
+        .iter()
+        .filter(|summary| seen.insert(summary.id.clone()))
+        .filter_map(|summary| load_account(&summary.id))
+        .collect()
 }
 
 pub fn list_accounts_checked() -> Result<Vec<WorkbuddyAccount>, String> {
-    let mut index = load_account_index_checked()?;
-    let had_index_accounts = !index.accounts.is_empty();
-    let accounts = normalize_account_index(&mut index);
-    if had_index_accounts && accounts.is_empty() {
-        return Err("WorkBuddy 账号索引中存在账号，但详情文件均无法读取；已保留前端缓存，请从账号备份或本地账号文件恢复。".to_string());
-    }
-    if let Err(err) = save_account_index(&index) {
-        logger::log_warn(&format!("[WorkBuddy Account] 保存账号索引失败:{}", err));
-    }
-    Ok(accounts)
+    let _guard = WORKBUDDY_ACCOUNT_INDEX_LOCK
+        .lock()
+        .map_err(|_| "获取 WorkBuddy 账号锁失败")?;
+    let index = load_account_index_checked()?;
+    let mut seen = HashSet::new();
+    index
+        .accounts
+        .iter()
+        .filter(|summary| seen.insert(summary.id.clone()))
+        .map(|summary| {
+            load_account_checked(&summary.id).map_err(|_| {
+                format!(
+                    "WorkBuddy 账号 {} 无法读取；已保留全部账号文件和索引，未更新列表缓存",
+                    summary.id
+                )
+            })
+        })
+        .collect()
 }
 
 fn apply_payload(account: &mut WorkbuddyAccount, payload: WorkbuddyOAuthCompletePayload) {
+    let credentials_changed = account.access_token != payload.access_token
+        || payload
+            .refresh_token
+            .as_ref()
+            .filter(|token| !token.trim().is_empty())
+            .is_some_and(|token| Some(token) != account.refresh_token.as_ref());
+    if credentials_changed {
+        account.token_refresh_last_error = None;
+    }
     let incoming_email = payload.email.trim().to_string();
     if !incoming_email.is_empty() {
         account.email = incoming_email;
@@ -620,6 +409,14 @@ fn apply_payload(account: &mut WorkbuddyAccount, payload: WorkbuddyOAuthComplete
     if payload.quota_raw.is_some() {
         account.quota_raw = payload.quota_raw;
     }
+    if let Some(raw) = &payload.auth_raw {
+        let auth = raw.get("auth").or_else(|| raw.get("data")).unwrap_or(raw);
+        if let Some(refresh) = account.refresh_token.as_deref() {
+            account.refresh_expires_at =
+                workbuddy_oauth::refresh_token_expires_at(auth, refresh, now_ts())
+                    .or(account.refresh_expires_at);
+        }
+    }
     if payload.auth_raw.is_some() {
         account.auth_raw = payload.auth_raw;
     }
@@ -640,7 +437,7 @@ pub fn upsert_account(payload: WorkbuddyOAuthCompletePayload) -> Result<Workbudd
         .lock()
         .map_err(|_| "获取 WorkBuddy 账号锁失败".to_string())?;
     let now = now_ts();
-    let mut index = load_account_index();
+    let mut index = load_account_index_checked()?;
 
     let incoming_uid = normalize_identity(payload.uid.as_deref());
     let incoming_email = normalize_email_identity(Some(payload.email.as_str()));
@@ -685,6 +482,7 @@ pub fn upsert_account(payload: WorkbuddyOAuthCompletePayload) -> Result<Workbudd
         refresh_token: payload.refresh_token.clone(),
         token_type: payload.token_type.clone(),
         expires_at: payload.expires_at,
+        refresh_expires_at: None,
         domain: payload.domain.clone(),
         plan_type: payload.plan_type.clone(),
         dosage_notify_code: payload.dosage_notify_code.clone(),
@@ -763,28 +561,74 @@ async fn refresh_account_token_once(
     account_id: &str,
 ) -> Result<(WorkbuddyAccount, workbuddy_oauth::RefreshDiagnostics), String> {
     let started_at = Instant::now();
-    let mut account = load_account(account_id).ok_or_else(|| "账号不存在".to_string())?;
+    let original = {
+        let _guard = WORKBUDDY_ACCOUNT_INDEX_LOCK
+            .lock()
+            .map_err(|_| "获取 WorkBuddy 账号锁失败")?;
+        let account = load_account_checked(account_id)?;
+        workbuddy_store::prepare_refresh(
+            &resolve_account_file_path(account_id)?,
+            &account_value(&account)?,
+        )?;
+        account
+    };
+    let mut diagnostics = workbuddy_oauth::RefreshDiagnostics::default();
+    let for_quota = match workbuddy_oauth::refresh_credentials_for_account(&original).await {
+        Ok(rotated) => {
+            let _guard = WORKBUDDY_ACCOUNT_INDEX_LOCK
+                .lock()
+                .map_err(|_| "获取 WorkBuddy 账号锁失败")?;
+            let mut current = load_account_checked(account_id)
+                .map_err(|_| "刷新期间账号已删除或无法读取，未重新创建账号")?;
+            if !same_credentials(&original, &current)? {
+                return Err("刷新期间登录已更新，未用旧请求覆盖新登录".into());
+            }
+            // Preserve labels/check-ins changed during HTTP; commit tokens before ANY quota await.
+            current.access_token = rotated.access_token;
+            current.refresh_token = rotated.refresh_token;
+            current.expires_at = rotated.expires_at;
+            current.refresh_expires_at = rotated.refresh_expires_at;
+            current.domain = rotated.domain;
+            current.token_type = rotated.token_type;
+            current.auth_raw = rotated.auth_raw;
+            current.token_refreshed_at = rotated.token_refreshed_at;
+            current.token_refresh_last_error = None;
+            current.status = rotated.status;
+            current.status_reason = None;
+            save_account_file(&current).map_err(|_| {
+                "新凭证落盘未全部完成；恢复日志已尽量保留，已停止后续请求。请检查磁盘后重试"
+            })?;
+            diagnostics.token_refreshed = true;
+            current
+        }
+        Err(error) => {
+            diagnostics.token_error = Some(error);
+            original.clone()
+        }
+    };
+    let (payload, quota_diagnostics) =
+        workbuddy_oauth::quota_payload_for_account(&for_quota).await?;
+    diagnostics.quota_refreshed = quota_diagnostics.quota_refreshed;
+    diagnostics.quota_error = quota_diagnostics.quota_error;
+    let updated = {
+        let _guard = WORKBUDDY_ACCOUNT_INDEX_LOCK
+            .lock()
+            .map_err(|_| "获取 WorkBuddy 账号锁失败")?;
+        let mut latest = load_account_checked(account_id)?;
+        if !same_credentials(&for_quota, &latest)? {
+            return Err("登录已更新，已丢弃旧额度查询结果".into());
+        }
+        apply_refresh_result(&mut latest, payload, &diagnostics, now_ts());
+        workbuddy_store::save_runtime(
+            &resolve_account_file_path(account_id)?,
+            &account_value(&latest)?,
+            diagnostics.quota_refreshed,
+        )?;
+        latest
+    };
     logger::log_info(&format!(
-        "[WorkBuddy Refresh] 开始刷新账号:id={}, email={}",
-        account.id, account.email
-    ));
-
-    let (payload, diagnostics) = workbuddy_oauth::refresh_payload_for_account(&account).await?;
-    let latest =
-        load_account(account_id).ok_or_else(|| "刷新期间账号已删除，未重新创建账号".to_string())?;
-    if latest.access_token != account.access_token || latest.refresh_token != account.refresh_token
-    {
-        return Err("刷新期间登录凭证已被更新，已丢弃旧刷新结果；请重试".to_string());
-    }
-    account = latest;
-    apply_refresh_result(&mut account, payload, &diagnostics, now_ts());
-
-    let updated = account.clone();
-    upsert_account_record(account)?;
-    logger::log_info(&format!(
-        "[WorkBuddy Refresh] 刷新结果:id={}, email={}, elapsed={}ms, token_refreshed={}, quota_refreshed={}",
+        "[WorkBuddy Refresh] id={}, elapsed={}ms, token_refreshed={}, quota_refreshed={}",
         updated.id,
-        updated.email,
         started_at.elapsed().as_millis(),
         diagnostics.token_refreshed,
         diagnostics.quota_refreshed
@@ -795,26 +639,12 @@ async fn refresh_account_token_once(
 pub(crate) async fn refresh_account_detailed(
     account_id: &str,
 ) -> Result<(WorkbuddyAccount, workbuddy_oauth::RefreshDiagnostics), String> {
-    let refresh_lock = WORKBUDDY_REFRESH_LOCKS
-        .lock()
-        .map_err(|_| "获取 WorkBuddy 刷新锁失败".to_string())?
-        .entry(account_id.to_string())
-        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
-        .clone();
-    let _refresh_guard = refresh_lock.lock().await;
-    let result = refresh_account_token_once(account_id).await;
-    if let Err(error) = &result {
-        if let Some(mut account) = load_account(account_id) {
-            account.quota_query_last_error = Some(error.clone());
-            account.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
-            if is_login_required_error(error) {
-                account.status = Some(LOGIN_REQUIRED_STATUS.to_string());
-                account.status_reason = Some("WorkBuddy 登录已失效，请重新登录".to_string());
-            }
-            let _ = upsert_account_record(account);
-        }
-    }
-    result
+    let id = normalize_account_id(account_id)?;
+    WORKBUDDY_REFRESHES
+        .run(id.clone(), move || async move {
+            refresh_account_token_once(&id).await
+        })
+        .await?
 }
 
 pub async fn refresh_account_token(account_id: &str) -> Result<WorkbuddyAccount, String> {
@@ -864,7 +694,7 @@ pub fn remove_account(account_id: &str) -> Result<(), String> {
     let _lock = WORKBUDDY_ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|_| "获取 WorkBuddy 账号锁失败".to_string())?;
-    let mut index = load_account_index();
+    let mut index = load_account_index_checked()?;
     index.accounts.retain(|item| item.id != account_id);
     save_account_index(&index)?;
     delete_account_file(account_id)?;
@@ -882,25 +712,38 @@ pub fn update_account_tags(
     account_id: &str,
     tags: Vec<String>,
 ) -> Result<WorkbuddyAccount, String> {
-    let mut account = load_account(account_id).ok_or_else(|| "账号不存在".to_string())?;
+    let _guard = WORKBUDDY_ACCOUNT_INDEX_LOCK
+        .lock()
+        .map_err(|_| "获取 WorkBuddy 账号锁失败")?;
+    let mut account = load_account_checked(account_id)?;
     account.tags = Some(tags);
     account.last_used = now_ts();
-    let updated = account.clone();
-    upsert_account_record(account)?;
-    Ok(updated)
+    save_account_file(&account)?;
+    let mut index = load_account_index_checked()?;
+    refresh_summary(&mut index, &account);
+    save_account_index(&index)?;
+    Ok(account)
 }
 
 pub fn import_from_json(json_content: &str) -> Result<Vec<WorkbuddyAccount>, String> {
-    if json_content.len() > 10 * 1024 * 1024 { return Err("账号备份超过 10MB，请分批导入".into()); }
+    if json_content.len() > 10 * 1024 * 1024 {
+        return Err("账号备份超过 10MB，请分批导入".into());
+    }
     let value = serde_json::from_str::<Value>(json_content.trim_start_matches('\u{feff}'))
         .map_err(|_| "无法解析 WorkBuddy JSON 导入内容".to_string())?;
     import_from_json_value(value)
 }
 
-fn parse_import_records(value: Value) -> Result<Vec<(WorkbuddyOAuthCompletePayload, Option<WorkbuddyAccount>)>, String> {
+fn parse_import_records(
+    value: Value,
+) -> Result<Vec<(WorkbuddyOAuthCompletePayload, Option<WorkbuddyAccount>)>, String> {
     if let Some(format) = value.get("format").and_then(Value::as_str) {
-        if format != "cle-workbuddy-accounts" { return Err("这不是 WorkBuddy 账号备份".into()); }
-        if value.get("schemaVersion").and_then(Value::as_u64) != Some(1) { return Err("不支持此备份版本，请升级后导入".into()); }
+        if format != "cle-workbuddy-accounts" {
+            return Err("这不是 WorkBuddy 账号备份".into());
+        }
+        if value.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
+            return Err("不支持此备份版本，请升级后导入".into());
+        }
     }
     let items = match value {
         Value::Array(items) => items,
@@ -924,7 +767,9 @@ fn parse_import_records(value: Value) -> Result<Vec<(WorkbuddyOAuthCompletePaylo
     if items.is_empty() {
         return Err("导入数组为空".to_string());
     }
-    if items.len() > 1000 { return Err("单次最多导入 1000 个账号，请分批导入".into()); }
+    if items.len() > 1000 {
+        return Err("单次最多导入 1000 个账号，请分批导入".into());
+    }
     // Validate the whole batch before writing its first record.
     items
         .into_iter()
@@ -947,21 +792,34 @@ fn import_from_json_value(value: Value) -> Result<Vec<WorkbuddyAccount>, String>
     for (payload, snapshot) in parsed {
         let mut account = upsert_account(payload)?;
         if let Some(snapshot) = snapshot {
-            account.tags = merge_string_list(account.tags, snapshot.tags);
-            account.created_at = account.created_at.min(snapshot.created_at);
-            // Quota fields above came from this snapshot; keep their matching timestamp.
-            account.usage_updated_at = snapshot.usage_updated_at.or(account.usage_updated_at);
-            if snapshot.last_checkin_time >= account.last_checkin_time {
-                account.last_checkin_time = snapshot.last_checkin_time.or(account.last_checkin_time);
-                account.checkin_streak = snapshot.checkin_streak.or(account.checkin_streak);
-                account.checkin_rewards = snapshot.checkin_rewards.or(account.checkin_rewards);
+            let _guard = WORKBUDDY_ACCOUNT_INDEX_LOCK
+                .lock()
+                .map_err(|_| "获取 WorkBuddy 账号锁失败")?;
+            let mut latest = load_account_checked(&account.id)?;
+            let unchanged = same_credentials(&latest, &account)?;
+            latest.tags = merge_string_list(latest.tags, snapshot.tags);
+            latest.created_at = latest.created_at.min(snapshot.created_at);
+            if snapshot.last_checkin_time >= latest.last_checkin_time {
+                latest.last_checkin_time = snapshot.last_checkin_time.or(latest.last_checkin_time);
+                latest.checkin_streak = snapshot.checkin_streak.or(latest.checkin_streak);
+                latest.checkin_rewards = snapshot.checkin_rewards.or(latest.checkin_rewards);
             }
-            account.last_used = account.last_used.max(snapshot.last_used);
-            account.token_refreshed_at = snapshot.token_refreshed_at.or(account.token_refreshed_at);
-            account.token_refresh_last_error = snapshot.token_refresh_last_error;
-            account.quota_query_last_error = snapshot.quota_query_last_error;
-            account.quota_query_last_error_at = snapshot.quota_query_last_error_at;
-            account = upsert_account_record(account)?;
+            latest.last_used = latest.last_used.max(snapshot.last_used);
+            if unchanged {
+                latest.usage_updated_at = snapshot.usage_updated_at.or(latest.usage_updated_at);
+                latest.token_refreshed_at =
+                    snapshot.token_refreshed_at.or(latest.token_refreshed_at);
+                latest.refresh_expires_at =
+                    snapshot.refresh_expires_at.or(latest.refresh_expires_at);
+                latest.token_refresh_last_error = snapshot.token_refresh_last_error;
+                latest.quota_query_last_error = snapshot.quota_query_last_error;
+                latest.quota_query_last_error_at = snapshot.quota_query_last_error_at;
+            }
+            save_account_file(&latest)?;
+            let mut index = load_account_index_checked()?;
+            refresh_summary(&mut index, &latest);
+            save_account_index(&index)?;
+            account = latest;
         }
         imported.push(account);
     }
@@ -1054,7 +912,12 @@ fn payload_from_import_value(raw: Value) -> Result<WorkbuddyOAuthCompletePayload
         enterprise_name,
         access_token,
         refresh_token,
-        token_type: obj.get("token_type").or_else(|| obj.get("tokenType")).and_then(Value::as_str).map(str::to_string).or_else(|| Some("Bearer".to_string())),
+        token_type: obj
+            .get("token_type")
+            .or_else(|| obj.get("tokenType"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| Some("Bearer".to_string())),
         expires_at,
         domain,
         plan_type: obj
@@ -1084,8 +947,15 @@ fn payload_from_import_value(raw: Value) -> Result<WorkbuddyOAuthCompletePayload
         auth_raw: obj.get("auth_raw").cloned(),
         profile_raw: obj.get("profile_raw").cloned(),
         usage_raw: obj.get("usage_raw").cloned(),
-        status: obj.get("status").and_then(Value::as_str).map(str::to_string).or_else(|| Some("normal".into())),
-        status_reason: obj.get("status_reason").and_then(Value::as_str).map(str::to_string),
+        status: obj
+            .get("status")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| Some("normal".into())),
+        status_reason: obj
+            .get("status_reason")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     })
 }
 
@@ -1100,11 +970,16 @@ pub fn export_accounts(account_ids: &[String]) -> Result<String, String> {
     serde_json::to_string_pretty(&serde_json::json!({
         "format": "cle-workbuddy-accounts", "schemaVersion": 1,
         "exportedAt": chrono::Utc::now().to_rfc3339(), "accounts": accounts,
-    })).map_err(|e| format!("导出失败:{}", e))
+    }))
+    .map_err(|e| format!("导出失败:{}", e))
 }
 
 pub fn export_backup_file(path: &Path, account_ids: &[String]) -> Result<(), String> {
-    if !path.is_absolute() || !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("json")) {
+    if !path.is_absolute()
+        || !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+    {
         return Err("请选择 JSON 备份文件的完整路径".into());
     }
     super::atomic_write::write_private_string_atomic(path, &export_accounts(account_ids)?)
@@ -1545,8 +1420,13 @@ fn build_default_auth_value(account: &WorkbuddyAccount) -> Value {
             ))),
         );
 
-        let refresh_expires_at = raw_auth_obj
-            .and_then(|obj| json_object_i64_field(obj, &["refreshExpiresAt", "refresh_expires_at"]))
+        let refresh_expires_at = account
+            .refresh_expires_at
+            .or_else(|| {
+                raw_auth_obj.and_then(|obj| {
+                    json_object_i64_field(obj, &["refreshExpiresAt", "refresh_expires_at"])
+                })
+            })
             .filter(|value| *value > 0)
             .map(|value| {
                 if value > 10_000_000_000 {
@@ -2012,14 +1892,26 @@ mod management_tests {
         account.checkin_streak = Some(3);
         account.checkin_rewards = Some(json!({"points": 10}));
         let records = json!([account]);
-        let parsed = parse_import_records(json!({"format":"cle-workbuddy-accounts", "schemaVersion":1, "accounts":records})).unwrap();
+        let parsed = parse_import_records(
+            json!({"format":"cle-workbuddy-accounts", "schemaVersion":1, "accounts":records}),
+        )
+        .unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].0.status.as_deref(), Some("login_required"));
-        assert_eq!(parsed[0].0.status_reason.as_deref(), Some("fixture expired"));
+        assert_eq!(
+            parsed[0].0.status_reason.as_deref(),
+            Some("fixture expired")
+        );
         assert_eq!(parsed[0].1.as_ref().unwrap().checkin_streak, Some(3));
         assert!(parse_import_records(records.clone()).is_ok());
-        assert!(parse_import_records(json!({"format":"another-provider", "schemaVersion":1, "accounts":records})).is_err());
-        assert!(parse_import_records(json!({"format":"cle-workbuddy-accounts", "schemaVersion":2, "accounts":records})).is_err());
+        assert!(parse_import_records(
+            json!({"format":"another-provider", "schemaVersion":1, "accounts":records})
+        )
+        .is_err());
+        assert!(parse_import_records(
+            json!({"format":"cle-workbuddy-accounts", "schemaVersion":2, "accounts":records})
+        )
+        .is_err());
         assert!(parse_import_records(json!([{"id":"../../escape", "email":"unknown", "access_token":"fixture", "created_at":1, "last_used":2}])).is_err());
     }
 
@@ -2070,13 +1962,20 @@ mod management_tests {
             .map(|account| account.id.clone())
             .collect::<Vec<_>>();
         let exported = export_accounts(&ids).unwrap();
-        assert_eq!(serde_json::from_str::<Value>(&exported).unwrap()["schemaVersion"], 1);
+        assert_eq!(
+            serde_json::from_str::<Value>(&exported).unwrap()["schemaVersion"],
+            1
+        );
         let backup_path = actual.join("private-backup.json");
         export_backup_file(&backup_path, &ids).unwrap();
         assert!(backup_path.is_file());
-        #[cfg(unix)] {
+        #[cfg(unix)]
+        {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(&backup_path).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                fs::metadata(&backup_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
         assert!(!actual.join("private-backup.json.bak").exists());
         let restored = import_from_json(&exported).unwrap();
@@ -2106,7 +2005,9 @@ mod management_tests {
         assert_eq!(full.status.as_deref(), Some("login_required"));
         assert_eq!(full.checkin_streak, Some(4));
         assert_eq!(full.checkin_rewards, Some(json!({"points":9})));
-        let roundtrip = import_from_json(&export_accounts(&[full.id.clone()]).unwrap()).unwrap().remove(0);
+        let roundtrip = import_from_json(&export_accounts(&[full.id.clone()]).unwrap())
+            .unwrap()
+            .remove(0);
         assert_eq!(roundtrip.last_checkin_time, full.last_checkin_time);
         assert_eq!(roundtrip.status_reason, full.status_reason);
     }
@@ -2118,7 +2019,10 @@ pub fn update_checkin_info(
     streak: i32,
     rewards: Option<serde_json::Value>,
 ) -> Result<WorkbuddyAccount, String> {
-    let mut account = load_account(account_id).ok_or_else(|| "账号不存在".to_string())?;
+    let _guard = WORKBUDDY_ACCOUNT_INDEX_LOCK
+        .lock()
+        .map_err(|_| "获取 WorkBuddy 账号锁失败")?;
+    let mut account = load_account_checked(account_id)?;
 
     if let Some(time) = last_checkin_time {
         account.last_checkin_time = Some(time);

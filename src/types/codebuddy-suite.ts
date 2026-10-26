@@ -22,6 +22,7 @@ export interface CodebuddySuiteAccountBase {
   refresh_token?: string | null;
   token_type?: string | null;
   expires_at?: number | null;
+  refresh_expires_at?: number | null;
   domain?: string | null;
 
   plan_type?: string;

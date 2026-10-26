@@ -67,3 +67,29 @@ func TestWorkbuddyTokenLimitsRespectAliasesPrefixesAndKeyAccountScope(t *testing
 		t.Fatal("borrowed capacities from an unrelated provider gateway")
 	}
 }
+
+func TestKnownProviderMaximaReplaceGenericDefaultsWithoutErasingThemWithNull(t *testing.T) {
+	m := &manifest{Accounts: []accountSpec{
+		{ID: "claude", Provider: "claude", Models: []string{"claude-sonnet-4-6", "claude-opus-5-5"},
+			ModelLimits: map[string]modelTokenLimits{"claude-sonnet-4-6": {}}},
+	}}
+	for _, id := range m.Accounts[0].Models {
+		if got := tokenLimitsForModel(m, nil, id); got.MaxInputTokens != 1000000 || got.MaxOutputTokens != 128000 {
+			t.Fatalf("%s retained a generic default: %#v", id, got)
+		}
+		catalog := modelsResponseWithTokenLimits(m, nil, []string{id}, true)["models"].([]map[string]any)[0]
+		if catalog["context_window"] != 1000000 || catalog["max_context_window"] != 1000000 {
+			t.Fatalf("client catalog lost real maximum: %#v", catalog)
+		}
+	}
+	registered := manifestRegistryModelsForAccount(m, &m.Accounts[0], "claude")
+	if registered[0].ContextLength != 1000000 || registered[0].MaxCompletionTokens != 128000 {
+		t.Fatal("empty manifest capacity erased the provider metadata")
+	}
+	if got := staticTokenLimits("antigravity", "claude-sonnet-4-6"); got.MaxInputTokens == 1000000 {
+		t.Fatal("borrowed the direct Anthropic allowance for a different channel")
+	}
+	if got := staticTokenLimits("custom", "claude-opus-5-5"); got.MaxInputTokens != 0 {
+		t.Fatal("invented a capacity for an unknown compatible gateway")
+	}
+}

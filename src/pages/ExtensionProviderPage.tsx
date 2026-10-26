@@ -147,12 +147,13 @@ export function ExtensionProviderPage({ initialProvider = 'qoder', onSynced }: {
           if (!login.hosted) await openUrl(login.authUrl);
         }, '已打开官方授权页，完成登录后会自动接入。')}><Globe />网页登录 / 添加账号</button>}
       {desktopImport && <button className="btn btn-secondary" disabled={busy || !!task} onClick={() => void action(async () => { await api.extensionRequest('POST', '/api/accounts', { provider, edition, name, importDesktop: true }); await sync(); }, '桌面登录态已导入并接入 API')}>导入当前桌面登录态</button>}</div>
-      {provider === 'trae' && <p>当前接入的是 Trae 国内 SOLO 通道，不支持国际版凭证。官网可能按网络地区限制访问；系统浏览器和独立窗口共用同一轮本机回调，不要修改回调端口。</p>}
+      {provider === 'trae' && <p>Trae 国内 / 国内 SOLO：默认用系统浏览器登录，沿用浏览器的网络与登录环境；后台预检不会再提前取消授权。完成后请保留本页面等待账号返回。若官网仍提示地区限制，需要使用官方支持的网络；不要改回调端口或换国际版链接。</p>}
       {provider === 'raccoon' && <p>请在弹出的独立窗口完成官方登录。每次使用全新会话，可添加多个账号；直接在外部浏览器登录无法把专用回调交回 C.le。</p>}
       {provider === 'qoder' && <p>支持网页登录，或在下方粘贴完整凭证 / {`{"pat":"你的个人访问令牌"}`}；不提供点了必失败的桌面导入。</p>}
       {provider === 'autoclaw-intl' && <p>国际版需要浏览器风控验证，先在官方客户端登录，再导入登录态或凭证；不会提供点了必失败的授权按钮。</p>}
       {task && <div className="mm-extension-fields"><span>等待 {EXTENSION_PROVIDERS.find(item => item.id === task.provider)?.label} 官方授权（5 分钟内）…{task.hosted && '独立窗口登录，每次可添加不同账号。'}</span><button className="btn btn-secondary" disabled={busy} onClick={() => void action(() => task.hosted ? api.openExtensionLogin(task.state) : openUrl(task.authUrl), '已重新打开授权页')}>重新打开授权页</button>
-        {task.provider !== 'raccoon' && <button className="btn btn-secondary" disabled={busy} onClick={() => void action(() => openUrl(task.authUrl), '已交给系统浏览器打开；完成后保留本应用等待回调')}>用系统浏览器打开</button>}
+        {task.hosted && task.provider !== 'raccoon' && <button className="btn btn-secondary" disabled={busy} onClick={() => void action(() => openUrl(task.authUrl), '已交给系统浏览器打开；完成后保留本应用等待回调')}>用系统浏览器打开</button>}
+        {task.provider === 'trae' && !task.hosted && <button className="btn btn-secondary" disabled={busy} onClick={() => void action(() => api.openExtensionLogin(task.state), '已打开独立授权窗口；仍使用同一轮 PKCE 和本机回调')}>在独立窗口重试</button>}
         <button className="btn btn-secondary" disabled={busy} onClick={() => void action(() => navigator.clipboard.writeText(task.authUrl), task.provider === 'raccoon' ? '链接已复制；小浣熊须在本应用授权窗口完成，系统浏览器不能接回专用协议' : '授权链接已复制')}>复制授权链接</button>
         <input placeholder="没有自动回跳？粘贴完整回调链接" value={callback} onChange={event => setCallback(event.target.value)} /><button className="btn btn-secondary" disabled={busy || !callback} onClick={() => void action(async () => {
         const response = await api.extensionRequest<{ continue?: boolean; nextUrl?: string }>('POST', '/api/session/login/callback', { callbackUrl: callback, state: task.state });

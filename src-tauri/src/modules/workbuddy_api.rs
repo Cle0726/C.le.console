@@ -154,11 +154,19 @@ pub async fn current_account(id: &str, force_refresh: bool) -> Result<WorkbuddyA
             .is_some_and(|at| at <= chrono::Utc::now().timestamp() + 120)
     {
         let (fresh, diagnostics) = workbuddy_account::refresh_account_detailed(id).await?;
+        // A refresh error does not invalidate an access token that the quota
+        // endpoint has just accepted. An expired/rejected token still fails.
         if let Some(error) = diagnostics.token_error {
-            return Err(error);
+            if !diagnostics.quota_refreshed
+                || fresh.expires_at.is_some_and(|at| at <= chrono::Utc::now().timestamp()) {
+                return Err(error);
+            }
         }
         if fresh.access_token.trim().is_empty() {
             return Err("WorkBuddy 缺少登录凭证".into());
+        }
+        if fresh.status.as_deref() == Some("login_required") {
+            return Err("WorkBuddy 登录已失效，原账号和凭证仍已保留，请重新授权".into());
         }
         return Ok(fresh);
     }

@@ -22,6 +22,8 @@ pub struct WorkbuddyAccount {
     pub token_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_expires_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
 

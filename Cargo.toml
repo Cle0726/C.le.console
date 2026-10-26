@@ -6,6 +6,14 @@ members = [
 ]
 resolver = "2"
 
+# Workspace members' release profiles are ignored by Cargo. Keep the desktop
+# app's intended compact release settings here so every build uses them.
+[profile.release]
+lto = false
+codegen-units = 16
+opt-level = "s"
+strip = true
+
 [workspace.dependencies]
 # Common dependencies with shared versions
 serde = { version = "1", features = ["derive"] }

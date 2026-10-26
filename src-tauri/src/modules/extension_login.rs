@@ -101,33 +101,12 @@ fn is_callback(login: &Login, url: &Url) -> bool {
 fn allow_navigation(url: &Url) -> bool {
     url.scheme() == "https" || url.as_str() == "about:blank"
 }
-fn trae_region_error(status: u16, body: &str) -> Option<String> {
-    (status == 403 && body.contains("当前区域不支持访问")).then(||
-        "Trae 国内版官方授权站拒绝当前网络区域（HTTP 403：当前区域不支持访问）。请在官方支持的网络地区重试，或粘贴已有的国内版完整凭证；当前代理不支持国际版账号，不能直接换国际站链接。".into())
-}
-async fn check_trae_region(url: &Url) -> Result<(), String> {
-    // This is an anonymous page request, never inference, token exchange or proxy-setting changes.
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(6))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "授权页检查初始化失败")?;
-    if let Ok(mut response) = client.get(url.clone()).send().await {
-        if response.status().as_u16() == 403 {
-            let mut bytes = Vec::new();
-            while let Ok(Some(chunk)) = response.chunk().await {
-                if bytes.len() + chunk.len() > 8192 {
-                    break;
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            if let Some(error) = trae_region_error(403, &String::from_utf8_lossy(&bytes)) {
-                return Err(error);
-            }
-        }
-    }
-    // A failed probe is not proof the user's browser cannot connect.
-    Ok(())
+fn prefer_system_browser(provider: &str) -> bool {
+    // The browser uses the user's normal network/PAC/SSO session. A Rust HTTP
+    // preflight can take a different route and must not cancel a valid listener
+    // before the user even sees the official page. Never rewrite its host,
+    // callback port, PKCE challenge or domestic/intl variant.
+    provider == "trae"
 }
 fn capture(app: &AppHandle, login: &Login, url: &Url) -> bool {
     if !is_callback(login, url) {
@@ -253,6 +232,7 @@ pub async fn start(
         result["hosted"] = json!(false);
         return Ok(result);
     }
+    let hosted_by_default = !prefer_system_browser(&provider);
     let hosted = async {
         let url = result
             .get("authUrl")
@@ -260,9 +240,6 @@ pub async fn start(
             .and_then(|s| Url::parse(s).ok())
             .ok_or("授权页地址无效")?;
         let callback = validate_entry(&provider, &url)?;
-        if provider == "trae" {
-            check_trae_region(&url).await?;
-        }
         if provider == "raccoon"
             && url
                 .query_pairs()
@@ -288,14 +265,15 @@ pub async fn start(
             }
             map.insert(state.clone(), login.clone());
         }
-        open_window(app.clone(), login).await
+        if prefer_system_browser(&login.provider) { Ok(()) }
+        else { open_window(app.clone(), login).await }
     }
     .await;
     if let Err(error) = hosted {
         let _ = finish(app, state, true).await;
         return Err(error);
     }
-    result["hosted"] = json!(true);
+    result["hosted"] = json!(hosted_by_default);
     Ok(result)
 }
 pub async fn reopen(app: AppHandle, state: String) -> Result<(), String> {
@@ -402,11 +380,9 @@ mod tests {
         ));
     }
     #[test]
-    fn regional_restriction_is_not_misreported_as_a_callback_failure() {
-        assert!(trae_region_error(403, "抱歉，您当前区域不支持访问")
-            .unwrap()
-            .contains("国际版"));
-        assert!(trae_region_error(200, "fixture").is_none());
-        assert!(trae_region_error(403, "captcha challenge").is_none());
+    fn trae_uses_system_browser_without_cancelling_the_callback_task() {
+        assert!(prefer_system_browser("trae"));
+        assert!(!prefer_system_browser("raccoon"));
+        assert!(!prefer_system_browser("qoder"));
     }
 }

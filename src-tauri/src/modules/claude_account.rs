@@ -3,7 +3,7 @@ use crate::models::claude::{
     ClaudeDesktopGatewayModelMapping, ClaudeDesktopGatewayModelsResult,
     ClaudeDesktopLoginStartResponse, ClaudeOAuthStartResponse, ClaudeQuota, ClaudeQuotaErrorInfo,
 };
-use crate::modules::{account, atomic_write, logger};
+use crate::modules::{account, atomic_write, logger, credential_store, account_singleflight::SingleFlight};
 #[cfg(target_os = "macos")]
 use aes::Aes128;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -120,6 +120,8 @@ const CLAUDE_DESKTOP_PROFILE_ITEMS: &[&str] = &[
 ];
 static CLAUDE_ACCOUNT_INDEX_LOCK: std::sync::LazyLock<Mutex<()>> =
     std::sync::LazyLock::new(|| Mutex::new(()));
+static CLAUDE_REFRESHES: std::sync::LazyLock<SingleFlight<Result<ClaudeAccount, String>>> =
+    std::sync::LazyLock::new(SingleFlight::default);
 static CLAUDE_PENDING_OAUTH_LOGIN: std::sync::LazyLock<Mutex<Option<PendingClaudeOAuthState>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
 static CLAUDE_PENDING_DESKTOP_LOGIN: std::sync::LazyLock<
@@ -374,44 +376,99 @@ pub fn accounts_index_path_string() -> Result<String, String> {
 }
 
 fn account_file_path(account_id: &str) -> Result<PathBuf, String> {
+    if account_id.is_empty() || account_id.contains("..")
+        || !account_id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) {
+        return Err("Claude 账号 ID 非法".into());
+    }
     Ok(get_accounts_dir()?.join(format!("{}.json", account_id)))
 }
 
 fn load_index() -> Result<ClaudeAccountIndex, String> {
     let path = get_accounts_index_path()?;
-    if !path.exists() {
-        return Ok(ClaudeAccountIndex::new());
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err("读取 Claude 索引失败；未按空账号覆盖".into()),
+    };
+    let parsed = bytes.as_deref().and_then(|bytes| serde_json::from_slice::<ClaudeAccountIndex>(bytes).ok());
+    let mut index = parsed.unwrap_or_else(|| fs::read(path.with_extension("json.bak")).ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_else(ClaudeAccountIndex::new));
+    // Recover orphan details after a crash between detail and index commits.
+    for entry in fs::read_dir(get_accounts_dir()?).map_err(|_| "读取 Claude 详情目录失败")? {
+        let path = entry.map_err(|_| "遍历 Claude 详情目录失败")?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") { continue; }
+        let Some(id) = path.file_stem().and_then(|value| value.to_str()) else { continue; };
+        if index.accounts.iter().any(|summary| summary.id == id) { continue; }
+        let account = load_account_file(id).ok_or("Claude 账号详情无法恢复；原文件已保留")?;
+        index.accounts.push(account.summary());
     }
-    let content =
-        fs::read_to_string(&path).map_err(|e| format!("读取 Claude 账号索引失败: {}", e))?;
-    if content.trim().is_empty() {
-        return Ok(ClaudeAccountIndex::new());
+    if bytes.is_some() && index.accounts.is_empty()
+        && bytes.as_deref().is_some_and(|bytes| serde_json::from_slice::<ClaudeAccountIndex>(bytes).is_err()) {
+        return Err("Claude 索引损坏，无法完整恢复；原文件已保留，未按空账号覆盖".into());
     }
-    atomic_write::parse_json_with_auto_restore::<ClaudeAccountIndex>(&path, &content)
-        .map_err(|e| format!("解析 Claude 账号索引失败: {}", e))
+    Ok(index)
 }
 
 fn save_index(index: &ClaudeAccountIndex) -> Result<(), String> {
     let path = get_accounts_index_path()?;
-    let content = serde_json::to_string_pretty(index)
-        .map_err(|e| format!("序列化 Claude 账号索引失败: {}", e))?;
-    atomic_write::write_string_atomic(&path, &content)
+    if let Ok(previous) = fs::read_to_string(&path) {
+        let backup = if serde_json::from_str::<ClaudeAccountIndex>(&previous).is_ok() {
+            path.with_extension("json.bak")
+        } else { path.with_extension(format!("json.bad-{}", now_ts_ms())) };
+        atomic_write::write_private_string_atomic(&backup, &previous)?;
+    }
+    let content = serde_json::to_string_pretty(index).map_err(|_| "序列化 Claude 索引失败")?;
+    atomic_write::write_private_string_atomic(&path, &content)
+}
+
+fn claude_record(account: &ClaudeAccount) -> Result<Value, String> {
+    serde_json::to_value(account).map_err(|_| "序列化 Claude 账号失败".into())
+}
+
+pub(crate) fn migrate_legacy_gateway_credential(
+    id: &str,
+    candidate: &Value,
+    baseline: Option<&Value>,
+    expires_at_ms: Option<i64>,
+) -> Result<(), String> {
+    let _guard = CLAUDE_ACCOUNT_INDEX_LOCK.lock().map_err(|_| "无法获取 Claude 账号锁")?;
+    let mut account = load_account(id).ok_or("Claude 账号无法读取，已停止旧代理凭证清理")?;
+    credential_store::preserve_legacy_gateway(&account_file_path(id)?, candidate)?;
+    if candidate.get("type").and_then(Value::as_str) != Some("claude")
+        || candidate.get("email").and_then(Value::as_str).map(|email| email.trim().to_ascii_lowercase()) != Some(account.email.trim().to_ascii_lowercase()) {
+        return Ok(());
+    }
+    let Some(mut raw) = account.claude_credentials_raw.clone() else { return Ok(()); };
+    let Some(oauth) = raw.get_mut("claudeAiOauth").and_then(Value::as_object_mut) else { return Ok(()); };
+    // Only the legacy file belonging to the same saved grant may supersede it.
+    if baseline.and_then(|base| base.get("refresh_token")) != oauth.get("refreshToken")
+        || baseline.and_then(|base| base.get("access_token")) != oauth.get("accessToken") {
+        return Ok(());
+    }
+    let acknowledged_rotation = candidate.get("last_refresh").and_then(Value::as_str)
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok()).is_some();
+    let Some(expires) = expires_at_ms.filter(|expires| *expires > 0) else { return Ok(()); };
+    if !acknowledged_rotation || read_i64_value(oauth.get("expiresAt")).is_some_and(|saved| saved >= expires) {
+        return Ok(());
+    }
+    let Some(access) = candidate.get("access_token").and_then(Value::as_str).filter(|value| !value.trim().is_empty()) else { return Ok(()); };
+    let Some(refresh) = candidate.get("refresh_token").and_then(Value::as_str).filter(|value| !value.trim().is_empty()) else { return Ok(()); };
+    oauth.insert("accessToken".into(), json!(access));
+    oauth.insert("refreshToken".into(), json!(refresh));
+    oauth.insert("expiresAt".into(), json!(expires));
+    account.claude_credentials_raw = Some(raw);
+    if account.quota_error.as_ref().is_some_and(|error| credential_store::refresh_rejected(&error.message)) {
+        account.quota_error = None;
+    }
+    write_account_file(&account)
 }
 
 fn write_account_file(account: &ClaudeAccount) -> Result<(), String> {
-    let path = account_file_path(&account.id)?;
-    let content = serde_json::to_string_pretty(account)
-        .map_err(|e| format!("序列化 Claude 账号失败: {}", e))?;
-    atomic_write::write_string_atomic(&path, &content)
+    credential_store::save(&account_file_path(&account.id)?, &claude_record(account)?)
 }
 
 fn load_account_file(account_id: &str) -> Option<ClaudeAccount> {
-    let path = account_file_path(account_id).ok()?;
-    if !path.exists() {
-        return None;
-    }
-    let content = fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&content).ok()
+    serde_json::from_value(credential_store::load(&account_file_path(account_id).ok()?).ok()?).ok()
 }
 
 pub fn load_account(account_id: &str) -> Option<ClaudeAccount> {
@@ -484,26 +541,6 @@ fn merge_tags(left: Option<Vec<String>>, right: Option<Vec<String>>) -> Option<V
     (!tags.is_empty()).then(|| tags.into_iter().collect())
 }
 
-fn choose_desktop_duplicate_base<'a>(
-    left: &'a ClaudeAccount,
-    right: &'a ClaudeAccount,
-    current_id: Option<&str>,
-) -> &'a ClaudeAccount {
-    if current_id == Some(left.id.as_str()) {
-        return left;
-    }
-    if current_id == Some(right.id.as_str()) {
-        return right;
-    }
-    let left_score = (left.last_used, left.created_at);
-    let right_score = (right.last_used, right.created_at);
-    if right_score > left_score {
-        right
-    } else {
-        left
-    }
-}
-
 fn merge_desktop_account_fields(base: &ClaudeAccount, incoming: &ClaudeAccount) -> ClaudeAccount {
     let mut merged = base.clone();
     if is_real_email(&incoming.email) || !is_real_email(&merged.email) {
@@ -573,43 +610,6 @@ fn merge_desktop_account_fields(base: &ClaudeAccount, incoming: &ClaudeAccount) 
     merged
 }
 
-fn remove_desktop_snapshot_if_unused(snapshot: Option<&str>, keep_snapshot: Option<&str>) {
-    let Some(snapshot) = snapshot.and_then(|value| normalize_non_empty(Some(value))) else {
-        return;
-    };
-    if keep_snapshot
-        .and_then(|value| normalize_non_empty(Some(value)))
-        .map(|keep| keep == snapshot)
-        .unwrap_or(false)
-    {
-        return;
-    }
-    let snapshot_path = PathBuf::from(snapshot);
-    if snapshot_path.exists() {
-        if let Err(error) = remove_path_if_exists(&snapshot_path) {
-            logger::log_warn(&format!(
-                "[Claude] 删除重复账号快照失败: path={}, error={}",
-                snapshot_path.display(),
-                error
-            ));
-        }
-    }
-}
-
-fn delete_account_file_silent(account_id: &str) {
-    if let Ok(path) = account_file_path(account_id) {
-        if path.exists() {
-            if let Err(error) = fs::remove_file(&path) {
-                logger::log_warn(&format!(
-                    "[Claude] 删除重复账号文件失败: path={}, error={}",
-                    path.display(),
-                    error
-                ));
-            }
-        }
-    }
-}
-
 fn find_existing_desktop_account(incoming: &ClaudeAccount) -> Option<ClaudeAccount> {
     let index = load_index().ok()?;
     index
@@ -621,153 +621,30 @@ fn find_existing_desktop_account(incoming: &ClaudeAccount) -> Option<ClaudeAccou
 }
 
 fn save_desktop_account_with_dedupe(incoming: ClaudeAccount) -> Result<ClaudeAccount, String> {
-    let old_snapshot = incoming.desktop_profile_dir.clone();
     let Some(existing) = find_existing_desktop_account(&incoming) else {
         return save_account_and_index(incoming);
     };
-    let existing_snapshot = existing.desktop_profile_dir.clone();
-    let merged = merge_desktop_account_fields(&existing, &incoming);
-    let saved = save_account_and_index(merged)?;
-    remove_desktop_snapshot_if_unused(
-        existing_snapshot.as_deref(),
-        saved.desktop_profile_dir.as_deref(),
-    );
-    if saved.desktop_profile_dir.as_deref() != old_snapshot.as_deref() {
-        remove_desktop_snapshot_if_unused(
-            old_snapshot.as_deref(),
-            saved.desktop_profile_dir.as_deref(),
-        );
-    }
-    Ok(saved)
-}
-
-fn dedupe_desktop_accounts(accounts: Vec<ClaudeAccount>) -> Result<Vec<ClaudeAccount>, String> {
-    let current_id =
-        crate::modules::provider_current_state::get_current_account_id("claude_desktop_account")
-            .ok()
-            .flatten();
-    let mut kept: Vec<ClaudeAccount> = Vec::with_capacity(accounts.len());
-    let mut removed_ids = Vec::new();
-    let mut rewired_current: Option<String> = None;
-
-    for account in accounts {
-        let Some(index) = kept
-            .iter()
-            .position(|existing| desktop_accounts_same_identity(existing, &account))
-        else {
-            kept.push(account);
-            continue;
-        };
-
-        let existing = kept.remove(index);
-        let base =
-            choose_desktop_duplicate_base(&existing, &account, current_id.as_deref()).clone();
-        let other = if base.id == existing.id {
-            account
-        } else {
-            existing
-        };
-        let old_base_snapshot = base.desktop_profile_dir.clone();
-        let other_snapshot = other.desktop_profile_dir.clone();
-        let mut merged = merge_desktop_account_fields(&base, &other);
-        merged.id = base.id.clone();
-        if current_id.as_deref() == Some(other.id.as_str()) {
-            rewired_current = Some(base.id.clone());
-        }
-        remove_desktop_snapshot_if_unused(
-            other_snapshot.as_deref(),
-            merged.desktop_profile_dir.as_deref(),
-        );
-        if merged.desktop_profile_dir.as_deref() != old_base_snapshot.as_deref() {
-            remove_desktop_snapshot_if_unused(
-                old_base_snapshot.as_deref(),
-                merged.desktop_profile_dir.as_deref(),
-            );
-        }
-        delete_account_file_silent(&other.id);
-        removed_ids.push(other.id.clone());
-        kept.push(merged);
-    }
-
-    if removed_ids.is_empty() {
-        return Ok(kept);
-    }
-
-    for account in &kept {
-        write_account_file(account)?;
-    }
-    let mut index = ClaudeAccountIndex::new();
-    index.accounts = kept.iter().map(|account| account.summary()).collect();
-    index.accounts.sort_by(|a, b| b.last_used.cmp(&a.last_used));
-    save_index(&index)?;
-    if let Some(next_current) = rewired_current {
-        let _ = crate::modules::provider_current_state::set_current_account_id(
-            "claude_desktop_account",
-            Some(next_current.as_str()),
-        );
-    }
-    logger::log_info(&format!(
-        "[Claude] 已合并重复账号: removed={}",
-        removed_ids.join(",")
-    ));
-    Ok(kept)
+    // Keep the stable ID and all prior profile directories. Never delete a
+    // credential/profile just because two list entries look like one person.
+    save_account_and_index(merge_desktop_account_fields(&existing, &incoming))
 }
 
 pub fn list_accounts_checked() -> Result<Vec<ClaudeAccount>, String> {
+    let _guard = CLAUDE_ACCOUNT_INDEX_LOCK.lock().map_err(|_| "无法获取 Claude 账号锁")?;
     let index = load_index()?;
-    let mut accounts = Vec::new();
-    for summary in index.accounts {
-        if let Some(account) = load_account_file(&summary.id) {
-            let mut account = account;
-            let mut should_save = false;
-            match repair_desktop_profile_dir(&mut account) {
-                Ok(true) => should_save = true,
-                Ok(false) => {}
-                Err(error) => logger::log_warn(&format!(
-                    "[Claude] Desktop profile 路径自动修复失败: account_id={}, error={}",
-                    account.id, error
-                )),
-            }
-            if normalize_account_plan_from_snapshots(&mut account) {
-                should_save = true;
-            }
-            if account.auth_mode == ClaudeAuthMode::DesktopOAuth
-                && !desktop_account_has_real_profile_data(&account)
-            {
-                if let Some(snapshot_dir) = account
-                    .desktop_profile_dir
-                    .as_deref()
-                    .and_then(|value| normalize_non_empty(Some(value)))
-                    .map(PathBuf::from)
-                {
-                    if apply_desktop_local_profile(&mut account, &snapshot_dir) {
-                        account.quota_error = None;
-                        account.status_reason = None;
-                        should_save = true;
-                    }
-                }
-            }
-            if slim_claude_account_snapshots(&mut account) {
-                should_save = true;
-            }
-            if normalize_cached_desktop_quota_from_raw(&mut account) {
-                should_save = true;
-            }
-            if should_save {
-                if let Err(error) = save_account_and_index(account.clone()) {
-                    logger::log_warn(&format!(
-                        "[Claude] 账号自动迁移保存失败: account_id={}, error={}",
-                        account.id, error
-                    ));
-                }
-            }
-            accounts.push(account);
-        }
-    }
-    dedupe_desktop_accounts(accounts)
+    let mut seen = HashSet::new();
+    index.accounts.iter().filter(|summary| seen.insert(summary.id.clone()))
+        .map(|summary| load_account_file(&summary.id).ok_or_else(|| format!(
+            "Claude 账号 {} 无法读取；已保留所有账号文件和索引，未更新列表缓存", summary.id)))
+        .collect()
 }
 
-fn save_account_and_index(mut account: ClaudeAccount) -> Result<ClaudeAccount, String> {
+fn save_account_and_index(account: ClaudeAccount) -> Result<ClaudeAccount, String> {
+    let _guard = CLAUDE_ACCOUNT_INDEX_LOCK.lock().map_err(|_| "无法获取 Claude 账号锁")?;
+    save_account_and_index_unlocked(account)
+}
+
+fn save_account_and_index_unlocked(mut account: ClaudeAccount) -> Result<ClaudeAccount, String> {
     if account.auth_mode == ClaudeAuthMode::DesktopOAuth {
         if let Err(error) = repair_desktop_profile_dir(&mut account) {
             logger::log_warn(&format!(
@@ -1945,6 +1822,8 @@ fn derive_account_from_snapshots(
         desktop_profile_dir: None,
         desktop_profile_imported_at: None,
         claude_credentials_raw: None,
+        credential_owner: None,
+        credential_source_dir: None,
         claude_config_raw: None,
         claude_usage_raw: None,
         tags: None,
@@ -1983,6 +1862,9 @@ fn derive_account_from_snapshots(
     account.desktop_gateway_connection_mode = None;
     account.desktop_gateway_upstream_models = None;
     account.desktop_gateway_model_mappings = None;
+    if account.claude_credentials_raw.as_ref() != Some(&credentials_raw) {
+        account.quota_error = None;
+    }
     account.claude_credentials_raw = Some(credentials_raw);
     account.claude_config_raw = Some(config_raw);
     account.last_used = now;
@@ -2077,6 +1959,8 @@ pub fn import_api_key(
         desktop_profile_dir: None,
         desktop_profile_imported_at: None,
         claude_credentials_raw: None,
+        credential_owner: None,
+        credential_source_dir: None,
         claude_config_raw: None,
         claude_usage_raw: None,
         tags: None,
@@ -2371,6 +2255,8 @@ fn save_desktop_gateway(
         desktop_profile_dir: None,
         desktop_profile_imported_at: None,
         claude_credentials_raw: None,
+        credential_owner: None,
+        credential_source_dir: None,
         claude_config_raw: None,
         claude_usage_raw: None,
         tags: None,
@@ -5330,6 +5216,8 @@ fn import_desktop_profile_snapshot(
         desktop_gateway_model_mappings: None,
         desktop_profile_dir: Some(snapshot_dir.to_string_lossy().to_string()),
         desktop_profile_imported_at: Some(now),
+        credential_owner: None,
+        credential_source_dir: None,
         claude_credentials_raw: Some(json!({
             "authMode": "desktop_oauth",
             "profileSnapshot": true,
@@ -5400,19 +5288,32 @@ pub fn import_cli_from_local() -> Result<ClaudeAccount, String> {
         );
     }
 
-    upsert_account_from_snapshots(credentials_raw, config_raw)
+    let mut account = upsert_account_from_snapshots(credentials_raw, config_raw)?;
+    account.credential_owner = Some("claude_cli".into());
+    account.credential_source_dir = Some(config_dir.to_string_lossy().into_owned());
+    save_account_and_index(account)
 }
 
 pub fn sync_cli_account_from_config_dir_if_same(
     account_id: &str,
     config_dir: &Path,
 ) -> Result<Option<ClaudeAccount>, String> {
+    sync_cli_account_from_config_dir_if_same_inner(account_id, config_dir, true)
+}
+
+fn sync_cli_account_from_config_dir_if_same_inner(
+    account_id: &str,
+    config_dir: &Path,
+    allow_keychain: bool,
+) -> Result<Option<ClaudeAccount>, String> {
+    let _guard = CLAUDE_ACCOUNT_INDEX_LOCK.lock().map_err(|_| "无法获取 Claude 账号锁")?;
     let existing = load_account(account_id).ok_or_else(|| "Claude 账号不存在".to_string())?;
     if existing.auth_mode == ClaudeAuthMode::DesktopOAuth {
         return Ok(None);
     }
 
-    let credentials_raw = read_claude_code_credentials(config_dir);
+    let credentials_raw = if allow_keychain { read_claude_code_credentials(config_dir) }
+        else { read_plaintext_claude_code_credentials(config_dir).unwrap_or(Value::Null) };
     if credentials_oauth(&credentials_raw).is_none() {
         return Ok(None);
     }
@@ -5424,7 +5325,7 @@ pub fn sync_cli_account_from_config_dir_if_same(
         return Ok(None);
     }
 
-    let incoming =
+    let mut incoming =
         derive_account_from_snapshots(credentials_raw, config_raw, Some(existing.clone()))?;
     if !cli_accounts_same_identity(&existing, &incoming) {
         logger::log_warn(&format!(
@@ -5433,6 +5334,12 @@ pub fn sync_cli_account_from_config_dir_if_same(
             config_dir.display()
         ));
         return Ok(None);
+    }
+
+    let expiry = |account: &ClaudeAccount| account.claude_credentials_raw.as_ref()
+        .and_then(|raw| read_i64_value(raw.pointer("/claudeAiOauth/expiresAt")));
+    if matches!((expiry(&incoming), expiry(&existing)), (Some(source), Some(saved)) if source < saved) {
+        return Ok(Some(existing));
     }
 
     if incoming.claude_credentials_raw == existing.claude_credentials_raw
@@ -5446,7 +5353,9 @@ pub fn sync_cli_account_from_config_dir_if_same(
         account_id,
         config_dir.display()
     ));
-    save_account_and_index(incoming).map(Some)
+    incoming.credential_owner = Some("claude_cli".into());
+    incoming.credential_source_dir = Some(config_dir.to_string_lossy().into_owned());
+    save_account_and_index_unlocked(incoming).map(Some)
 }
 
 pub fn start_desktop_login(
@@ -6171,7 +6080,7 @@ fn build_oauth_snapshots(
     }
     credentials_oauth.insert(
         "expiresAt".to_string(),
-        Value::Number(serde_json::Number::from(now_ts_ms() + expires_in * 1000)),
+        Value::Number(serde_json::Number::from(now_ts_ms().saturating_add(expires_in.saturating_mul(1000)))),
     );
     credentials_oauth.insert(
         "scopes".to_string(),
@@ -6260,7 +6169,10 @@ pub async fn complete_oauth_login(
     };
     let (credentials, config) =
         build_oauth_snapshots(&token_response, profile.as_ref(), email_hint)?;
-    let account = upsert_account_from_snapshots(credentials, config)?;
+    let mut account = upsert_account_from_snapshots(credentials, config)?;
+    account.credential_owner = Some("cle".into());
+    account.credential_source_dir = None;
+    let account = save_account_and_index(account)?;
     clear_pending_oauth_login_if_matches(login_id);
     Ok(account)
 }
@@ -7779,21 +7691,6 @@ fn write_claude_code_keychain_credentials(
     ))
 }
 
-#[cfg(target_os = "macos")]
-fn delete_claude_code_keychain_credentials(config_dir: &Path) {
-    let service = claude_code_keychain_service_name(config_dir);
-    let account = claude_code_keychain_account_name();
-    let _ = std::process::Command::new("security")
-        .args([
-            "delete-generic-password",
-            "-a",
-            account.as_str(),
-            "-s",
-            service.as_str(),
-        ])
-        .output();
-}
-
 fn read_plaintext_claude_code_credentials(config_dir: &Path) -> Option<Value> {
     read_config_file(&get_claude_code_credentials_path(config_dir))
         .ok()
@@ -7812,7 +7709,9 @@ fn write_plaintext_claude_code_credentials(
     config_dir: &Path,
     credentials: &Value,
 ) -> Result<(), String> {
-    write_config_file(&get_claude_code_credentials_path(config_dir), credentials)
+    fs::create_dir_all(config_dir).map_err(|_| "无法创建 Claude Code 凭证目录")?;
+    let content = serde_json::to_string_pretty(credentials).map_err(|_| "序列化 Claude Code 凭证失败")?;
+    atomic_write::write_private_string_atomic(&get_claude_code_credentials_path(config_dir), &content)
 }
 
 fn write_claude_code_credentials(config_dir: &Path, credentials: &Value) -> Result<(), String> {
@@ -7820,17 +7719,14 @@ fn write_claude_code_credentials(config_dir: &Path, credentials: &Value) -> Resu
     {
         match write_claude_code_keychain_credentials(config_dir, credentials) {
             Ok(()) => {
+                if read_claude_code_keychain_credentials(config_dir).as_ref() != Some(credentials) {
+                    return Err("Keychain 写入后无法核对；已保留文件副本，请勿重复切换".into());
+                }
                 let _ = remove_path_if_exists(&get_claude_code_credentials_path(config_dir));
                 return Ok(());
             }
             Err(error) => {
-                logger::log_warn(&format!(
-                    "[Claude Code] Keychain 写入失败，回退到 .credentials.json: {}",
-                    error
-                ));
-                write_plaintext_claude_code_credentials(config_dir, credentials)?;
-                delete_claude_code_keychain_credentials(config_dir);
-                return Ok(());
+                return Err(format!("Keychain 写入失败，已保留原登录信息，未删除或替换：{}", error));
             }
         }
     }
@@ -7944,6 +7840,8 @@ pub fn inject_to_claude_config(account_id: &str, config_dir: Option<&Path>) -> R
 
     let mut updated = account.clone();
     updated.last_used = now_ts_ms();
+    updated.credential_owner = Some("claude_cli".into());
+    updated.credential_source_dir = Some(config_dir_path.to_string_lossy().into_owned());
     save_account_and_index(updated)?;
     Ok(())
 }
@@ -8047,7 +7945,7 @@ pub fn update_account_tags(account_id: &str, tags: Vec<String>) -> Result<Claude
             .filter(|tag| !tag.is_empty())
             .collect(),
     );
-    save_account_and_index(account)
+    save_account_and_index_unlocked(account)
 }
 
 pub fn update_account_plan(
@@ -8061,7 +7959,7 @@ pub fn update_account_plan(
     account.plan_type = plan_type
         .and_then(|value| normalize_non_empty(Some(value)))
         .map(|value| value.to_string());
-    save_account_and_index(account)
+    save_account_and_index_unlocked(account)
 }
 
 pub fn update_account_note(account_id: &str, note: Option<&str>) -> Result<ClaudeAccount, String> {
@@ -8072,7 +7970,7 @@ pub fn update_account_note(account_id: &str, note: Option<&str>) -> Result<Claud
     account.account_note = note
         .and_then(|value| normalize_non_empty(Some(value)))
         .map(|value| value.to_string());
-    save_account_and_index(account)
+    save_account_and_index_unlocked(account)
 }
 
 fn usage_to_quota(raw: &Value) -> ClaudeQuota {
@@ -8166,16 +8064,16 @@ async fn refresh_oauth_credentials(credentials: &Value) -> Result<Option<Value>,
         .get_mut("claudeAiOauth")
         .and_then(|item| item.as_object_mut())
         .ok_or_else(|| "Claude credentials 缺少 claudeAiOauth 字段".to_string())?;
-    if let Some(access_token) = read_string_path(&payload, &["access_token"]) {
-        oauth.insert("accessToken".to_string(), Value::String(access_token));
-    }
+    let access_token = read_string_path(&payload, &["access_token"])
+        .filter(|token| !token.trim().is_empty()).ok_or("Claude 刷新响应缺少有效 access token，原凭证保留")?;
+    oauth.insert("accessToken".to_string(), Value::String(access_token));
     if let Some(refresh_token) = read_string_path(&payload, &["refresh_token"]) {
         oauth.insert("refreshToken".to_string(), Value::String(refresh_token));
     }
-    if let Some(expires_in) = read_i64_value(payload.get("expires_in")) {
+    if let Some(expires_in) = read_i64_value(payload.get("expires_in")).filter(|seconds| *seconds > 0) {
         oauth.insert(
             "expiresAt".to_string(),
-            Value::Number(serde_json::Number::from(now_ts_ms() + expires_in * 1000)),
+            Value::Number(serde_json::Number::from(now_ts_ms().saturating_add(expires_in.saturating_mul(1000)))),
         );
     }
     if let Some(scope) = read_string_path(&payload, &["scope"]) {
@@ -8229,7 +8127,103 @@ async fn request_usage(access_token: &str) -> Result<Value, String> {
     serde_json::from_str(&body).map_err(|e| format!("解析 Claude usage 响应失败: {}", e))
 }
 
+fn save_quota_runtime(snapshot: &ClaudeAccount, verified: bool) -> Result<ClaudeAccount, String> {
+    let _guard = CLAUDE_ACCOUNT_INDEX_LOCK.lock().map_err(|_| "无法获取 Claude 账号锁")?;
+    let mut latest = load_account(&snapshot.id).ok_or("Claude 账号已删除或无法读取；未重新创建")?;
+    if credential_store::fingerprint(&claude_record(&latest)?) != credential_store::fingerprint(&claude_record(snapshot)?) {
+        return Err("Claude 登录已更新，已丢弃旧查询结果".into());
+    }
+    latest.quota = snapshot.quota.clone();
+    latest.quota_error = snapshot.quota_error.clone();
+    latest.claude_usage_raw = snapshot.claude_usage_raw.clone();
+    latest.usage_updated_at = snapshot.usage_updated_at;
+    latest.status = snapshot.status.clone();
+    latest.status_reason = snapshot.status_reason.clone();
+    credential_store::save_runtime(&account_file_path(&latest.id)?, &claude_record(&latest)?, verified)?;
+    Ok(latest)
+}
+
+/// Both the API gateway and quota UI use this one token owner/rotation path.
+pub async fn current_api_account(account_id: &str, force: bool) -> Result<ClaudeAccount, String> {
+    account_file_path(account_id)?;
+    let id = account_id.to_string();
+    CLAUDE_REFRESHES.run(format!("token:{id}"), move || async move {
+        refresh_api_credentials_once(&id, force).await
+    }).await?
+}
+
+async fn refresh_api_credentials_once(account_id: &str, force: bool) -> Result<ClaudeAccount, String> {
+    let account = load_account(account_id).ok_or("Claude 账号不存在或无法读取")?;
+    let credentials = account.claude_credentials_raw.as_ref().ok_or("Claude 缺少 credentials 快照")?;
+    let legacy_cli = account.credential_owner.is_none()
+        && crate::modules::provider_current_state::get_current_account_id("claude_code_account")
+            .ok().flatten().as_deref() == Some(account_id);
+    if account.credential_owner.as_deref() == Some("claude_cli") || legacy_cli {
+        // Claude Code rotates this grant itself. Never consume its refresh token.
+        // A local sync can adopt its newer pair; failed sync retains the old copy.
+        if !force && !token_is_expired(credentials) { return Ok(account); }
+        let source_dir = account.credential_source_dir.as_deref().map(PathBuf::from)
+            .or_else(|| get_default_claude_code_config_dir().ok());
+        if let Some(dir) = source_dir {
+            if let Some(fresh) = sync_cli_account_from_config_dir_if_same_inner(account_id, &dir, false)? {
+                if fresh.claude_credentials_raw.as_ref().is_some_and(|raw| credentials_access_token(raw).is_some()
+                    && credentials_expires_at(raw).is_none_or(|at| at > now_ts_ms())) { return Ok(fresh); }
+            }
+        }
+        return if force || credentials_expires_at(credentials).is_some_and(|at| at <= now_ts_ms()) {
+            Err("Claude Code 维护的登录需要同步；请先在原客户端刷新或登录后导入，账号快照仍已保留".into())
+        } else { Ok(account) };
+    }
+    if !force && !token_is_expired(credentials) { return Ok(account); }
+    if let Some(error) = account.quota_error.as_ref()
+        .filter(|error| credential_store::refresh_rejected(&error.message)) {
+        return Err(error.message.clone());
+    }
+    {
+        let _guard = CLAUDE_ACCOUNT_INDEX_LOCK.lock().map_err(|_| "无法获取 Claude 账号锁")?;
+        credential_store::prepare_refresh(&account_file_path(account_id)?, &claude_record(&account)?)?;
+    }
+    let refreshed = match refresh_oauth_credentials(credentials).await {
+        Ok(refreshed) => refreshed,
+        Err(error) => {
+            if credential_store::refresh_rejected(&error) {
+                let _guard = CLAUDE_ACCOUNT_INDEX_LOCK.lock().map_err(|_| "无法获取 Claude 账号锁")?;
+                if let Some(mut latest) = load_account(account_id) {
+                    if credential_store::fingerprint(&claude_record(&latest)?) == credential_store::fingerprint(&claude_record(&account)?) {
+                        latest.quota_error = Some(ClaudeQuotaErrorInfo {code:Some("refresh_rejected".into()),message:error.clone(),timestamp:now_ts()});
+                        credential_store::save_runtime(&account_file_path(account_id)?, &claude_record(&latest)?, false)?;
+                    }
+                }
+            }
+            return Err(error);
+        }
+    };
+    let Some(refreshed) = refreshed else {
+        return if token_is_expired(credentials) { Err("Claude 凭证过期且缺少 refresh token；原账号保留".into()) } else { Ok(account) };
+    };
+    let _guard = CLAUDE_ACCOUNT_INDEX_LOCK.lock().map_err(|_| "无法获取 Claude 账号锁")?;
+    let mut latest = load_account(account_id).ok_or("Claude 刷新期间账号已删除；未重新创建")?;
+    if credential_store::fingerprint(&claude_record(&latest)?) != credential_store::fingerprint(&claude_record(&account)?) {
+        return Err("Claude 登录已更新，未覆盖新凭证".into());
+    }
+    latest.claude_credentials_raw = Some(refreshed);
+    latest.quota_error = None;
+    latest.status = None;
+    latest.status_reason = None;
+    // No quota/profile/network work between receiving and committing the pair.
+    write_account_file(&latest)?;
+    Ok(latest)
+}
+
 pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, String> {
+    account_file_path(account_id)?;
+    let id = account_id.to_string();
+    CLAUDE_REFRESHES.run(format!("quota:{id}"), move || async move {
+        refresh_account_quota_once(&id).await
+    }).await?
+}
+
+async fn refresh_account_quota_once(account_id: &str) -> Result<ClaudeAccount, String> {
     let mut account = load_account(account_id).ok_or_else(|| "Claude 账号不存在".to_string())?;
     if matches!(
         account.auth_mode,
@@ -8247,7 +8241,7 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, St
             },
             timestamp: now_ts(),
         });
-        return save_account_and_index(account);
+        return save_quota_runtime(&account, false);
     }
     if account.auth_mode == ClaudeAuthMode::DesktopOAuth {
         let snapshot_dir = resolve_valid_desktop_profile_dir(&mut account)?;
@@ -8366,31 +8360,20 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, St
                 }
             }
         }
-        return save_account_and_index(account);
+        return save_quota_runtime(&account, false);
     }
 
-    let mut credentials = account
-        .claude_credentials_raw
-        .clone()
-        .ok_or_else(|| "Claude 账号缺少 credentials 快照".to_string())?;
-
-    if token_is_expired(&credentials) {
-        match refresh_oauth_credentials(&credentials).await {
-            Ok(Some(refreshed)) => {
-                credentials = refreshed;
-                account.claude_credentials_raw = Some(credentials.clone());
-            }
-            Ok(None) => {}
-            Err(error) => {
-                account.quota_error = Some(ClaudeQuotaErrorInfo {
-                    code: Some("refresh_failed".to_string()),
-                    message: error,
-                    timestamp: now_ts(),
-                });
-                return save_account_and_index(account);
-            }
+    account = match current_api_account(account_id, false).await {
+        Ok(account) => account,
+        Err(error) => {
+            account.quota_error = Some(ClaudeQuotaErrorInfo {
+                code: Some("refresh_failed".into()), message: error, timestamp: now_ts(),
+            });
+            return save_quota_runtime(&account, false);
         }
-    }
+    };
+    let credentials = account.claude_credentials_raw.clone()
+        .ok_or("Claude 账号缺少 credentials 快照")?;
 
     let Some(access_token) = credentials_access_token(&credentials) else {
         account.quota_error = Some(ClaudeQuotaErrorInfo {
@@ -8398,7 +8381,7 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, St
             message: "Claude 账号缺少 accessToken".to_string(),
             timestamp: now_ts(),
         });
-        return save_account_and_index(account);
+        return save_quota_runtime(&account, false);
     };
 
     match request_usage(&access_token).await {
@@ -8422,7 +8405,7 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<ClaudeAccount, St
             });
         }
     }
-    save_account_and_index(account)
+    save_quota_runtime(&account, account.quota_error.is_none())
 }
 
 pub async fn refresh_all_quotas() -> Result<Vec<(String, Result<ClaudeAccount, String>)>, String> {
@@ -8845,6 +8828,8 @@ mod tests {
             desktop_profile_dir: snapshot_dir.map(ToString::to_string),
             desktop_profile_imported_at: Some(last_used),
             claude_credentials_raw: None,
+        credential_owner: None,
+        credential_source_dir: None,
             claude_config_raw: None,
             claude_usage_raw: None,
             tags: None,

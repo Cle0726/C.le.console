@@ -2188,8 +2188,10 @@ func newSidecarRuntime(ctx context.Context, configPath string, cfg *config.Confi
 	if stringSliceContainsFold(m.Providers, "workbuddy") {
 		manager.RegisterExecutor(newWorkbuddyExecutor(cfg))
 	}
-	for _, provider := range []string{"kiro", "github-copilot"} {
-		if stringSliceContainsFold(m.Providers, provider) { manager.RegisterExecutor(newManagedNativeExecutor(provider,cfg)) }
+	for _, provider := range []string{"kiro", "github-copilot", "claude"} {
+		if stringSliceContainsFold(m.Providers, provider) {
+			manager.RegisterExecutor(newManagedNativeExecutor(provider, cfg))
+		}
 	}
 
 	return &sidecarRuntime{manager: manager, service: service, cancel: cancel, done: done}, nil
@@ -2378,10 +2380,14 @@ func manifestRegistryModelsForAccount(m *manifest, account *accountSpec, provide
 		seen[key] = struct{}{}
 		info := manifestRegistryModelInfoForProvider(id, provider, now)
 		if limits, ok := account.ModelLimits[id]; ok {
-			info.ContextLength = limits.MaxInputTokens
-			info.InputTokenLimit = limits.MaxInputTokens
-			info.MaxCompletionTokens = limits.MaxOutputTokens
-			info.OutputTokenLimit = limits.MaxOutputTokens
+			if limits.MaxInputTokens > 0 {
+				info.ContextLength = limits.MaxInputTokens
+				info.InputTokenLimit = limits.MaxInputTokens
+			}
+			if limits.MaxOutputTokens > 0 {
+				info.MaxCompletionTokens = limits.MaxOutputTokens
+				info.OutputTokenLimit = limits.MaxOutputTokens
+			}
 		}
 		models = append(models, info)
 	}
@@ -2390,6 +2396,9 @@ func manifestRegistryModelsForAccount(m *manifest, account *accountSpec, provide
 
 func manifestRegistryModelInfoForProvider(id string, provider string, created int64) *cliproxy.ModelInfo {
 	info := manifestRegistryModelInfo(id, "", created)
+	limits := staticTokenLimits(provider, id)
+	info.ContextLength, info.InputTokenLimit = limits.MaxInputTokens, limits.MaxInputTokens
+	info.MaxCompletionTokens, info.OutputTokenLimit = limits.MaxOutputTokens, limits.MaxOutputTokens
 	if normalized := strings.TrimSpace(provider); normalized != "" {
 		info.Type = normalized
 		info.OwnedBy = normalized
@@ -2456,6 +2465,10 @@ func manifestRegistryModelInfo(id string, source string, created int64) *cliprox
 		lookupID = source
 	}
 	if staticInfo := internalregistry.LookupStaticModelInfo(lookupID); staticInfo != nil {
+		info.ContextLength = staticInfo.ContextLength
+		info.InputTokenLimit = staticInfo.InputTokenLimit
+		info.MaxCompletionTokens = staticInfo.MaxCompletionTokens
+		info.OutputTokenLimit = staticInfo.OutputTokenLimit
 		if staticInfo.Thinking != nil {
 			info.Thinking = staticInfo.Thinking
 		}

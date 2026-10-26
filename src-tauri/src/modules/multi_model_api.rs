@@ -514,10 +514,11 @@ fn load_config() -> Result<MultiModelApiConfig, String> {
         .map_err(|error| format!("解析多模型 API 配置失败: {error}"))?;
     let removed_separated_gpt_accounts = config.accounts.iter().any(is_separated_gpt_account);
     let legacy_openai = config.accounts.iter().any(|account| account.provider == "openai");
+    let capacity_defaults_added = apply_model_capacity_defaults(&mut config);
     normalize_config(&mut config)?;
     let affinity_migrated = migrate_legacy_round_robin_affinity(&mut config)?;
     let legacy_migration = migrate_legacy_key_records(&mut config)?;
-    if affinity_migrated || legacy_migration.is_some() || removed_separated_gpt_accounts || legacy_openai {
+    if affinity_migrated || legacy_migration.is_some() || removed_separated_gpt_accounts || legacy_openai || capacity_defaults_added {
         // Normalize again because imported records came from older schemas.
         normalize_config(&mut config)?;
         save_config_file(&config)?;
@@ -734,6 +735,7 @@ fn save_xai_usage_cache(items: &[XaiAccountUsage]) -> Result<(), String> {
 }
 
 fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
+    apply_model_capacity_defaults(config);
     if config.port == 0 {
         config.port = DEFAULT_PORT;
     }
@@ -816,6 +818,23 @@ fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
         key.account_ids.retain(|id| account_ids.contains(id));
     }
     Ok(())
+}
+
+fn apply_model_capacity_defaults(config: &mut MultiModelApiConfig) -> bool {
+    let mut changed = false;
+    for account in &mut config.accounts {
+        let provider = normalize_provider(&account.provider);
+        for model in &mut account.models {
+            let (input, output) = super::model_capacity::defaults(&provider, model.id.trim());
+            if model.max_input_tokens.filter(|value| *value > 0).is_none() && input.is_some() {
+                model.max_input_tokens = input; changed = true;
+            }
+            if model.max_output_tokens.filter(|value| *value > 0).is_none() && output.is_some() {
+                model.max_output_tokens = output; changed = true;
+            }
+        }
+    }
+    changed
 }
 
 fn is_separated_gpt_account(account: &MultiModelAccount) -> bool {
@@ -913,8 +932,8 @@ fn builtin_catalog() -> Vec<MultiModelCatalogEntry> {
             provider: (*provider).into(),
             id: (*id).into(),
             capabilities: caps.iter().map(|item| (*item).into()).collect(),
-            max_input_tokens: None,
-            max_output_tokens: None,
+            max_input_tokens: super::model_capacity::defaults(provider, id).0,
+            max_output_tokens: super::model_capacity::defaults(provider, id).1,
         })
         .collect()
 }
@@ -931,10 +950,12 @@ fn catalog_for_config(config: &MultiModelApiConfig) -> Vec<MultiModelCatalogEntr
         .iter()
         .map(|entry| (entry.provider.clone(), entry.id.to_ascii_lowercase()))
         .collect();
+    let mut account_entries = BTreeSet::new();
     for account in config.accounts.iter().filter(|account| account.enabled) {
         for model in &account.models {
             let key = (account.provider.clone(), model.id.to_ascii_lowercase());
-            if model.enabled && seen.insert(key) {
+            if !model.enabled { continue; }
+            if seen.insert(key.clone()) {
                 result.push(MultiModelCatalogEntry {
                     provider: account.provider.clone(),
                     id: model.id.clone(),
@@ -942,6 +963,23 @@ fn catalog_for_config(config: &MultiModelApiConfig) -> Vec<MultiModelCatalogEntr
                     max_input_tokens: model.max_input_tokens,
                     max_output_tokens: model.max_output_tokens,
                 });
+                account_entries.insert(key);
+            } else if let Some(entry) = result.iter_mut().find(|entry| entry.provider == account.provider && entry.id.eq_ignore_ascii_case(&model.id)) {
+                if account_entries.insert(key) {
+                    // A configured channel overrides a generic suggestion.
+                    entry.capabilities = model.capabilities.clone();
+                    entry.max_input_tokens = model.max_input_tokens;
+                    entry.max_output_tokens = model.max_output_tokens;
+                } else {
+                    // Match the API's rotating pool: advertise the minimum of
+                    // known per-account maxima, never another account's budget.
+                    entry.max_input_tokens = match (entry.max_input_tokens, model.max_input_tokens) {
+                        (Some(a), Some(b)) => Some(a.min(b)), (a, b) => a.or(b),
+                    };
+                    entry.max_output_tokens = match (entry.max_output_tokens, model.max_output_tokens) {
+                        (Some(a), Some(b)) => Some(a.min(b)), (a, b) => a.or(b),
+                    };
+                }
             }
         }
     }
@@ -1075,6 +1113,23 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
     std::fs::create_dir_all(&auths)
         .map_err(|error| format!("创建多模型 API sidecar 目录失败: {error}"))?;
 
+    // Migrate before removing legacy auth files. A gateway may have already
+    // rotated its copy since the account manager last saved its snapshot.
+    for route in config.accounts.iter().filter(|route| route.auth_mode == "oauth_json") {
+        let Some(id) = route.source.strip_prefix("cle:claude:") else { continue; };
+        let path = auths.join(format!("{}.json", safe_file_name(&route.id)));
+        let raw = match std::fs::read(&path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err("无法读取旧 Claude 代理凭证，已停止清理".into()),
+        };
+        let candidate: Value = serde_json::from_slice(&raw).map_err(|_| "旧 Claude 代理凭证损坏，已保留原文件并停止清理")?;
+        let expires = oauth_expiration(&candidate).map(|at| at.timestamp_millis())
+            .or_else(|| candidate.get("expired").and_then(Value::as_i64).filter(|at| *at > 0)
+                .map(|at| if at < 10_000_000_000 {at.saturating_mul(1000)} else {at}));
+        claude_account::migrate_legacy_gateway_credential(id, &candidate, route.credential_json.as_ref(), expires)?;
+    }
+
     let mut gemini_keys = Vec::new();
     let mut claude_keys = Vec::new();
     let mut compat = Vec::new();
@@ -1119,7 +1174,9 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
         }
         let provider = normalize_provider(&account.provider);
         let workbuddy_id = account.source.strip_prefix("cle:workbuddy:");
-        let native_id = managed_provider_api::supported(&provider).then(|| account.source.strip_prefix(&format!("cle:{provider}:"))).flatten();
+        let native_id = (managed_provider_api::credential_supported(&provider)
+            && (provider != "claude" || account.auth_mode == "oauth_json"))
+            .then(|| account.source.strip_prefix(&format!("cle:{provider}:"))).flatten();
         let native_bridge_id = native_id.map(|id| format!("{provider}~{id}"));
         let bridge = if provider == "workbuddy" || native_id.is_some() {
             Some(workbuddy_api::descriptor().ok_or("WorkBuddy 凭证管理尚未启动")?)
@@ -1137,6 +1194,13 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "models": models.iter().map(|item| model_json(item, false)).collect::<Vec<_>>()
         });
         match provider.as_str() {
+            "claude" if native_id.is_some() => {
+                let bridge_id = native_bridge_id.as_ref().unwrap();
+                providers.insert("claude".into());
+                let mut entry = common.clone();
+                entry["headers"]["X-Cle-Managed-Credential-URL"] = json!(bridge.as_ref().unwrap().url(bridge_id));
+                claude_keys.push(entry);
+            }
             "kiro" | "github-copilot" => {
                 let bridge_id = native_bridge_id.as_ref().ok_or("原生代理账号必须关联 C.le 已登录账号")?;
                 providers.insert(provider.clone());
@@ -1903,7 +1967,8 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
         let mut state = runtime().lock().await;
         stop_runtime_locked(&mut state).await;
     }
-    let has_workbuddy = effective_config.accounts.iter().any(|account| account.enabled && (account.provider == "workbuddy" || managed_provider_api::supported(&account.provider)));
+    let has_workbuddy = effective_config.accounts.iter().any(|account| account.enabled
+        && (account.provider == "workbuddy" || managed_provider_api::credential_supported(&account.provider)));
     if has_workbuddy { workbuddy_api::ensure_bridge().await?; }
     let launch = write_launch_files(&effective_config)?;
     let helper_port = launch.claude_web.as_ref().map(|helper| helper.port);
@@ -4115,6 +4180,27 @@ fn model_ids_from_upstream_payload(value: &Value) -> Vec<String> {
     models
 }
 
+fn model_definitions_from_upstream_payload(provider: &str, value: &Value) -> Vec<MultiModelDefinition> {
+    let empty = Vec::new();
+    let items = value.get("data").and_then(Value::as_array)
+        .or_else(|| value.get("models").and_then(Value::as_array))
+        .or_else(|| value.as_array()).unwrap_or(&empty);
+    model_ids_from_upstream_payload(value).into_iter().map(|id| {
+        let item = items.iter().find(|item| {
+            item.as_str().or_else(|| item.get("id").and_then(Value::as_str))
+                .or_else(|| item.get("name").and_then(Value::as_str))
+                .or_else(|| item.get("model").and_then(Value::as_str))
+                .is_some_and(|raw| raw.trim().strip_prefix("models/").unwrap_or(raw.trim()).eq_ignore_ascii_case(&id))
+        });
+        let mut model = model_definition(id);
+        let (default_input, default_output) = super::model_capacity::defaults(provider, &model.id);
+        let (input, output) = item.map(super::model_capacity::declared).unwrap_or_default();
+        model.max_input_tokens = input.or(default_input);
+        model.max_output_tokens = output.or(default_output);
+        model
+    }).collect()
+}
+
 fn managed_model_snapshots() -> BTreeMap<String, Vec<String>> {
     let mut snapshots = BTreeMap::new();
     if let Ok(accounts) = account::list_accounts() {
@@ -4161,16 +4247,16 @@ fn managed_model_snapshots() -> BTreeMap<String, Vec<String>> {
 async fn fetch_upstream_models(
     account: MultiModelAccount,
     global_proxy: String,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<MultiModelDefinition>, String> {
     let provider = normalize_provider(&account.provider);
     if provider == "workbuddy" {
         let id = account.source.strip_prefix("cle:workbuddy:").ok_or("WorkBuddy 账号缺少来源")?;
         let proxy = if account.proxy_url.trim().is_empty() { &global_proxy } else { &account.proxy_url };
-        return Ok(workbuddy_api::fetch_models(id, proxy).await?.into_iter().map(|model| model.id).collect());
+        return workbuddy_api::fetch_models(id, proxy).await;
     }
     if managed_provider_api::supported(&provider) {
         let id = account.source.strip_prefix(&format!("cle:{provider}:")).ok_or("账号缺少来源")?;
-        return Ok(managed_provider_api::fetch_models(&provider,id,if account.proxy_url.trim().is_empty() {&global_proxy} else {&account.proxy_url}).await?.into_iter().map(|m|m.id).collect());
+        return managed_provider_api::fetch_models(&provider,id,if account.proxy_url.trim().is_empty() {&global_proxy} else {&account.proxy_url}).await;
     }
     let endpoint = upstream_models_url(&account)
         .ok_or_else(|| format!("{} 不提供标准模型目录", account.name))?;
@@ -4205,6 +4291,7 @@ async fn fetch_upstream_models(
         .filter(|value| !value.is_empty());
     let api_key = account.api_key.trim();
     let mut request = client.get(&endpoint);
+    if provider == "claude" { request = request.query(&[("limit", "1000")]); }
     match provider.as_str() {
         "gemini" if !api_key.is_empty() => {
             request = request.query(&[("key", api_key)]);
@@ -4212,12 +4299,12 @@ async fn fetch_upstream_models(
         "claude" if !api_key.is_empty() => {
             request = request
                 .header("x-api-key", api_key)
-                .header("anthropic-version", "2023-06-01");
+                .header("anthropic-version", "2026-10-21");
         }
         "claude" if access_token.is_some() => {
             request = request
                 .bearer_auth(access_token.unwrap_or_default())
-                .header("anthropic-version", "2023-06-01");
+                .header("anthropic-version", "2026-10-21");
         }
         _ if access_token.is_some() => {
             request = request.bearer_auth(access_token.unwrap_or_default());
@@ -4248,7 +4335,7 @@ async fn fetch_upstream_models(
     }
     let payload: Value = serde_json::from_str(&body)
         .map_err(|_| format!("{} 模型目录不是有效 JSON", account.name))?;
-    let models = model_ids_from_upstream_payload(&payload);
+    let models = model_definitions_from_upstream_payload(&provider, &payload);
     if models.is_empty() {
         return Err(format!("{} 模型目录为空", account.name));
     }
@@ -4259,15 +4346,24 @@ fn merge_discovered_models(
     existing: &mut Vec<MultiModelDefinition>,
     discovered: Vec<String>,
 ) -> usize {
+    merge_discovered_model_definitions(existing, discovered.into_iter().map(model_definition).collect())
+}
+
+fn merge_discovered_model_definitions(existing: &mut Vec<MultiModelDefinition>, discovered: Vec<MultiModelDefinition>) -> usize {
     let mut seen = existing
         .iter()
         .map(|model| model.id.trim().to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
     let mut added = 0usize;
-    for id in discovered {
-        if seen.insert(id.trim().to_ascii_lowercase()) {
-            existing.push(model_definition(id));
+    for model in discovered {
+        if seen.insert(model.id.trim().to_ascii_lowercase()) {
+            existing.push(model);
             added += 1;
+        } else if let Some(old) = existing.iter_mut().find(|old| old.id.eq_ignore_ascii_case(&model.id)) {
+            // Keep aliases, toggles and existing metadata when an upstream omits
+            // limits. A successful refresh must also update old low defaults.
+            if model.max_input_tokens.is_some() { old.max_input_tokens = model.max_input_tokens; }
+            if model.max_output_tokens.is_some() { old.max_output_tokens = model.max_output_tokens; }
         }
     }
     added
@@ -4342,7 +4438,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
         .filter(|item| {
             item.enabled
                 && !item.source.starts_with("agent2api:")
-                && !discoveries.contains_key(&item.id)
+                && (!discoveries.contains_key(&item.id) || item.provider == "claude")
                 && (item.provider == "workbuddy" || managed_provider_api::supported(&item.provider) || upstream_models_url(item).is_some())
         })
         .cloned()
@@ -4364,7 +4460,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
                     None => Err("账号缺少来源".into()),
                 }
             } else {
-                fetch_upstream_models(account, proxy).await.map(|ids| ids.into_iter().map(model_definition).collect())
+                fetch_upstream_models(account, proxy).await
             };
             (id, name, result)
         }
@@ -4391,7 +4487,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
             if account.provider == "workbuddy" || managed_provider_api::supported(&account.provider) || account.source.starts_with("agent2api:") {
                 added += merge_workbuddy_models(&mut account.models, models);
             } else {
-                added += merge_discovered_models(&mut account.models, models.into_iter().map(|model| model.id).collect());
+                added += merge_discovered_model_definitions(&mut account.models, models);
             }
         }
     }
@@ -5364,6 +5460,53 @@ mod tests {
             model_ids_from_upstream_payload(&gemini),
             ["gemini-new", "gemini-image"]
         );
+    }
+
+    #[test]
+    fn upstream_limits_reach_existing_models_without_resetting_aliases_or_toggles() {
+        let discovered = super::model_definitions_from_upstream_payload("claude", &json!({"data":[
+            {"id":"claude-sonnet-5-5", "max_input_tokens":1000000, "max_tokens":128000},
+            {"id":"claude-opus-5-5"}
+        ]}));
+        assert_eq!(discovered[0].max_input_tokens, Some(1000000));
+        assert_eq!(discovered[1].max_input_tokens, Some(1000000));
+        let mut old = model_definition("claude-sonnet-5-5".into());
+        old.alias = "my-sonnet".into(); old.enabled = false; old.max_input_tokens = Some(8000);
+        let mut existing = vec![old];
+        assert_eq!(super::merge_discovered_model_definitions(&mut existing, discovered), 1);
+        assert_eq!(existing[0].max_input_tokens, Some(1000000));
+        assert_eq!(existing[0].alias, "my-sonnet");
+        assert!(!existing[0].enabled);
+        super::merge_discovered_model_definitions(&mut existing, vec![model_definition("claude-sonnet-5-5".into())]);
+        assert_eq!(existing[0].max_input_tokens, Some(1000000));
+    }
+
+    #[test]
+    fn legacy_missing_capacities_get_provider_defaults_but_custom_gateways_are_not_guessed() {
+        let mut config = default_config();
+        let mut claude = quota_test_account("claude", "fixture:claude");
+        claude.models = vec![model_definition("claude-opus-5-5".into())];
+        let mut custom = quota_test_account("custom", "fixture:custom");
+        custom.models = claude.models.clone();
+        config.accounts = vec![claude, custom];
+        assert!(super::apply_model_capacity_defaults(&mut config));
+        assert_eq!(config.accounts[0].models[0].max_input_tokens, Some(1000000));
+        assert_eq!(config.accounts[1].models[0].max_input_tokens, None);
+        assert!(!super::apply_model_capacity_defaults(&mut config));
+    }
+
+    #[test]
+    fn configured_capacity_is_not_hidden_by_a_builtin_suggestion() {
+        let mut config = default_config();
+        let mut account = quota_test_account("claude", "fixture:catalog");
+        account.models = super::model_definitions_from_upstream_payload("claude", &json!({"data":[
+            {"id":"claude-sonnet-4-6","max_input_tokens":1000000,"max_tokens":128000}
+        ]}));
+        config.accounts = vec![account];
+        let catalog = catalog_for_config(&config);
+        let model = catalog.iter().find(|entry| entry.provider == "claude" && entry.id == "claude-sonnet-4-6").unwrap();
+        assert_eq!(model.max_input_tokens, Some(1000000));
+        assert_eq!(model.max_output_tokens, Some(128000));
     }
 
     #[test]

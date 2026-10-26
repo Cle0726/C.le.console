@@ -1,6 +1,7 @@
 pub mod account;
 pub mod agent_provider_bridge;
 pub mod extension_login;
+pub(crate) mod model_capacity;
 pub mod account_index_repair;
 pub mod antigravity_credential;
 pub mod antigravity_legacy_instance;
@@ -107,6 +108,8 @@ pub mod managed_provider_api;
 pub mod workbuddy_auto_checkin;
 pub mod workbuddy_instance;
 pub mod workbuddy_oauth;
+mod account_singleflight;
+mod credential_store;
 pub mod zed_account;
 pub mod zed_instance;
 pub mod zed_oauth;
