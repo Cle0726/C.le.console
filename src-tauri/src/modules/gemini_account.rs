@@ -1605,6 +1605,30 @@ async fn retrieve_user_quota(access_token: &str, project_id: &str) -> Result<Val
     .await
 }
 
+/// Use Gemini CLI's own Cloud Code channel rather than borrowing the public
+/// API's allowance. Expired credentials go through the existing account owner,
+/// not a separate refresh-token copy maintained by the model-sync worker.
+pub(super) async fn fetch_model_catalog(account_id: &str, active: Option<(String, i64)>) -> Result<Value, String> {
+    let mut account = load_account(account_id).ok_or("Gemini 账号不存在")?;
+    if account.expiry_date.is_some_and(|expiry| expiry <= now_ts_ms() + 15_000) {
+        if let Some((access, expiry)) = active {
+            account.access_token = access;
+            account.expiry_date = Some(expiry * 1000);
+        } else {
+            account = refresh_account_token(account_id).await?;
+        }
+    }
+    if account.access_token.trim().is_empty()
+        || account.expiry_date.is_some_and(|expiry| expiry <= now_ts_ms() + 15_000) {
+        return Err("Gemini 登录凭证待正常刷新，保留上次模型容量".into());
+    }
+    let payload = account.project_id.as_ref().map(|id| serde_json::json!({"project":id}))
+        .unwrap_or_else(|| serde_json::json!({}));
+    post_code_assist_json(&account.access_token,
+        "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+        &payload, "fetchAvailableModels").await
+}
+
 async fn ensure_access_token_valid(account: &mut GeminiAccount) -> Result<(), String> {
     let should_refresh = account
         .expiry_date

@@ -31,7 +31,14 @@ func staticTokenLimits(provider, model string) modelTokenLimits {
 	}
 	for _, info := range catalog {
 		if strings.EqualFold(info.ID, model) {
-			return modelTokenLimits{MaxInputTokens: info.ContextLength, MaxOutputTokens: info.MaxCompletionTokens}
+			input, output := info.ContextLength, info.MaxCompletionTokens
+			if input <= 0 {
+				input = info.InputTokenLimit
+			}
+			if output <= 0 {
+				output = info.OutputTokenLimit
+			}
+			return modelTokenLimits{MaxInputTokens: input, MaxOutputTokens: output}
 		}
 	}
 	return modelTokenLimits{}

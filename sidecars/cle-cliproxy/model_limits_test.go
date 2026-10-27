@@ -93,3 +93,58 @@ func TestKnownProviderMaximaReplaceGenericDefaultsWithoutErasingThemWithNull(t *
 		t.Fatal("invented a capacity for an unknown compatible gateway")
 	}
 }
+
+func TestAntigravityDiscoveredCapacityUpdatesAllCatalogsAndKeepsPoolSafe(t *testing.T) {
+	model := "claude-opus-5-5-medium"
+	m := &manifest{Accounts: []accountSpec{
+		{ID: "large", Provider: "antigravity", Models: []string{model}, ModelLimits: map[string]modelTokenLimits{
+			model: {MaxInputTokens: 1000000, MaxOutputTokens: 128000},
+		}},
+	}}
+	entry := modelsResponseWithTokenLimits(m, nil, []string{model}, false)["data"].([]gin.H)[0]
+	if entry["context_window"] != 1000000 || entry["max_output_tokens"] != 128000 {
+		t.Fatalf("Antigravity upstream limits lost: %#v", entry)
+	}
+	codex := modelsResponseWithTokenLimits(m, nil, []string{model}, true)["models"].([]map[string]any)[0]
+	if codex["max_context_window"] != 1000000 || codex["context_window"] != 1000000 {
+		t.Fatalf("Codex client still sees a generic window: %#v", codex)
+	}
+	gemini := geminiModelEntryWithTokenLimits(m, nil, model)
+	if gemini["inputTokenLimit"] != 1000000 || gemini["outputTokenLimit"] != 128000 {
+		t.Fatalf("Gemini client lost discovered limits: %#v", gemini)
+	}
+	ollama := ollamaShowResponseWithTokenLimits(m, nil, model, time.Now())
+	if ollama["parameters"] != "num_ctx 1000000" {
+		t.Fatalf("Ollama client lost discovered limits: %#v", ollama)
+	}
+	registered := manifestRegistryModelsForAccount(m, &m.Accounts[0], "antigravity")
+	if registered[0].ContextLength != 1000000 || registered[0].MaxCompletionTokens != 128000 {
+		t.Fatal("native registry lost discovered Antigravity capacity")
+	}
+	// A changed upstream maximum replaces the old metadata without rebuilding.
+	m.Accounts[0].ModelLimits[model] = modelTokenLimits{MaxInputTokens: 2000000, MaxOutputTokens: 256000}
+	if tokenLimitsForModel(m, nil, model).MaxInputTokens != 2000000 {
+		t.Fatal("updated upstream limit did not reach catalog")
+	}
+	m.Accounts = append(m.Accounts, accountSpec{ID: "smaller", Provider: "antigravity", Models: []string{model},
+		ModelLimits: map[string]modelTokenLimits{model: {MaxInputTokens: 250000, MaxOutputTokens: 64000}}})
+	if tokenLimitsForModel(m, nil, model).MaxInputTokens != 250000 {
+		t.Fatal("mixed pool overstates the smallest known allowance")
+	}
+	if tokenLimitsForModel(m, &apiKeySpec{AccountIDs: []string{"large"}}, model).MaxInputTokens != 2000000 {
+		t.Fatal("account-scoped key did not use that account's maximum")
+	}
+}
+
+func TestGeminiNativeLimitFieldsReachClientCatalogs(t *testing.T) {
+	model := "gemini-2.5-pro"
+	limits := staticTokenLimits("gemini", model)
+	if limits.MaxInputTokens != 1048576 || limits.MaxOutputTokens <= 0 {
+		t.Fatalf("Gemini native input/output fields ignored: %#v", limits)
+	}
+	m := &manifest{Accounts: []accountSpec{{ID: "gemini", Provider: "gemini", Models: []string{model}}}}
+	entry := modelsResponseWithTokenLimits(m, nil, []string{model}, true)["models"].([]map[string]any)[0]
+	if entry["context_window"] != 1048576 || entry["max_context_window"] != 1048576 {
+		t.Fatalf("Gemini received a generic client context size: %#v", entry)
+	}
+}

@@ -422,7 +422,7 @@ fn parse_models(body: &Value) -> Result<Vec<MultiModelDefinition>, String> {
                 alias: String::new(),
                 capabilities,
                 max_input_tokens: max_input_tokens(model),
-                max_output_tokens: positive_tokens(model.get("maxOutputTokens")),
+                max_output_tokens: super::model_capacity::declared(model).1,
                 enabled: true,
             },
         );
@@ -433,22 +433,10 @@ fn parse_models(body: &Value) -> Result<Vec<MultiModelDefinition>, String> {
     Ok(models.into_values().collect())
 }
 
-fn positive_tokens(value: Option<&Value>) -> Option<u32> {
-    let number = value?.as_u64().or_else(|| value?.as_str()?.parse().ok())?;
-    u32::try_from(number).ok().filter(|n| *n > 0)
-}
-
 // defaultLength is only a desktop compaction budget, not the model's maximum.
 // Prefer its largest selectable budget, bounded by the upstream input ceiling.
 fn max_input_tokens(model: &Value) -> Option<u32> {
-    let ceiling = positive_tokens(model.get("maxInputTokens"));
-    let supported = model.pointer("/contextWindow/supportedLengths")
-        .and_then(Value::as_array)
-        .into_iter().flatten()
-        .filter_map(|value| positive_tokens(Some(value)))
-        .filter(|value| ceiling.is_none_or(|max| *value <= max))
-        .max();
-    supported.or(ceiling)
+    super::model_capacity::declared(model).0
 }
 
 #[cfg(test)]

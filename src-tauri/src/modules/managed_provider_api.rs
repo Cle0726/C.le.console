@@ -86,13 +86,12 @@ fn parse_models(provider: &str, body: &Value) -> Result<Vec<MultiModelDefinition
         let Some(id) = item.get(if provider == "kiro" { "modelId" } else { "id" }).and_then(Value::as_str) else { continue };
         if id.trim().is_empty() || item.get("model_picker_enabled").and_then(Value::as_bool) == Some(false) { continue; }
         if provider == "github-copilot" && item.pointer("/capabilities/type").and_then(Value::as_str).is_some_and(|t| t != "chat") { continue; }
-        let number = |paths: &[&str]| paths.iter().find_map(|p| item.pointer(p).and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok())).filter(|n| *n > 0);
+        let (max_input_tokens, max_output_tokens) = super::model_capacity::declared(item);
         let mut capabilities = vec!["text".into()];
         if item.pointer("/capabilities/supports/vision").and_then(Value::as_bool) == Some(true) { capabilities.push("vision".into()); }
         if item.pointer("/capabilities/supports/reasoning_effort").is_some_and(|v| v.as_bool() == Some(true) || v.as_array().is_some_and(|a| !a.is_empty())) { capabilities.push("reasoning".into()); }
         models.push(MultiModelDefinition { id:format!("{provider}/{id}"),alias:String::new(),capabilities,
-            max_input_tokens:number(&["/tokenLimits/maxInputTokens", "/capabilities/limits/max_prompt_tokens", "/capabilities/limits/max_context_window_tokens"]),
-            max_output_tokens:number(&["/tokenLimits/maxOutputTokens", "/capabilities/limits/max_output_tokens"]),enabled:true });
+            max_input_tokens, max_output_tokens, enabled:true });
     }
     if models.is_empty() { return Err("上游未返回有聊天权限的模型".into()); }
     Ok(models)

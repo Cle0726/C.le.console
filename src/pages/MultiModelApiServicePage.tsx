@@ -892,7 +892,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             <header className="mm-api-panel-head">
               <div>
                 <h2>模型与能力目录</h2>
-                <p>“可用”表示已有启用账号声明该模型；自动同步只补充上游新增模型，不会删除模型或改回你停用的项目。</p>
+                <p>自动识别上游支持的最大上下文与输出容量，随模型同步更新；保留你的别名和启停选择。混合账号池使用参与账号的最小已知上限。</p>
               </div>
               <div className="mm-model-sync-actions">
                 <span className={`mm-model-sync-state ${state.modelSync.status}`} title={state.modelSync.lastError ?? undefined}>
@@ -918,7 +918,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
                   <div className="row" key={`${item.provider}:${item.id}`}>
                     <span className={`provider ${item.provider}`}><ProviderIcon provider={item.provider} />{providerLabel(item.provider)}</span>
                     <code>{item.id}</code>
-                    <span className="caps">{item.capabilities.map((cap) => <i key={cap}>{cap === 'image' ? <Image /> : cap === 'video' ? <Film /> : <Sparkles />}{cap}</i>)}{item.maxInputTokens ? <i title={`上游最高支持 ${item.maxInputTokens.toLocaleString()} tokens；实际消耗取决于发送的内容`}>上下文 {item.maxInputTokens >= 1000000 ? `${item.maxInputTokens / 1000000}M` : `${item.maxInputTokens / 1000}K`}</i> : null}{item.maxOutputTokens ? <i title="仅公布上游输出上限，不自动增加单次生成长度">输出 {item.maxOutputTokens / 1000}K</i> : null}</span>
+                    <span className="caps">{item.capabilities.map((cap) => <i key={cap}>{cap === 'image' ? <Image /> : cap === 'video' ? <Film /> : <Sparkles />}{cap}</i>)}{item.maxInputTokens ? <i title={`本渠道最高支持 ${item.maxInputTokens.toLocaleString()} tokens；实际消耗取决于发送的内容`}>上下文 {formatModelTokens(item.maxInputTokens)}</i> : item.capabilities.includes('text') ? <i title="已自动查询；上游未公布或本次查询失败时保留已有值，不按模型名字猜测">容量待确认</i> : null}{item.maxOutputTokens ? <i title="仅公布上游输出上限，不自动增加单次生成长度">输出 {formatModelTokens(item.maxOutputTokens)}</i> : null}</span>
                     <span className="mm-model-actions"><em className={available ? 'available' : ''}>{available ? '可用' : '未配置'}</em><button type="button" onClick={() => void copy(item.id, `model:${item.provider}:${item.id}`)}>{copied === `model:${item.provider}:${item.id}` ? <Check /> : <Copy />}</button>{!configured && <button type="button" onClick={() => { setTab('accounts'); setProviderFilter(item.provider); openAccount(undefined, item.provider); }}><Plus /></button>}</span>
                   </div>
                 );
@@ -1148,8 +1148,9 @@ function AccountCard({ account, usage, dispatch, xaiUsage, busy, refreshing, onR
     {account.provider !== 'xai' && usage && <div className="mm-xai-quota mm-provider-quota">
       {usage.buckets.length ? usage.buckets.slice(0, 5).map((bucket) => {
         const remaining = Math.max(0, Math.min(100, bucket.remainingPercent));
+        const model = account.models.find((item) => item.id.toLowerCase() === bucket.id.toLowerCase());
         return <div className="mm-xai-quota-row" key={bucket.id} title={bucket.resetAt ? `北京时间重置：${new Date(bucket.resetAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : undefined}>
-          <span><b>{bucket.label}</b><em>{bucket.remaining != null ? bucket.total != null ? `剩 ${formatQuotaNumber(bucket.remaining)} / ${formatQuotaNumber(bucket.total)}` : `剩 ${formatQuotaNumber(bucket.remaining)}` : `剩余 ${remaining}% · 已用 ${100 - remaining}%`}</em></span>
+          <span><b>{bucket.label}{model?.maxInputTokens ? <small className="mm-model-capacity" title={`自动识别：上下文 ${model.maxInputTokens.toLocaleString()} tokens${model.maxOutputTokens ? `，最大输出 ${model.maxOutputTokens.toLocaleString()} tokens` : ''}`}>上下文 {formatModelTokens(model.maxInputTokens)}</small> : null}</b><em>{bucket.remaining != null ? bucket.total != null ? `剩 ${formatQuotaNumber(bucket.remaining)} / ${formatQuotaNumber(bucket.total)}` : `剩 ${formatQuotaNumber(bucket.remaining)}` : `剩余 ${remaining}% · 已用 ${100 - remaining}%`}</em></span>
           {bucket.remainingPercent >= 0 && <i><u style={{ width: `${remaining}%` }} /></i>}
         </div>;
       }) : <p>暂无额度缓存，可点击下方刷新额度。</p>}
@@ -1165,6 +1166,11 @@ function AccountCard({ account, usage, dispatch, xaiUsage, busy, refreshing, onR
     <code>{account.provider === 'doubao-work' ? account.cliPath || '豆包工作 CLI' : account.baseUrl || 'CLIProxy native endpoint'}</code>
     <footer><span>{account.source === 'local:doubao-work' ? '本机豆包工作账号' : account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span>{canRefreshQuota(account) && <button type="button" onClick={onRefresh} disabled={busy} title="仅查询额度，不消耗生成积分" aria-label={`刷新 ${account.name} 额度`}><RefreshCw className={refreshing ? 'spin' : ''} />刷新额度</button>}<button type="button" onClick={onEdit} disabled={busy}>{account.provider === 'workbuddy' ? '管理 / 登录' : '编辑'}</button><button type="button" className="trash" onClick={onRemove} disabled={busy} aria-label="删除账号"><Trash2 /></button></footer>
   </article>;
+}
+
+function formatModelTokens(tokens: number): string {
+  const unit = tokens >= 1000000 ? 1000000 : 1000;
+  return `${Number((tokens / unit).toFixed(3))}${unit === 1000000 ? 'M' : 'K'}`;
 }
 
 function Empty({ icon, title, text, children }: { icon: ReactNode; title: string; text: string; children?: ReactNode }) {

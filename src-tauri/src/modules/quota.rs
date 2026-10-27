@@ -400,6 +400,51 @@ fn read_api_cache(source: &str, email: &str) -> Option<QuotaApiCacheRecord> {
     Some(record)
 }
 
+/// Model metadata can outlive the short quota-cache TTL. Pick the newest
+/// matching account/project snapshot, including caches from older releases.
+pub(super) fn cached_model_catalog(email: &str, project_id: Option<&str>) -> Option<Value> {
+    ["authorized", "model-catalog"].into_iter()
+        .filter_map(|source| read_api_cache(source, email))
+        .filter(|record| record.email.eq_ignore_ascii_case(email)
+            && project_id.zip(record.project_id.as_deref()).map_or(true, |(expected, actual)| expected == actual)
+            && record.payload.get("models").is_some_and(Value::is_object))
+        .max_by_key(|record| record.updated_at)
+        .map(|record| record.payload)
+}
+
+/// Metadata only: never generate, rotate credentials, or change account status.
+/// The model-sync worker uses the account store's current access token and
+/// retains saved capacities if the upstream is temporarily unavailable.
+pub(super) async fn fetch_model_catalog(token: &TokenData, email: &str) -> Result<Value, String> {
+    if token.access_token.trim().is_empty() || token.expiry_timestamp <= Utc::now().timestamp() + 15 {
+        return Err("登录凭证待正常刷新，保留上次模型容量".into());
+    }
+    let ctx = QuotaCloudCodeContext::from_token(token);
+    let project_id = match token.project_id.clone().filter(|id| !id.trim().is_empty()) {
+        Some(id) => Some(id),
+        None => fetch_project_id_with_context(&token.access_token, email, &ctx).await.0,
+    };
+    let payload = project_id.as_ref().map(|id| json!({"project": id})).unwrap_or_else(|| json!({}));
+    let response = create_client()
+        .post(format!("{}/{}", resolve_cloud_code_base_url(&ctx), FETCH_AVAILABLE_MODELS_PATH))
+        .bearer_auth(&token.access_token)
+        .header(reqwest::header::USER_AGENT, build_cloud_code_user_agent())
+        .header(reqwest::header::ACCEPT_ENCODING, "gzip")
+        .timeout(std::time::Duration::from_secs(15))
+        .json(&payload).send().await
+        .map_err(|_| "Antigravity 模型目录连接失败，保留上次容量".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Antigravity 模型目录返回 HTTP {}，保留上次容量", response.status().as_u16()));
+    }
+    let value: Value = response.json().await.map_err(|_| "Antigravity 模型目录不是有效 JSON".to_string())?;
+    if !value.get("models").and_then(Value::as_object).is_some_and(|models| !models.is_empty()) {
+        return Err("Antigravity 模型目录为空，保留上次容量".into());
+    }
+    // A separate cache must not mark an older quota_summary as freshly read.
+    write_api_cache("model-catalog", "desktop", email, project_id, value.clone());
+    Ok(value)
+}
+
 fn is_api_cache_valid(record: &QuotaApiCacheRecord) -> bool {
     let now_ms = Utc::now().timestamp_millis();
     now_ms - record.updated_at < API_CACHE_TTL_MS
@@ -428,7 +473,7 @@ fn write_api_cache(
             payload,
         };
         if let Ok(content) = serde_json::to_string_pretty(&record) {
-            let _ = fs::write(path, content);
+            let _ = modules::atomic_write::write_string_atomic(&path, &content);
         }
     }
 }

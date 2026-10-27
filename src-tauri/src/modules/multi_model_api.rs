@@ -824,13 +824,25 @@ fn apply_model_capacity_defaults(config: &mut MultiModelApiConfig) -> bool {
     let mut changed = false;
     for account in &mut config.accounts {
         let provider = normalize_provider(&account.provider);
+        let capacity_channel = if provider == "gemini" && account.auth_mode == "oauth_json" {
+            "gemini-cli"
+        } else { provider.as_str() };
+        let upstream_limits = cached_antigravity_capacities(account);
         for model in &mut account.models {
-            let (input, output) = super::model_capacity::defaults(&provider, model.id.trim());
+            let (input, output) = super::model_capacity::defaults(capacity_channel, model.id.trim());
             if model.max_input_tokens.filter(|value| *value > 0).is_none() && input.is_some() {
                 model.max_input_tokens = input; changed = true;
             }
             if model.max_output_tokens.filter(|value| *value > 0).is_none() && output.is_some() {
                 model.max_output_tokens = output; changed = true;
+            }
+            if let Some((input, output)) = upstream_limits.get(&model.id) {
+                if input.is_some() && model.max_input_tokens != *input {
+                    model.max_input_tokens = *input; changed = true;
+                }
+                if output.is_some() && model.max_output_tokens != *output {
+                    model.max_output_tokens = *output; changed = true;
+                }
             }
         }
     }
@@ -4180,7 +4192,7 @@ fn model_ids_from_upstream_payload(value: &Value) -> Vec<String> {
     models
 }
 
-fn model_definitions_from_upstream_payload(provider: &str, value: &Value) -> Vec<MultiModelDefinition> {
+fn model_definitions_from_upstream_payload(_provider: &str, value: &Value) -> Vec<MultiModelDefinition> {
     let empty = Vec::new();
     let items = value.get("data").and_then(Value::as_array)
         .or_else(|| value.get("models").and_then(Value::as_array))
@@ -4193,15 +4205,35 @@ fn model_definitions_from_upstream_payload(provider: &str, value: &Value) -> Vec
                 .is_some_and(|raw| raw.trim().strip_prefix("models/").unwrap_or(raw.trim()).eq_ignore_ascii_case(&id))
         });
         let mut model = model_definition(id);
-        let (default_input, default_output) = super::model_capacity::defaults(provider, &model.id);
         let (input, output) = item.map(super::model_capacity::declared).unwrap_or_default();
-        model.max_input_tokens = input.or(default_input);
-        model.max_output_tokens = output.or(default_output);
+        model.max_input_tokens = input;
+        model.max_output_tokens = output;
         model
     }).collect()
 }
 
-fn managed_model_snapshots() -> BTreeMap<String, Vec<String>> {
+fn cached_antigravity_capacities(route: &MultiModelAccount) -> BTreeMap<String, (Option<u32>, Option<u32>)> {
+    route.source.strip_prefix("cle:antigravity:")
+        .and_then(|id| account::load_account(id).ok())
+        .and_then(|managed| super::quota::cached_model_catalog(&managed.email, managed.token.project_id.as_deref()))
+        .map(|payload| super::model_capacity::antigravity_catalog(&payload))
+        .unwrap_or_default()
+}
+
+fn antigravity_model_definitions(payload: &Value) -> Vec<MultiModelDefinition> {
+    super::model_capacity::antigravity_catalog(payload).into_iter()
+        .filter(|(id, _)| is_routable_antigravity_model(id))
+        .map(|(id, (input, output))| {
+            let mut model = model_definition(id);
+            // Missing fields must not overwrite a previously confirmed limit
+            // with an older bundled fallback. Defaults fill only empty slots.
+            model.max_input_tokens = input;
+            model.max_output_tokens = output;
+            model
+        }).collect()
+}
+
+fn managed_model_snapshots() -> BTreeMap<String, Vec<MultiModelDefinition>> {
     let mut snapshots = BTreeMap::new();
     if let Ok(accounts) = account::list_accounts() {
         for managed in accounts {
@@ -4217,8 +4249,12 @@ fn managed_model_snapshots() -> BTreeMap<String, Vec<String>> {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            if !models.is_empty() {
-                snapshots.insert(format!("cle:antigravity:{}", managed.id), models);
+            let mut definitions = models.into_iter().map(model_definition).collect::<Vec<_>>();
+            if let Some(payload) = super::quota::cached_model_catalog(&managed.email, managed.token.project_id.as_deref()) {
+                merge_discovered_model_definitions(&mut definitions, antigravity_model_definitions(&payload));
+            }
+            if !definitions.is_empty() {
+                snapshots.insert(format!("cle:antigravity:{}", managed.id), definitions);
             }
         }
     }
@@ -4229,7 +4265,7 @@ fn managed_model_snapshots() -> BTreeMap<String, Vec<String>> {
                 .map(|(model, _)| model)
                 .collect::<Vec<_>>();
             if !models.is_empty() {
-                snapshots.insert(format!("cle:gemini:{}", account.id), models);
+                snapshots.insert(format!("cle:gemini:{}", account.id), models.into_iter().map(model_definition).collect());
             }
         }
     }
@@ -4237,18 +4273,74 @@ fn managed_model_snapshots() -> BTreeMap<String, Vec<String>> {
         for account in accounts {
             let models = account.api_model_catalog.clone().unwrap_or_default();
             if !models.is_empty() {
-                snapshots.insert(format!("cle:claude:{}", account.id), models);
+                snapshots.insert(format!("cle:claude:{}", account.id), models.into_iter().map(model_definition).collect());
             }
         }
     }
     snapshots
 }
 
+/// Google OAuth is maintained by the existing proxy/CLI. A background model
+/// query may read its current access token without becoming a second refresh
+/// owner or copying a refresh token back over the account manager's record.
+fn runtime_model_catalog_access(route: &MultiModelAccount, email: &str) -> Option<(String, i64)> {
+    if !matches!(route.provider.as_str(), "antigravity" | "gemini") { return None; }
+    let path = sidecar_dir().ok()?.join("auths").join(format!("{}.json", safe_file_name(&route.id)));
+    let value: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let kind = value.get("type")?.as_str()?;
+    let matches_kind = match route.provider.as_str() {
+        "antigravity" => kind == "antigravity",
+        "gemini" => matches!(kind, "gemini" | "gemini-cli"),
+        _ => false,
+    };
+    if !matches_kind || value.get("disabled").and_then(Value::as_bool) == Some(true)
+        || !value.get("email")?.as_str()?.eq_ignore_ascii_case(email) { return None; }
+    let expiry = oauth_expiration(&value).map(|expiry| expiry.timestamp()).or_else(|| {
+        let expiry = value.get("expiry_date")?.as_i64()?;
+        Some(if expiry > 10_000_000_000 { expiry / 1000 } else { expiry })
+    })?;
+    if expiry <= chrono::Utc::now().timestamp() + 15 { return None; }
+    let access = value.get("access_token")?.as_str()?.trim();
+    (!access.is_empty()).then(|| (access.to_string(), expiry))
+}
+
 async fn fetch_upstream_models(
-    account: MultiModelAccount,
+    mut account: MultiModelAccount,
     global_proxy: String,
 ) -> Result<Vec<MultiModelDefinition>, String> {
     let provider = normalize_provider(&account.provider);
+    if provider == "gemini" && account.source.starts_with("cle:gemini:") {
+        let id = account.source.strip_prefix("cle:gemini:").ok_or("Gemini 账号缺少来源")?;
+        let active = gemini_account::load_account(id)
+            .and_then(|managed| runtime_model_catalog_access(&account, &managed.email));
+        let payload = timeout(Duration::from_secs(25), gemini_account::fetch_model_catalog(id, active))
+            .await.map_err(|_| "Gemini 模型目录查询超时，保留上次容量".to_string())??;
+        let models = antigravity_model_definitions(&payload).into_iter()
+            .filter(|model| model.id.to_ascii_lowercase().starts_with("gemini-"))
+            .collect::<Vec<_>>();
+        return if models.is_empty() { Err("Gemini CLI 未返回可调用模型".into()) } else { Ok(models) };
+    }
+    if provider == "antigravity" {
+        let id = account.source.strip_prefix("cle:antigravity:").ok_or("Antigravity 账号缺少托管来源")?;
+        let mut managed = account::load_account(id)?;
+        if managed.token.expiry_timestamp <= chrono::Utc::now().timestamp() + 15 {
+            if let Some((access, expiry)) = runtime_model_catalog_access(&account, &managed.email) {
+                managed.token.access_token = access;
+                managed.token.expiry_timestamp = expiry;
+            } else {
+                // Delegate expired Google credentials to the existing account
+                // manager, which saves any replacement before reading quota.
+                // Do not add a second OAuth implementation to model syncing.
+                let quota = account::fetch_quota_with_fresh_token(&mut managed, false).await
+                    .map_err(|_| "Antigravity 账号管理器暂时无法更新凭证，保留上次模型容量".to_string())?;
+                account::update_account_quota(&managed.id, quota)?;
+            }
+        }
+        let payload = timeout(Duration::from_secs(25), super::quota::fetch_model_catalog(&managed.token, &managed.email))
+            .await.map_err(|_| "Antigravity 模型目录查询超时，保留上次容量".to_string())??;
+        let models = antigravity_model_definitions(&payload);
+        return if models.is_empty() { Err("Antigravity 未返回可调用模型".into()) } else { Ok(models) };
+    }
     if provider == "workbuddy" {
         let id = account.source.strip_prefix("cle:workbuddy:").ok_or("WorkBuddy 账号缺少来源")?;
         let proxy = if account.proxy_url.trim().is_empty() { &global_proxy } else { &account.proxy_url };
@@ -4257,6 +4349,14 @@ async fn fetch_upstream_models(
     if managed_provider_api::supported(&provider) {
         let id = account.source.strip_prefix(&format!("cle:{provider}:")).ok_or("账号缺少来源")?;
         return managed_provider_api::fetch_models(&provider,id,if account.proxy_url.trim().is_empty() {&global_proxy} else {&account.proxy_url}).await;
+    }
+    if provider == "claude" && account.auth_mode == "oauth_json" {
+        if let Some(id) = account.source.strip_prefix("cle:claude:") {
+            // Use the same credential owner as inference and quota reads;
+            // never independently renew a copied OAuth grant for model sync.
+            let payload = managed_provider_api::credential_payload("claude", id, false).await?;
+            account.credential_json = payload.get("metadata").cloned();
+        }
     }
     let endpoint = upstream_models_url(&account)
         .ok_or_else(|| format!("{} 不提供标准模型目录", account.name))?;
@@ -4292,6 +4392,7 @@ async fn fetch_upstream_models(
     let api_key = account.api_key.trim();
     let mut request = client.get(&endpoint);
     if provider == "claude" { request = request.query(&[("limit", "1000")]); }
+    if provider == "gemini" { request = request.query(&[("pageSize", "1000")]); }
     match provider.as_str() {
         "gemini" if !api_key.is_empty() => {
             request = request.query(&[("key", api_key)]);
@@ -4304,7 +4405,8 @@ async fn fetch_upstream_models(
         "claude" if access_token.is_some() => {
             request = request
                 .bearer_auth(access_token.unwrap_or_default())
-                .header("anthropic-version", "2026-10-21");
+                .header("anthropic-version", "2026-10-21")
+                .header("anthropic-beta", "oauth-2025-04-20");
         }
         _ if access_token.is_some() => {
             request = request.bearer_auth(access_token.unwrap_or_default());
@@ -4317,29 +4419,29 @@ async fn fetch_upstream_models(
     for (key, value) in &account.headers {
         request = request.header(key.as_str(), value.as_str());
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("{} 模型目录请求失败: {error}", account.name))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|error| format!("{} 模型目录读取失败: {error}", account.name))?;
-    if !status.is_success() {
-        return Err(format!(
-            "{} 模型目录返回 HTTP {}",
-            account.name,
-            status.as_u16()
-        ));
+    let mut models = Vec::new();
+    let mut cursor: Option<(String, String)> = None;
+    let mut seen_cursors = BTreeSet::new();
+    for _ in 0..20 {
+        let mut page = request.try_clone().ok_or("无法创建模型目录分页请求")?;
+        if let Some((key, value)) = cursor.take() { page = page.query(&[(key, value)]); }
+        let response = page.send().await.map_err(|_| format!("{} 模型目录请求失败", account.name))?;
+        if !response.status().is_success() {
+            return Err(format!("{} 模型目录返回 HTTP {}", account.name, response.status().as_u16()));
+        }
+        let payload: Value = response.json().await
+            .map_err(|_| format!("{} 模型目录不是有效 JSON", account.name))?;
+        merge_discovered_model_definitions(&mut models, model_definitions_from_upstream_payload(&provider, &payload));
+        cursor = super::model_capacity::next_catalog_page(&payload);
+        let Some(next) = cursor.as_ref() else {
+            if payload.get("has_more").and_then(Value::as_bool) == Some(true) {
+                return Err(format!("{} 模型目录缺少分页游标，保留上次数据", account.name));
+            }
+            return if models.is_empty() { Err(format!("{} 模型目录为空", account.name)) } else { Ok(models) };
+        };
+        if !seen_cursors.insert(next.clone()) { return Err(format!("{} 模型目录分页重复，保留上次数据", account.name)); }
     }
-    let payload: Value = serde_json::from_str(&body)
-        .map_err(|_| format!("{} 模型目录不是有效 JSON", account.name))?;
-    let models = model_definitions_from_upstream_payload(&provider, &payload);
-    if models.is_empty() {
-        return Err(format!("{} 模型目录为空", account.name));
-    }
-    Ok(models)
+    Err(format!("{} 模型目录分页超出上限，保留上次数据", account.name))
 }
 
 fn merge_discovered_models(
@@ -4411,7 +4513,17 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
     let mut sources_failed = 0usize;
 
     if config.accounts.iter().any(|route| route.enabled && route.source.starts_with("agent2api:")) {
-        match agent_provider_bridge::pools(true).await {
+        let pools = match agent_provider_bridge::pools(true).await {
+            Ok(pools) => Ok(pools),
+            Err(error) => {
+                // A failed extension provider must not hide successful updates
+                // from every other provider in the same refresh response.
+                sources_failed += 1;
+                errors.push(error);
+                agent_provider_bridge::pools(false).await
+            }
+        };
+        match pools {
             Ok(pools) => for pool in pools {
                 if let Some(route) = config.accounts.iter().find(|route| route.source == format!("agent2api:{}", pool.provider)) {
                     discoveries.insert(route.id.clone(), pool.models.iter().filter_map(|model| extension_model(&pool.provider, model)).collect());
@@ -4427,7 +4539,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
             .get(&account.source)
             .filter(|items| !items.is_empty())
         {
-            discoveries.insert(account.id.clone(), models.iter().cloned().map(model_definition).collect());
+            discoveries.insert(account.id.clone(), models.clone());
             sources_succeeded += 1;
         }
     }
@@ -4438,8 +4550,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
         .filter(|item| {
             item.enabled
                 && !item.source.starts_with("agent2api:")
-                && (!discoveries.contains_key(&item.id) || item.provider == "claude")
-                && (item.provider == "workbuddy" || managed_provider_api::supported(&item.provider) || upstream_models_url(item).is_some())
+                && (item.provider == "workbuddy" || (item.provider == "antigravity" && item.source.starts_with("cle:antigravity:")) || managed_provider_api::supported(&item.provider) || upstream_models_url(item).is_some())
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -4778,11 +4889,12 @@ fn extension_model(provider: &str, model: &Value) -> Option<MultiModelDefinition
     let id = model.get("id")?.as_str()?.trim();
     if id.is_empty() { return None; }
     let caps = model.get("capabilities").unwrap_or(&Value::Null);
+    let (max_input_tokens, max_output_tokens) = super::model_capacity::declared(model);
     let mut capabilities = vec!["text".to_string()];
     if caps.get("supportsImages").and_then(Value::as_bool) == Some(true) { capabilities.push("vision".into()); }
     if caps.get("supportsReasoning").and_then(Value::as_bool) == Some(true) { capabilities.push("reasoning".into()); }
     Some(MultiModelDefinition { id: format!("{provider}/{id}"), alias: String::new(), capabilities,
-        max_input_tokens: caps.get("maxInputTokens").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()), max_output_tokens: caps.get("maxOutputTokens").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()), enabled: true })
+        max_input_tokens, max_output_tokens, enabled: true })
 }
 
 async fn import_extension_routes(config: &mut MultiModelApiConfig, refresh: bool) -> Result<(), String> {
@@ -5463,13 +5575,40 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_limits_refresh_existing_models_and_preserve_user_choices() {
+        let mut old = model_definition("claude-opus-5-5-medium".into());
+        old.alias = "my-opus".into();
+        old.enabled = false;
+        old.max_input_tokens = Some(8000);
+        let mut existing = vec![old];
+        let discovered = super::antigravity_model_definitions(&json!({"models": {
+            "claude-opus-5-5-medium": {"maxTokens":1000000,"maxOutputTokens":128000},
+            "claude-sonnet-4-6": {"maxTokens":250000,"maxOutputTokens":64000},
+            "3p-5h": {"maxTokens":9999999}
+        }}));
+        assert_eq!(discovered.len(), 2);
+        super::merge_discovered_model_definitions(&mut existing, discovered);
+        assert_eq!(existing[0].max_input_tokens, Some(1000000));
+        assert_eq!(existing[0].max_output_tokens, Some(128000));
+        assert_eq!(existing[0].alias, "my-opus");
+        assert!(!existing[0].enabled);
+        assert_eq!(existing[1].max_input_tokens, Some(250000));
+        super::merge_discovered_model_definitions(&mut existing,
+            super::antigravity_model_definitions(&json!({"models":{"claude-opus-5-5-medium":{},"claude-sonnet-4-6":{}}})));
+        assert_eq!(existing[0].max_input_tokens, Some(1000000));
+        assert_eq!(existing[1].max_input_tokens, Some(250000));
+    }
+
+    #[test]
     fn upstream_limits_reach_existing_models_without_resetting_aliases_or_toggles() {
         let discovered = super::model_definitions_from_upstream_payload("claude", &json!({"data":[
             {"id":"claude-sonnet-5-5", "max_input_tokens":1000000, "max_tokens":128000},
             {"id":"claude-opus-5-5"}
         ]}));
         assert_eq!(discovered[0].max_input_tokens, Some(1000000));
-        assert_eq!(discovered[1].max_input_tokens, Some(1000000));
+        // An omitted field cannot replace a previously confirmed capacity
+        // with a bundled suggestion. New empty slots are filled on save.
+        assert_eq!(discovered[1].max_input_tokens, None);
         let mut old = model_definition("claude-sonnet-5-5".into());
         old.alias = "my-sonnet".into(); old.enabled = false; old.max_input_tokens = Some(8000);
         let mut existing = vec![old];
