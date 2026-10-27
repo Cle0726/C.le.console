@@ -413,6 +413,8 @@ pub struct CodexLocalAccessCollection {
     pub client_base_url_host: CodexLocalAccessClientBaseUrlHost,
     #[serde(default)]
     pub image_generation_mode: CodexLocalAccessImageGenerationMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images_main_model: Option<String>,
     #[serde(default)]
     pub gateway_mode: CodexLocalAccessGatewayMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]

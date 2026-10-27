@@ -22,6 +22,7 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/tidwall/gjson"
 )
 
 func TestCodexClientModelsResponseShape(t *testing.T) {
@@ -1676,8 +1677,11 @@ data: {"type":"response.completed","response":{"created_at":1710000000,"output":
 	if runtime.streamCalls != 1 || runtime.executeCalls != 0 {
 		t.Fatalf("unexpected runtime calls: execute=%d stream=%d", runtime.executeCalls, runtime.streamCalls)
 	}
-	if runtime.lastReq.Model != defaultImagesMainModel {
-		t.Fatalf("image endpoint should execute via main model, got %q", runtime.lastReq.Model)
+	if runtime.lastReq.Model != defaultImagesToolModel {
+		t.Fatalf("image endpoint should select an account via the image model, got %q", runtime.lastReq.Model)
+	}
+	if got := gjson.GetBytes(runtime.lastReq.Payload, "model").String(); got != defaultImagesMainModel {
+		t.Fatalf("image endpoint should use the default host, got %q", got)
 	}
 	var body map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
@@ -2064,6 +2068,7 @@ func TestRelayServerHealthzDoesNotRequireAPIKey(t *testing.T) {
 func testRelayRouter(runtime executorRuntime) *gin.Engine {
 	m := &manifest{
 		APIKeys:  []apiKeySpec{{ID: "key_1", Label: "Test key", Key: "client-key", Enabled: true}},
+		Accounts: []accountSpec{{ID: "test-plus", Provider: "codex", PlanType: "plus"}},
 		ModelIDs: []string{"gpt-5.5", "gpt-image-2"},
 		apiKeyByValue: map[string]*apiKeySpec{
 			"client-key": {ID: "key_1", Label: "Test key", Key: "client-key", Enabled: true},

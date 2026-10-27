@@ -175,7 +175,7 @@ const DEFAULT_CODEX_MODELS: &[&str] = &[
 static CODEX_UPSTREAM_MODELS_REFRESH_STARTED: AtomicBool = AtomicBool::new(false);
 const CODEX_IMAGE_MODEL_ID: &str = "gpt-image-2";
 const CODEX_AUTO_REVIEW_MODEL_ID: &str = "codex-auto-review";
-const DEFAULT_IMAGES_MAIN_MODEL: &str = "gpt-5.4-mini";
+const DEFAULT_IMAGES_MAIN_MODEL: &str = super::codex_image_host::DEFAULT_HOST;
 const MAX_MODEL_PRICE_USD_PER_MILLION: f64 = 1_000_000.0;
 const CHAT_COMPLETIONS_PATH: &str = "/v1/chat/completions";
 const RESPONSES_PATH: &str = "/v1/responses";
@@ -7328,7 +7328,11 @@ pub fn sync_sidecar_auth_file_for_account(account: &CodexAccount) -> Result<(), 
     Ok(())
 }
 
-fn sidecar_account_manifest_value(account: &CodexAccount, auth_id: Option<&str>) -> Value {
+fn sidecar_account_manifest_value(
+    account: &CodexAccount,
+    auth_id: Option<&str>,
+    health: Option<&RuntimeAccountHealth>,
+) -> Value {
     let auth_kind = if account.is_api_key_auth() {
         "api_key"
     } else if account.is_agent_identity_auth() {
@@ -7342,6 +7346,7 @@ fn sidecar_account_manifest_value(account: &CodexAccount, auth_id: Option<&str>)
         "authId": auth_id,
         "authKind": auth_kind,
         "planType": account.plan_type.as_deref(),
+        "imageGenerationStatus": health.map(|item| item.image_generation_status).unwrap_or_default(),
         "chatgptAccountId": account.account_id.as_deref().unwrap_or_default(),
         "upstreamApiKey": account.openai_api_key.as_deref().unwrap_or_default(),
         "planRank": resolve_plan_rank(account),
@@ -7745,7 +7750,11 @@ async fn prepare_sidecar_launch_config_in_dir(
                 sidecar_codex_key_config_value(&account, collection, effective_proxy_url_ref)
             {
                 codex_keys.push(config_value);
-                manifest_accounts.push(sidecar_account_manifest_value(&account, None));
+                manifest_accounts.push(sidecar_account_manifest_value(
+                    &account,
+                    None,
+                    health_snapshot.get(&account.id),
+                ));
             } else {
                 logger::log_codex_api_warn(&format!(
                     "[CodexLocalAccess][sidecar] 跳过缺少上游 API Key 的 API Key 账号: account_id={}",
@@ -7764,7 +7773,11 @@ async fn prepare_sidecar_launch_config_in_dir(
         let auth_content = serde_json::to_string_pretty(&auth_json)
             .map_err(|e| format!("序列化 sidecar Codex OAuth 认证失败: {}", e))?;
         write_string_atomic_if_changed(&auth_path, &auth_content)?;
-        manifest_accounts.push(sidecar_account_manifest_value(&account, Some(&file_name)));
+        manifest_accounts.push(sidecar_account_manifest_value(
+            &account,
+            Some(&file_name),
+            health_snapshot.get(&account.id),
+        ));
     }
     remove_stale_sidecar_auth_files(&auths_dir, &expected_auth_files)?;
 
@@ -7819,6 +7832,10 @@ async fn prepare_sidecar_launch_config_in_dir(
     config.insert(
         "disable-image-generation".to_string(),
         sidecar_disable_image_generation_value(effective_image_generation_mode),
+    );
+    config.insert(
+        "gpt-image-2-base-model".to_string(),
+        json!(super::codex_image_host::candidates(collection.images_main_model.as_deref())[0]),
     );
     config.insert(
         "request-retry".to_string(),
@@ -10173,6 +10190,7 @@ async fn ensure_runtime_loaded_without_start() -> Result<(), String> {
             access_scope: CodexLocalAccessScope::Localhost,
             client_base_url_host: CodexLocalAccessClientBaseUrlHost::default(),
             image_generation_mode: CodexLocalAccessImageGenerationMode::default(),
+            images_main_model: None,
             gateway_mode: CodexLocalAccessGatewayMode::default(),
             upstream_proxy_url: None,
             routing_strategy: CodexLocalAccessRoutingStrategy::default(),
@@ -11320,6 +11338,7 @@ fn new_empty_local_access_collection() -> Result<CodexLocalAccessCollection, Str
         access_scope: CodexLocalAccessScope::Localhost,
         client_base_url_host: CodexLocalAccessClientBaseUrlHost::default(),
         image_generation_mode: CodexLocalAccessImageGenerationMode::default(),
+        images_main_model: None,
         gateway_mode: CodexLocalAccessGatewayMode::default(),
         upstream_proxy_url: None,
         routing_strategy: CodexLocalAccessRoutingStrategy::default(),
@@ -13898,6 +13917,7 @@ pub async fn save_local_access_accounts(
                 access_scope: CodexLocalAccessScope::Localhost,
                 client_base_url_host: CodexLocalAccessClientBaseUrlHost::default(),
                 image_generation_mode: CodexLocalAccessImageGenerationMode::default(),
+                images_main_model: None,
                 gateway_mode: CodexLocalAccessGatewayMode::default(),
                 upstream_proxy_url: None,
                 routing_strategy: CodexLocalAccessRoutingStrategy::default(),
@@ -17296,6 +17316,25 @@ async fn proxy_request_with_account_pool(
                 ),
             );
 
+            let image_hosts = if request_kind_is_image(request_kind) {
+                super::codex_image_host::candidates(collection.images_main_model.as_deref())
+            } else {
+                Vec::new()
+            };
+            let mut image_host_index = 0usize;
+            let mut upstream_body = if let Some(host) = image_hosts.first() {
+                super::codex_image_host::with_model(&request.body, host).map_err(|error| {
+                    ProxyDispatchError {
+                        status: 400,
+                        message: error,
+                        account_id: None,
+                        account_email: None,
+                        error_category: Some("bad_request".to_string()),
+                    }
+                })?
+            } else {
+                request.body.clone()
+            };
             let mut single_account_status_retry_attempt = 0usize;
             loop {
                 let upstream_send_started_at = Instant::now();
@@ -17315,7 +17354,7 @@ async fn proxy_request_with_account_pool(
                     &request.method,
                     &upstream_target,
                     &request.headers,
-                    &request.body,
+                    &upstream_body,
                     &account,
                     collection.upstream_proxy_url.as_deref(),
                     upstream_connect_timeout,
@@ -17451,7 +17490,7 @@ async fn proxy_request_with_account_pool(
                                 &request.method,
                                 &upstream_target,
                                 &request.headers,
-                                &request.body,
+                                &upstream_body,
                                 &account,
                                 collection.upstream_proxy_url.as_deref(),
                                 upstream_connect_timeout,
@@ -17543,6 +17582,23 @@ async fn proxy_request_with_account_pool(
 
                 let status = response.status();
                 let body = response.text().await.unwrap_or_default();
+                if image_host_index + 1 < image_hosts.len()
+                    && super::codex_image_host::is_unsupported(status.as_u16(), &body)
+                {
+                    image_host_index += 1;
+                    upstream_body = super::codex_image_host::with_model(
+                        &request.body,
+                        &image_hosts[image_host_index],
+                    )
+                    .map_err(|error| ProxyDispatchError {
+                        status: 400,
+                        message: error,
+                        account_id: None,
+                        account_email: None,
+                        error_category: Some("bad_request".to_string()),
+                    })?;
+                    continue;
+                }
                 let category = classify_upstream_error_category(status, &body);
                 let message = if category == Some("image_generation_not_enabled") {
                     friendly_image_generation_capability_error(&account.email)
@@ -19618,6 +19674,7 @@ mod tests {
             access_scope: CodexLocalAccessScope::Localhost,
             client_base_url_host: CodexLocalAccessClientBaseUrlHost::default(),
             image_generation_mode: CodexLocalAccessImageGenerationMode::default(),
+            images_main_model: None,
             gateway_mode: CodexLocalAccessGatewayMode::default(),
             upstream_proxy_url: None,
             routing_strategy: CodexLocalAccessRoutingStrategy::default(),
@@ -20393,7 +20450,7 @@ wire_api = "responses"
             Some("runtime-test")
         );
         assert!(auth_json.get("access_token").is_none());
-        let manifest = sidecar_account_manifest_value(&account, Some("agent.json"));
+        let manifest = sidecar_account_manifest_value(&account, Some("agent.json"), None);
         assert_eq!(
             manifest.get("authKind").and_then(Value::as_str),
             Some("agent_identity")
@@ -22138,7 +22195,7 @@ data: {"type":"response.completed","response":{"id":"resp_123","usage":{"input_t
             serde_json::from_slice(&prepared.body).expect("mapped body should be json");
         assert_eq!(
             mapped_body.get("model").and_then(Value::as_str),
-            Some("gpt-5.4-mini")
+            Some("gpt-6-luna")
         );
         assert_eq!(
             mapped_body

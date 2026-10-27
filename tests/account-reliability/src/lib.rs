@@ -12,6 +12,9 @@ mod credential_store;
 #[path = "../../../src-tauri/src/modules/model_capacity.rs"]
 mod model_capacity;
 
+#[path = "../../../src-tauri/src/modules/codex_image_host.rs"]
+mod codex_image_host;
+
 pub mod modules {
     pub use crate::atomic_write;
     pub mod logger {

@@ -66,6 +66,19 @@ func TestImagesModelValidationAllowsGPTImage2AndXAIModels(t *testing.T) {
 	}
 }
 
+func TestImagesResponsesRequestUsesConfiguredHostAndPreservesPrefix(t *testing.T) {
+	tool := []byte(`{"type":"image_generation","model":"team/gpt-image-2"}`)
+	if got := gjson.GetBytes(buildImagesResponsesRequest("draw", nil, tool), "model").String(); got != "team/gpt-6-luna" {
+		t.Fatalf("default host: %s", got)
+	}
+	if got := gjson.GetBytes(buildImagesResponsesRequest("draw", nil, tool, "gpt-6-sol"), "model").String(); got != "team/gpt-6-sol" {
+		t.Fatalf("configured host: %s", got)
+	}
+	if got := gjson.GetBytes(buildImagesResponsesRequest("draw", nil, tool, "other"), "model").String(); got != "team/gpt-6-luna" {
+		t.Fatalf("invalid host: %s", got)
+	}
+}
+
 func TestImagesModelValidationAllowsOpenAICompatImageModels(t *testing.T) {
 	modelRegistry := registry.GetGlobalRegistry()
 	clientID := "test-openai-compat-image-model-validation"

@@ -23,7 +23,7 @@ type SDKConfig struct {
 	// requests via the hosted image_generation tool (e.g. Codex OAuth /v1/images/*).
 	//
 	// The value must start with "gpt-" (case-insensitive). If empty or invalid, the
-	// default base model ("gpt-5.4-mini") is used.
+	// default base model ("gpt-6-luna") is used.
 	GPTImage2BaseModel string `yaml:"gpt-image-2-base-model,omitempty" json:"gpt-image-2-base-model,omitempty"`
 
 	// EnableGeminiCLIEndpoint controls whether Gemini CLI internal endpoints (/v1internal:*) are enabled.

@@ -18,6 +18,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
@@ -30,7 +31,7 @@ const (
 	codexOpenAIImageSourceFormat = "openai-image"
 	codexImagesGenerationsPath   = "/v1/images/generations"
 	codexImagesEditsPath         = "/v1/images/edits"
-	codexOpenAIImagesMainModel   = "gpt-5.4-mini"
+	codexOpenAIImagesMainModel   = util.DefaultGPTImageHost
 )
 
 type codexOpenAIImagePreparedRequest struct {
@@ -77,6 +78,13 @@ func (e *CodexExecutor) resolveGPTImage2BaseModel() string {
 	return codexOpenAIImagesMainModel
 }
 
+func (e *CodexExecutor) imageHostForOptions(opts cliproxyexecutor.Options) string {
+	if model, ok := opts.Metadata["cle_image_host"].(string); ok && strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-") {
+		return strings.TrimSpace(model)
+	}
+	return e.resolveGPTImage2BaseModel()
+}
+
 func (e *CodexExecutor) executeOpenAIImage(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
 	prepared, errPrepare := codexPrepareOpenAIImageRequest(req, opts)
 	if errPrepare != nil {
@@ -88,7 +96,7 @@ func (e *CodexExecutor) executeOpenAIImage(ctx context.Context, auth *cliproxyau
 		baseURL = "https://chatgpt.com/backend-api/codex"
 	}
 
-	mainModel := e.resolveGPTImage2BaseModel()
+	mainModel := e.imageHostForOptions(opts)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, mainModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 
@@ -185,7 +193,7 @@ func (e *CodexExecutor) executeOpenAIImageStream(ctx context.Context, auth *clip
 		baseURL = "https://chatgpt.com/backend-api/codex"
 	}
 
-	mainModel := e.resolveGPTImage2BaseModel()
+	mainModel := e.imageHostForOptions(opts)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, mainModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 

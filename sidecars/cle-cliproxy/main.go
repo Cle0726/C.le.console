@@ -42,6 +42,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	_ "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator/builtin"
+	"github.com/tidwall/sjson"
 )
 
 type contextKey string
@@ -56,7 +57,7 @@ const ginUserAPIKeyKey = "userApiKey"
 
 const defaultStreamKeepAliveSeconds = 15
 const codexAutoReviewModel = "codex-auto-review"
-const defaultImagesMainModel = "gpt-5.4-mini"
+const defaultImagesMainModel = util.DefaultGPTImageHost
 const defaultImagesToolModel = "gpt-image-2"
 const imagesGenerationsPath = "/v1/images/generations"
 const imagesEditsPath = "/v1/images/edits"
@@ -130,28 +131,29 @@ type providerGatewayModelCapability struct {
 }
 
 type accountSpec struct {
-	ID                   string                      `json:"id"`
-	Email                string                      `json:"email"`
-	AuthID               string                      `json:"authId,omitempty"`
-	AuthKind             string                      `json:"authKind,omitempty"`
-	PlanType             string                      `json:"planType,omitempty"`
-	AccessTokenOnly      bool                        `json:"accessTokenOnly,omitempty"`
-	ChatGPTAccountID     string                      `json:"chatgptAccountId,omitempty"`
-	UpstreamAPIKey       string                      `json:"upstreamApiKey,omitempty"`
-	CLIPath              string                      `json:"cliPath,omitempty"`
-	CLIApp               string                      `json:"cliApp,omitempty"`
-	CLIProfile           string                      `json:"cliProfile,omitempty"`
-	Provider             string                      `json:"provider,omitempty"`
-	Models               []string                    `json:"models,omitempty"`
-	ModelLimits          map[string]modelTokenLimits `json:"modelLimits,omitempty"`
-	BaseURL              string                      `json:"baseUrl,omitempty"`
-	ProxyURL             string                      `json:"proxyUrl,omitempty"`
-	Headers              map[string]string           `json:"headers,omitempty"`
-	Priority             int                         `json:"priority,omitempty"`
-	PlanRank             *int                        `json:"planRank,omitempty"`
-	RemainingQuota       *int                        `json:"remainingQuota,omitempty"`
-	ModelQuotas          map[string]int              `json:"modelQuotas,omitempty"`
-	SubscriptionExpiryMS *int64                      `json:"subscriptionExpiryMs,omitempty"`
+	ID                    string                      `json:"id"`
+	Email                 string                      `json:"email"`
+	AuthID                string                      `json:"authId,omitempty"`
+	AuthKind              string                      `json:"authKind,omitempty"`
+	PlanType              string                      `json:"planType,omitempty"`
+	ImageGenerationStatus string                      `json:"imageGenerationStatus,omitempty"`
+	AccessTokenOnly       bool                        `json:"accessTokenOnly,omitempty"`
+	ChatGPTAccountID      string                      `json:"chatgptAccountId,omitempty"`
+	UpstreamAPIKey        string                      `json:"upstreamApiKey,omitempty"`
+	CLIPath               string                      `json:"cliPath,omitempty"`
+	CLIApp                string                      `json:"cliApp,omitempty"`
+	CLIProfile            string                      `json:"cliProfile,omitempty"`
+	Provider              string                      `json:"provider,omitempty"`
+	Models                []string                    `json:"models,omitempty"`
+	ModelLimits           map[string]modelTokenLimits `json:"modelLimits,omitempty"`
+	BaseURL               string                      `json:"baseUrl,omitempty"`
+	ProxyURL              string                      `json:"proxyUrl,omitempty"`
+	Headers               map[string]string           `json:"headers,omitempty"`
+	Priority              int                         `json:"priority,omitempty"`
+	PlanRank              *int                        `json:"planRank,omitempty"`
+	RemainingQuota        *int                        `json:"remainingQuota,omitempty"`
+	ModelQuotas           map[string]int              `json:"modelQuotas,omitempty"`
+	SubscriptionExpiryMS  *int64                      `json:"subscriptionExpiryMs,omitempty"`
 }
 
 type modelAliasSpec struct {
@@ -637,6 +639,13 @@ func (p *requestPolicy) middleware() gin.HandlerFunc {
 		}
 		emitStart()
 		if err != nil {
+			if (requestKind == "image_generation" || requestKind == "image_edit") &&
+				strings.EqualFold(stripModelPrefix(model, spec), defaultImagesToolModel) &&
+				!hasImageAccount(p.manifest, spec) {
+				writeAPIError(c, http.StatusServiceUnavailable, "没有可用于生图的账号（free 账号不支持 image_generation）", "image_account_unavailable")
+				c.Abort()
+				return
+			}
 			p.emitBlockedRequest(requestID, spec, model, requestKind, startedAt, err.Error())
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
 				"error": gin.H{
@@ -1423,8 +1432,11 @@ type cleSelector struct {
 }
 
 func (s *cleSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*coreauth.Auth) (*coreauth.Auth, error) {
-	_ = provider
-	_ = opts
+	requestKind, _ := ctx.Value(requestKindContextKey).(string)
+	imageRequest := requestKind == "image_generation" || requestKind == "image_edit"
+	if disallow, ok := opts.Metadata[cliproxyexecutor.DisallowFreeAuthMetadataKey].(bool); ok && disallow {
+		imageRequest = true
+	}
 	var allowedAccounts map[string]struct{}
 	if spec, _ := ctx.Value(clientAPIKeyContextKey).(*apiKeySpec); spec != nil && len(spec.AccountIDs) > 0 {
 		allowedAccounts = make(map[string]struct{}, len(spec.AccountIDs))
@@ -1437,11 +1449,15 @@ func (s *cleSelector) Pick(ctx context.Context, provider, model string, opts cli
 	now := time.Now()
 	available := make([]*coreauth.Auth, 0, len(auths))
 	for _, auth := range auths {
-		if authAvailable(auth, model, now) && s.authAllowedForAccounts(auth, allowedAccounts) {
+		if authAvailable(auth, model, now) && s.authAllowedForAccounts(auth, allowedAccounts) &&
+			(!imageRequest || imageAccountEligible(s.accountForAuth(auth), auth)) {
 			available = append(available, auth)
 		}
 	}
 	if len(available) == 0 {
+		if imageRequest {
+			return nil, fmt.Errorf("没有可用于生图的账号（free 账号不支持 image_generation）")
+		}
 		return nil, fmt.Errorf("no auth available (candidates=%d, scoped_accounts=%d)", len(auths), len(allowedAccounts))
 	}
 
@@ -1468,6 +1484,53 @@ func (s *cleSelector) Pick(ctx context.Context, provider, model string, opts cli
 	selected := ordered[0]
 	s.emitAuthSelected(ctx, selected, provider, model, len(auths), len(available))
 	return selected, nil
+}
+
+func imageAccountEligible(account *accountSpec, auth *coreauth.Auth) bool {
+	provider, plan, status := "", "", ""
+	if account != nil {
+		provider, plan, status = account.Provider, account.PlanType, account.ImageGenerationStatus
+	}
+	if provider == "" && auth != nil {
+		provider = auth.Provider
+	}
+	if provider != "" && !strings.EqualFold(provider, "codex") {
+		return false
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "unavailable" || status == "disabled" {
+		return false
+	}
+	if status == "available" {
+		return true
+	}
+	if strings.TrimSpace(plan) == "" && auth != nil && auth.Attributes != nil {
+		plan = auth.Attributes["plan_type"]
+	}
+	return !strings.Contains(strings.ToLower(strings.TrimSpace(plan)), "free")
+}
+
+func (s *relayServer) hasImageAccount(spec *apiKeySpec) bool {
+	if s == nil {
+		return false
+	}
+	return hasImageAccount(s.manifest, spec)
+}
+
+func hasImageAccount(m *manifest, spec *apiKeySpec) bool {
+	if m == nil {
+		return false
+	}
+	for i := range m.Accounts {
+		account := &m.Accounts[i]
+		if spec != nil && len(spec.AccountIDs) > 0 && !stringSliceContainsFold(spec.AccountIDs, account.ID) && !stringSliceContainsFold(spec.AccountIDs, account.AuthID) {
+			continue
+		}
+		if imageAccountEligible(account, nil) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *cleSelector) authAllowedForAccounts(auth *coreauth.Auth, allowed map[string]struct{}) bool {
@@ -3724,12 +3787,27 @@ func (s *relayServer) handleImagesRelayRequest(c *gin.Context, imageReq imageRel
 	if requestedModel == "" {
 		requestedModel = defaultImagesToolModel
 	}
+	if !s.hasImageAccount(spec) {
+		writeAPIError(c, http.StatusServiceUnavailable, "没有可用于生图的账号（free 账号不支持 image_generation）", "image_account_unavailable")
+		return
+	}
 	if !validateClientModelVisible(s.manifest, spec, requestedModel, defaultImagesToolModel) {
 		writeAPIError(c, http.StatusNotFound, fmt.Sprintf("模型 %s 不在当前 API Key 的可用模型范围内", requestedModel), "model_not_available")
 		return
 	}
-	model := defaultImagesMainModel
-	req, opts := buildExecutorRequest(c, imageReq.body, model, sdktranslator.FormatOpenAIResponse, "", true)
+	configured := ""
+	if s.cfg != nil {
+		configured = s.cfg.GPTImage2BaseModel
+	}
+	model := util.GPTImageHostCandidates(configured)[0]
+	body, err := sjson.SetBytes(imageReq.body, "model", model)
+	if err != nil {
+		writeAPIError(c, http.StatusBadRequest, "生图请求格式无效", "invalid_request")
+		return
+	}
+	// Select an account by the public image model. The host is an internal
+	// implementation detail and may not be present in the account's catalog.
+	req, opts := buildExecutorRequest(c, body, defaultImagesToolModel, sdktranslator.FormatOpenAIResponse, "", true)
 	startedAt := time.Now()
 	timeouts := s.streamTimeoutsForRequest(c.Request, imageReq.body, defaultImagesToolModel)
 	streamCtx, cancelStream := context.WithCancel(relayContext(c))

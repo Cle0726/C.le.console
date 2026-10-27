@@ -18,6 +18,7 @@ import (
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -25,7 +26,7 @@ import (
 )
 
 const (
-	defaultImagesMainModel      = "gpt-5.4-mini"
+	defaultImagesMainModel      = util.DefaultGPTImageHost
 	defaultImagesToolModel      = "gpt-image-2"
 	defaultXAIImagesModel       = "grok-imagine-image"
 	xaiImagesQualityModel       = "grok-imagine-image-quality"
@@ -598,7 +599,7 @@ func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
 		tool, _ = sjson.SetBytes(tool, "moderation", v)
 	}
 
-	responsesReq := buildImagesResponsesRequest(prompt, nil, tool)
+	responsesReq := buildImagesResponsesRequest(prompt, nil, tool, h.imagesMainModel())
 	if stream {
 		h.streamImagesFromResponses(c, responsesReq, responseFormat, "image_generation")
 		return
@@ -786,7 +787,7 @@ func (h *OpenAIAPIHandler) imagesEditsFromMultipart(c *gin.Context) {
 		tool, _ = sjson.SetBytes(tool, "input_image_mask.image_url", strings.TrimSpace(*maskDataURL))
 	}
 
-	responsesReq := buildImagesResponsesRequest(prompt, images, tool)
+	responsesReq := buildImagesResponsesRequest(prompt, images, tool, h.imagesMainModel())
 	if stream {
 		h.streamImagesFromResponses(c, responsesReq, responseFormat, "image_edit")
 		return
@@ -923,7 +924,7 @@ func (h *OpenAIAPIHandler) imagesEditsFromJSON(c *gin.Context) {
 		tool, _ = sjson.SetBytes(tool, "input_image_mask.image_url", strings.TrimSpace(*maskDataURL))
 	}
 
-	responsesReq := buildImagesResponsesRequest(prompt, images, tool)
+	responsesReq := buildImagesResponsesRequest(prompt, images, tool, h.imagesMainModel())
 	if stream {
 		h.streamImagesFromResponses(c, responsesReq, responseFormat, "image_edit")
 		return
@@ -931,15 +932,26 @@ func (h *OpenAIAPIHandler) imagesEditsFromJSON(c *gin.Context) {
 	h.collectImagesFromResponses(c, responsesReq, responseFormat)
 }
 
-func buildImagesResponsesRequest(prompt string, images []string, toolJSON []byte) []byte {
+func (h *OpenAIAPIHandler) imagesMainModel() string {
+	configured := ""
+	if h != nil && h.BaseAPIHandler != nil && h.BaseAPIHandler.Cfg != nil {
+		configured = h.BaseAPIHandler.Cfg.GPTImage2BaseModel
+	}
+	return util.GPTImageHostCandidates(configured)[0]
+}
+
+func buildImagesResponsesRequest(prompt string, images []string, toolJSON []byte, configured ...string) []byte {
 	req := []byte(`{"instructions":"","stream":true,"reasoning":{"effort":"medium","summary":"auto"},"parallel_tool_calls":true,"include":["reasoning.encrypted_content"],"model":"","store":false,"tool_choice":{"type":"image_generation"}}`)
 	mainModel := defaultImagesMainModel
+	if len(configured) > 0 {
+		mainModel = util.GPTImageHostCandidates(configured[0])[0]
+	}
 	if len(toolJSON) > 0 && json.Valid(toolJSON) {
 		toolModel := strings.TrimSpace(gjson.GetBytes(toolJSON, "model").String())
 		if idx := strings.LastIndex(toolModel, "/"); idx > 0 && idx < len(toolModel)-1 {
 			prefix := strings.TrimSpace(toolModel[:idx])
 			if prefix != "" {
-				mainModel = prefix + "/" + defaultImagesMainModel
+				mainModel = prefix + "/" + mainModel
 			}
 		}
 	}
@@ -1390,6 +1402,20 @@ func (h *OpenAIAPIHandler) streamImagesWithModel(c *gin.Context, imageReq []byte
 	cliCancel(nil)
 }
 
+// Route by the advertised image model, not by an internal host that may be
+// absent from the provider's model registry. Keep any configured prefix.
+func imagesRoutingModel(responsesReq []byte) string {
+	for _, tool := range gjson.GetBytes(responsesReq, "tools").Array() {
+		if tool.Get("type").String() == "image_generation" {
+			model := strings.TrimSpace(tool.Get("model").String())
+			if isDefaultImagesToolModel(model) {
+				return model
+			}
+		}
+	}
+	return defaultImagesToolModel
+}
+
 func (h *OpenAIAPIHandler) collectImagesFromResponses(c *gin.Context, responsesReq []byte, responseFormat string) {
 	c.Header("Content-Type", "application/json")
 
@@ -1397,11 +1423,7 @@ func (h *OpenAIAPIHandler) collectImagesFromResponses(c *gin.Context, responsesR
 	cliCtx = handlers.WithDisallowFreeAuth(cliCtx)
 	stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
 
-	mainModel := strings.TrimSpace(gjson.GetBytes(responsesReq, "model").String())
-	if mainModel == "" {
-		mainModel = defaultImagesMainModel
-	}
-	dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithAuthManager(cliCtx, "openai-response", mainModel, responsesReq, "")
+	dataChan, upstreamHeaders, errChan := h.ExecuteImageStreamWithAuthManager(cliCtx, "openai-response", imagesRoutingModel(responsesReq), responsesReq, "")
 
 	out, errMsg := collectImagesFromResponsesStream(cliCtx, dataChan, errChan, responseFormat)
 	stopKeepAlive()
@@ -1589,11 +1611,7 @@ func (h *OpenAIAPIHandler) streamImagesFromResponses(c *gin.Context, responsesRe
 
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 	cliCtx = handlers.WithDisallowFreeAuth(cliCtx)
-	mainModel := strings.TrimSpace(gjson.GetBytes(responsesReq, "model").String())
-	if mainModel == "" {
-		mainModel = defaultImagesMainModel
-	}
-	dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithAuthManager(cliCtx, "openai-response", mainModel, responsesReq, "")
+	dataChan, upstreamHeaders, errChan := h.ExecuteImageStreamWithAuthManager(cliCtx, "openai-response", imagesRoutingModel(responsesReq), responsesReq, "")
 
 	setSSEHeaders := func() {
 		c.Header("Content-Type", "text/event-stream")

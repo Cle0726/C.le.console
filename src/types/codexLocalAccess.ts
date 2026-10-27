@@ -105,6 +105,7 @@ export interface CodexLocalAccessCollection {
   accessScope: CodexLocalAccessScope;
   clientBaseUrlHost: CodexLocalAccessClientBaseUrlHost;
   imageGenerationMode: CodexLocalAccessImageGenerationMode;
+  imagesMainModel?: string | null;
   gatewayMode: CodexLocalAccessGatewayMode;
   upstreamProxyUrl?: string | null;
   routingStrategy: CodexLocalAccessRoutingStrategy;
