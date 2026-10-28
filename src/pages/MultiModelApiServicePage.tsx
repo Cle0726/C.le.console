@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { confirm, open as openFileDialog } from '@tauri-apps/plugin-dialog';
@@ -42,6 +42,7 @@ type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
 const PROVIDERS = [
   { id: 'xai', label: 'Grok / xAI', short: 'Grok', baseUrl: 'https://api.x.ai/v1' },
   { id: 'claude', label: 'Claude', short: 'Claude', baseUrl: 'https://api.anthropic.com' },
+  { id: 'claude-cli', label: 'Claude CLI（订阅）', short: 'Claude CLI', baseUrl: '' },
   { id: 'gemini', label: 'Gemini', short: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com' },
   { id: 'antigravity', label: 'Antigravity', short: 'Antigravity', baseUrl: '' },
   { id: 'workbuddy', label: 'WorkBuddy', short: 'WorkBuddy', baseUrl: '' },
@@ -195,18 +196,27 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     if (loadInFlight.current) return loadInFlight.current;
     if (quiet && operationRef.current) return Promise.resolve();
 
+    const startedEpoch = operationEpoch.current;
     const request = (async () => {
-      setOperation('load');
-      if (!quiet) setNotice(null);
+      if (!quiet) {
+        setOperation('load');
+        setNotice(null);
+      }
       try {
         const next = await multiModelApiService.getState();
+        // A focus refresh must not overwrite a save or another user action
+        // that started while the read was in flight.
+        if (quiet && (operationRef.current || startedEpoch !== operationEpoch.current)) return;
+        const draftChanged = hasDraftChanges();
         modelSyncSuccessRef.current = next.modelSync.lastSuccessAt ?? '';
-        setState(next);
-        if (!quiet || !hasDraftChanges()) setDraft(structuredClone(next.config));
+        if (!quiet || JSON.stringify(stateRef.current) !== JSON.stringify(next)) setState(next);
+        if (!quiet || (!draftChanged && JSON.stringify(draftRef.current) !== JSON.stringify(next.config))) {
+          setDraft(structuredClone(next.config));
+        }
       } catch (error) {
         setNotice({ tone: 'error', text: `读取服务状态失败：${String(error)}` });
       } finally {
-        setOperation(null);
+        if (!quiet) setOperation(null);
       }
     })();
     loadInFlight.current = request;
@@ -276,7 +286,6 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     const refreshRuntimeCounters = async () => {
       if (
         document.visibilityState === 'hidden'
-        || !document.hasFocus()
         || loadInFlight.current
         || refreshInFlight.current
         || operationRef.current
@@ -292,6 +301,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         const runtimeSnapshot = JSON.stringify({
           running: next.running,
           lastError: next.lastError,
+          claudeCliError: next.claudeCliError,
           selfHeal: next.selfHeal,
           accountUsages: next.accountUsages,
           routeDispatches: next.routeDispatches,
@@ -311,6 +321,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             config: modelsChanged ? next.config : previous.config,
             running: next.running,
             lastError: next.lastError,
+            claudeCliError: next.claudeCliError,
             selfHeal: next.selfHeal,
             accountUsages: next.accountUsages,
             routeDispatches: next.routeDispatches,
@@ -325,8 +336,16 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         refreshInFlight.current = false;
       }
     };
+    // The first state read starts a background cache fill. Fetch that snapshot
+    // shortly after opening, even if WKWebView has not yet become first
+    // responder, so saved quotas and expired-login warnings are not stuck at
+    // "待刷新" until the user changes focus.
+    const initialTimer = window.setTimeout(() => void refreshRuntimeCounters(), 1500);
     const timer = window.setInterval(() => void refreshRuntimeCounters(), 8000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
   }, [standalone]);
 
   const copy = async (value: string, id: string) => {
@@ -597,6 +616,20 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     }
   };
 
+  // Cards may remain mounted while the surrounding status changes. Stable
+  // actions let memoized cards skip unrelated updates, while the ref always
+  // points to handlers using the latest draft (so edits are never overwritten).
+  const accountHandlersRef = useRef({ refreshQuotas, openAccount, updateAccount, removeAccount });
+  accountHandlersRef.current = { refreshQuotas, openAccount, updateAccount, removeAccount };
+  const accountActions = useMemo<AccountCardActions>(() => ({
+    refresh: (account) => void accountHandlersRef.current.refreshQuotas(account.provider, account.id),
+    edit: (account) => account.provider === 'claude-cli'
+      ? accountHandlersRef.current.openAccount(undefined, 'claude')
+      : accountHandlersRef.current.openAccount(account),
+    toggle: (account) => void accountHandlersRef.current.updateAccount({ ...account, enabled: !account.enabled }),
+    remove: (account) => void accountHandlersRef.current.removeAccount(account),
+  }), []);
+
   const accounts = draft?.accounts ?? [];
   const visibleAccounts = providerFilter === 'all' ? accounts : accounts.filter((item) => item.provider === providerFilter);
   const configuredProviders = useMemo(() => new Set(accounts.filter((item) => item.enabled).map((item) => item.provider)), [accounts]);
@@ -647,7 +680,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   ];
   const activeConnect = connectTabs.find((item) => item.id === tab);
   const primaryProviders = PROVIDERS.filter((provider) => accounts.some((account) => account.provider === provider.id));
-  const extraProviders = PROVIDERS.filter((provider) => !accounts.some((account) => account.provider === provider.id));
+  const extraProviders = PROVIDERS.filter((provider) => provider.id !== 'claude-cli' && !accounts.some((account) => account.provider === provider.id));
   const activeExtraProvider = extraProviders.find((provider) => provider.id === providerFilter);
 
   return (
@@ -871,12 +904,12 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
                     </div>
                   )}
                 </div>
-                <button type="button" className="btn btn-primary" onClick={() => openAccount(undefined, providerFilter === 'all' ? 'xai' : providerFilter)} disabled={busy}><Plus />添加账号</button>
+                <button type="button" className="btn btn-primary" onClick={() => openAccount(undefined, providerFilter === 'all' ? 'xai' : providerFilter === 'claude-cli' ? 'claude' : providerFilter)} disabled={busy}><Plus />添加账号</button>
               </div>
             </header>
             <div className="mm-account-grid">
               {visibleAccounts.map((account) => (
-                <AccountCard key={account.id} account={account} usage={usageById.get(account.id)} dispatch={dispatchById.get(account.id)} xaiUsage={xaiUsageById.get(account.id)} busy={busy} refreshing={operation === `quota:${account.id}`} onRefresh={() => void refreshQuotas(account.provider, account.id)} onEdit={() => openAccount(account)} onToggle={() => void updateAccount({ ...account, enabled: !account.enabled })} onRemove={() => void removeAccount(account)} />
+                <AccountCard key={account.id} account={account} usage={usageById.get(account.id)} dispatch={dispatchById.get(account.id)} xaiUsage={xaiUsageById.get(account.id)} cliError={account.provider === 'claude-cli' ? state.claudeCliError : undefined} busy={busy} refreshing={operation === `quota:${account.id}`} actions={accountActions} />
               ))}
               {!visibleAccounts.length && (
                 <Empty icon={<Users />} title={providerFilter === 'all' ? '账号池还是空的' : `尚未配置 ${providerLabel(providerFilter)}`} text="同步已有 OAuth / API Key 账号，或手动添加上游凭证。">
@@ -958,7 +991,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
 
 function ProviderIcon({ provider }: { provider: string }) {
   if (provider === 'xai') return <span className="mm-x-mark">𝕏</span>;
-  if (provider === 'claude') return <ClaudeIcon size={18} />;
+  if (provider === 'claude' || provider === 'claude-cli') return <ClaudeIcon size={18} />;
   if (provider === 'gemini') return <GeminiIcon style={{ width: 18, height: 18 }} />;
   if (provider === 'codex') return <CodexIcon size={18} />;
   if (provider === 'antigravity') return <AntigravityIcon style={{ width: 18, height: 18 }} />;
@@ -1128,13 +1161,33 @@ function formatQuotaNumber(value?: number | null) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-function AccountCard({ account, usage, dispatch, xaiUsage, busy, refreshing, onRefresh, onEdit, onToggle, onRemove }: { account: MultiModelAccount; usage?: MultiModelAccountUsage; dispatch?: MultiModelRouteDispatch; xaiUsage?: XaiAccountUsage; busy: boolean; refreshing: boolean; onRefresh: () => void; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
+type AccountCardActions = {
+  refresh: (account: MultiModelAccount) => void;
+  edit: (account: MultiModelAccount) => void;
+  toggle: (account: MultiModelAccount) => void;
+  remove: (account: MultiModelAccount) => void;
+};
+
+type AccountCardProps = {
+  account: MultiModelAccount;
+  usage?: MultiModelAccountUsage;
+  dispatch?: MultiModelRouteDispatch;
+  xaiUsage?: XaiAccountUsage;
+  cliError?: string | null;
+  busy: boolean;
+  refreshing: boolean;
+  actions: AccountCardActions;
+};
+
+const AccountCard = memo(function AccountCard({ account, usage, dispatch, xaiUsage, cliError, busy, refreshing, actions }: AccountCardProps) {
   const capabilities = new Set(account.models.flatMap((item) => item.capabilities));
   const reason = xaiUsage?.statusReason ?? usage?.statusReason;
-  const statusLabel = quotaStatusLabel(account, usage, xaiUsage);
+  const statusLabel = account.provider === 'claude-cli' && account.enabled && cliError ? '不可用' : quotaStatusLabel(account, usage, xaiUsage);
   const updatedAt = xaiUsage?.updatedAt ?? usage?.updatedAt;
   return <article className={`mm-account${account.enabled ? '' : ' disabled'}`}>
-    <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{xaiUsage?.email || account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'doubao-work' ? '豆包工作本机 CLI' : account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}{xaiUsage?.plan ? ` · ${xaiUsage.plan}` : ''}</p></div><button type="button" className={`mm-account-state${statusLabel === '已启用' ? ' enabled' : ''}`} onClick={onToggle} disabled={busy} title="启用 / 停用账号；额度状态不代表真实调用测试结果">{statusLabel}</button></div>
+    <div className="mm-account-top"><span className={`mm-provider-icon ${account.provider}`}><ProviderIcon provider={account.provider} /></span><div><h3>{xaiUsage?.email || account.name}</h3><p>{providerLabel(account.provider)} · {account.provider === 'claude-cli' ? 'C.le 订阅登录' : account.provider === 'doubao-work' ? '豆包工作本机 CLI' : account.provider === 'doubao-seedance' ? 'connect.sid' : account.authMode === 'oauth_json' ? 'OAuth' : 'API Key'}{xaiUsage?.plan ? ` · ${xaiUsage.plan}` : ''}</p></div><button type="button" className={`mm-account-state${statusLabel === '已启用' ? ' enabled' : ''}`} onClick={() => actions.toggle(account)} disabled={busy} title="启用 / 停用账号；额度状态不代表真实调用测试结果">{statusLabel}</button></div>
+    {account.provider === 'claude-cli' && <p className="mm-quota-hint">复用 C.le 的 Claude 订阅账号；模型名以 claude-cli/ 开头。文字和工具调用可用，图片和文件请使用其他通道。需要本机 Node.js 20+ 和 Claude Code CLI。</p>}
+    {account.provider === 'claude-cli' && account.enabled && cliError && <p className="mm-quota-error">订阅通道未启动：{cliError}</p>}
     {account.provider === 'xai' && account.authMode === 'oauth_json' && <div className="mm-xai-quota">
       {xaiUsage?.buckets?.length ? xaiUsage.buckets.slice(0, 4).map((bucket) => {
         const usedPercent = Math.max(0, Math.min(100, bucket.usedPercent ?? (bucket.used != null && bucket.total ? bucket.used / bucket.total * 100 : 0)));
@@ -1163,10 +1216,19 @@ function AccountCard({ account, usage, dispatch, xaiUsage, busy, refreshing, onR
       <span>本次运行调度 <b>{dispatch?.selected ?? 0}</b> 次</span>
       {dispatch && <em>成功 {dispatch.succeeded} · 失败 {dispatch.failed}{dispatch.lastModel ? ` · ${dispatch.lastModel}` : ''}</em>}
     </div>
-    <code>{account.provider === 'doubao-work' ? account.cliPath || '豆包工作 CLI' : account.baseUrl || 'CLIProxy native endpoint'}</code>
-    <footer><span>{account.source === 'local:doubao-work' ? '本机豆包工作账号' : account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span>{canRefreshQuota(account) && <button type="button" onClick={onRefresh} disabled={busy} title="仅查询额度，不消耗生成积分" aria-label={`刷新 ${account.name} 额度`}><RefreshCw className={refreshing ? 'spin' : ''} />刷新额度</button>}<button type="button" onClick={onEdit} disabled={busy}>{account.provider === 'workbuddy' ? '管理 / 登录' : '编辑'}</button><button type="button" className="trash" onClick={onRemove} disabled={busy} aria-label="删除账号"><Trash2 /></button></footer>
+    <code>{account.provider === 'claude-cli' ? 'claude-cli/模型名' : account.provider === 'doubao-work' ? account.cliPath || '豆包工作 CLI' : account.baseUrl || 'CLIProxy native endpoint'}</code>
+    <footer><span>{account.source === 'local:doubao-work' ? '本机豆包工作账号' : account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span>{canRefreshQuota(account) && <button type="button" onClick={() => actions.refresh(account)} disabled={busy} title="仅查询额度，不消耗生成积分" aria-label={`刷新 ${account.name} 额度`}><RefreshCw className={refreshing ? 'spin' : ''} />刷新额度</button>}<button type="button" onClick={() => actions.edit(account)} disabled={busy} title={account.provider === 'claude-cli' ? '重新授权同一个 Claude 账号，原账号会保留' : undefined}>{account.provider === 'claude-cli' ? '重新登录' : account.provider === 'workbuddy' ? '管理 / 登录' : '编辑'}</button>{account.provider !== 'claude-cli' && <button type="button" className="trash" onClick={() => actions.remove(account)} disabled={busy} aria-label="删除账号"><Trash2 /></button>}</footer>
   </article>;
-}
+}, (previous, next) => previous.account === next.account
+  && previous.actions === next.actions
+  && previous.busy === next.busy
+  && previous.refreshing === next.refreshing
+  && previous.cliError === next.cliError
+  // Backend snapshots are newly deserialized on every poll. Compare the small
+  // card-specific records by value rather than repainting the whole grid.
+  && JSON.stringify(previous.usage) === JSON.stringify(next.usage)
+  && JSON.stringify(previous.dispatch) === JSON.stringify(next.dispatch)
+  && JSON.stringify(previous.xaiUsage) === JSON.stringify(next.xaiUsage));
 
 function formatModelTokens(tokens: number): string {
   const unit = tokens >= 1000000 ? 1000000 : 1000;
@@ -1861,7 +1923,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
     <div className="mm-modal mm-account-add-modal" role="dialog" aria-modal="true" aria-label={isNew ? '添加上游账号' : '编辑上游账号'}>
       <header><div><h2>{isDoubaoWork ? '连接当前豆包账号' : isNew ? '添加上游账号' : '编辑上游账号'}</h2><p>{isDoubaoWork ? '从已登录的豆包客户端读取当前档案；这里不提供独立的多账号登录。' : '每个账号是一条独立凭证；OAuth、Token / JSON、API Key、导入都按当前供应商执行，不再只做展示。'}</p></div><button type="button" onClick={onClose} aria-label="关闭"><X /></button></header>
       <div className="mm-modal-provider-grid">
-        {PROVIDERS.filter((provider) => provider.id !== 'workbuddy').map((provider) => <button type="button" key={provider.id} className={account.provider === provider.id ? 'active' : ''} onClick={() => onProvider(provider.id)} disabled={disabled}><span className={`mm-provider-icon ${provider.id}`}><ProviderIcon provider={provider.id} /></span><b>{provider.short}</b></button>)}
+        {PROVIDERS.filter((provider) => provider.id !== 'workbuddy' && provider.id !== 'claude-cli').map((provider) => <button type="button" key={provider.id} className={account.provider === provider.id ? 'active' : ''} onClick={() => onProvider(provider.id)} disabled={disabled}><span className={`mm-provider-icon ${provider.id}`}><ProviderIcon provider={provider.id} /></span><b>{provider.short}</b></button>)}
       </div>
       <div className="mm-modal-auth-tabs" role="tablist" aria-label="账号添加方式">
         {!isDoubaoWork && <button type="button" className={addMode === 'oauth' ? 'active' : ''} onClick={() => setAddMode('oauth')} disabled={disabled || isSeedance}><Globe size={14} /><span>OAuth 授权</span></button>}

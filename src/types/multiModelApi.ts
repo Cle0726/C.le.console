@@ -71,6 +71,7 @@ export interface MultiModelApiState {
   running: boolean;
   baseUrl: string;
   lastError?: string | null;
+  claudeCliError?: string | null;
   catalog: MultiModelCatalogEntry[];
   selfHeal?: MultiModelSelfHealState;
   xaiAccounts?: XaiAccountUsage[];

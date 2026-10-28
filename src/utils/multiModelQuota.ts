@@ -4,6 +4,7 @@ export function canRefreshQuota(account: MultiModelAccount): boolean {
   return (account.provider === 'xai' && account.authMode === 'oauth_json')
     || account.source.startsWith('agent2api:')
     || ['cle:workbuddy:', 'cle:antigravity:', 'cle:gemini:', 'cle:kiro:', 'cle:github-copilot:'].some((source) => account.source.startsWith(source))
+    || account.source.startsWith('cle:claude-cli:')
     || (account.authMode === 'oauth_json' && ['cle:claude:', 'cle:claude-web:'].some((source) => account.source.startsWith(source)));
 }
 
@@ -11,6 +12,7 @@ export function quotaStatusLabel(account: MultiModelAccount, usage?: MultiModelA
   if (!account.enabled) return '停用';
   const status = xaiUsage?.status ?? usage?.status;
   if (['reauth_required', 'login_required', 'invalid_grant'].includes(status ?? '')) return '需重登';
+  if (/invalid_grant|refresh[_\s-]?token.{0,30}(?:invalid|rejected|expired)/i.test(xaiUsage?.statusReason ?? usage?.statusReason ?? '')) return '需重登';
   if (status === 'pending') return '待授权';
   if (status === 'verification_required') return '需验证';
   if (status === 'forbidden') return '受限制';

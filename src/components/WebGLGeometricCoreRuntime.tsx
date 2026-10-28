@@ -775,7 +775,7 @@ export function WebGLGeometricCore({
     let renderedWidth = 0;
     let renderedHeight = 0;
     let intersecting = true;
-    let pageVisible = !document.hidden;
+    let pageVisible = !document.hidden && document.hasFocus();
     let visible = intersecting && pageVisible;
     let disposed = false;
     let reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1030,7 +1030,7 @@ export function WebGLGeometricCore({
       startRendering();
     }, { rootMargin: '120px' });
     const onVisibilityChange = () => {
-      pageVisible = !document.hidden;
+      pageVisible = !document.hidden && document.hasFocus();
       visible = intersecting && pageVisible;
       lastTime = performance.now();
       startRendering();
@@ -1062,6 +1062,8 @@ export function WebGLGeometricCore({
     });
     motionQuery.addEventListener('change', onMotionPreferenceChange);
     document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onVisibilityChange);
+    window.addEventListener('blur', onVisibilityChange);
     window.addEventListener(FRAME_GOVERNOR_EVENT, onFrameGovernor);
     window.addEventListener('pointermove', onPointerMove, { passive: true });
     window.addEventListener('pointerout', resetPointer, { passive: true });
@@ -1080,6 +1082,8 @@ export function WebGLGeometricCore({
       themeObserver.disconnect();
       motionQuery.removeEventListener('change', onMotionPreferenceChange);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onVisibilityChange);
+      window.removeEventListener('blur', onVisibilityChange);
       window.removeEventListener(FRAME_GOVERNOR_EVENT, onFrameGovernor);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerout', resetPointer);

@@ -22,6 +22,16 @@
   gap: 10px;
 }
 
+/* A transparent utility window can expose the main window behind it. Hold
+ * decorative animations in that unfocused window until it is active again. */
+html[data-window-unfocused='true'] body::before,
+html[data-window-unfocused='true'] body::after,
+html[data-window-unfocused='true'] body #root#root *,
+html[data-window-unfocused='true'] body #root#root *::before,
+html[data-window-unfocused='true'] body #root#root *::after {
+  animation-play-state: paused !important;
+}
+
 .codex-batch-import-overlay {
   z-index: 1100;
 }

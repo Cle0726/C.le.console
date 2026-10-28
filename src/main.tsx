@@ -16,17 +16,37 @@ import { initializePerformanceMode } from "./utils/performanceMode";
 import { initializeLiquidGlassInteractions } from "./utils/liquidGlassInteractions";
 import { initializeFrameGovernor } from "./utils/frameGovernor";
 
-function enableMacOSNativeLiquidGlassTheme() {
+function isMacOSRuntime() {
   const runtimePlatform = (navigator as Navigator & {
     userAgentData?: { platform?: string };
   }).userAgentData?.platform || navigator.platform || navigator.userAgent || "";
+  return /mac/i.test(runtimePlatform);
+}
 
-  if (/mac/i.test(runtimePlatform) && "__TAURI_INTERNALS__" in window) {
+function enableMacOSNativeLiquidGlassTheme() {
+  if (isMacOSRuntime() && "__TAURI_INTERNALS__" in window) {
     document.documentElement.setAttribute("data-native-liquid-glass", "true");
   }
 }
 
 enableMacOSNativeLiquidGlassTheme();
+const isMultiModelConsole = "__TAURI_INTERNALS__" in window
+  && getCurrentWindow().label === "multi-model-api-console";
+const isMainWindow = "__TAURI_INTERNALS__" in window
+  && getCurrentWindow().label === "main";
+
+if (isMainWindow) {
+  // The main dashboard can remain visible behind a transparent utility
+  // window. Pause its decorative CSS animations while another window is in
+  // focus, just as the WebGL scene is paused there.
+  const updateWindowFocus = () => {
+    document.documentElement.dataset.windowUnfocused = String(!document.hasFocus());
+  };
+  window.addEventListener("focus", updateWindowFocus);
+  window.addEventListener("blur", updateWindowFocus);
+  document.addEventListener("visibilitychange", updateWindowFocus);
+  updateWindowFocus();
+}
 
 const visualReviewParams = new URLSearchParams(window.location.search);
 const visualReviewTarget = ["127.0.0.1", "localhost"].includes(window.location.hostname)
@@ -47,7 +67,13 @@ if (visualReviewTarget) {
 } else {
   initializeVisualTheme();
   initializePerformanceMode();
-  initializeFrameGovernor();
+  if (isMultiModelConsole) {
+    // This utility window has no animated WebGL scene. A continuous frame
+    // governor also toggled root CSS attributes during every scroll gesture.
+    document.documentElement.dataset.frameInteracting = "false";
+  } else {
+    initializeFrameGovernor();
+  }
   initErrorReporter();
   recordFrontendStage("script_loaded");
   void initI18n();
@@ -173,15 +199,13 @@ if (visualReviewTarget === "jimeng") {
       </React.StrictMode>,
     );
   });
-} else if (
-  "__TAURI_INTERNALS__" in window
-  && getCurrentWindow().label === "multi-model-api-console"
-) {
+} else if (isMultiModelConsole) {
   // The dedicated console is a separate WKWebView. Mark its complete canvas
   // explicitly so transparency does not depend on user-agent platform hints
   // or the timing of the shared theme initializer.
   document.documentElement.setAttribute("data-native-liquid-glass", "true");
   document.documentElement.setAttribute("data-mm-api-standalone", "true");
+  if (isMacOSRuntime()) document.documentElement.dataset.mmNativeCompositor = "true";
   void import("./pages/MultiModelApiServiceWindow").then(({ MultiModelApiServiceWindow }) => {
     root.render(
       <React.StrictMode>

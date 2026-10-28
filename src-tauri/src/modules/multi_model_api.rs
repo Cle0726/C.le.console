@@ -34,6 +34,7 @@ const DEFAULT_MODEL_SYNC_INTERVAL_MINUTES: u32 = 60;
 static WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
 static MODEL_SYNC_STARTED: AtomicBool = AtomicBool::new(false);
 static ACCOUNT_USAGE_REFRESHING: AtomicBool = AtomicBool::new(false);
+static CLAUDE_CLI_SUPPRESSED: AtomicBool = AtomicBool::new(false);
 static ACCOUNT_USAGE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static QUOTA_REFRESH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static ROUTE_DISPATCHES: OnceLock<StdMutex<BTreeMap<String, MultiModelRouteDispatch>>> =
@@ -162,6 +163,7 @@ pub struct MultiModelApiState {
     pub running: bool,
     pub base_url: String,
     pub last_error: Option<String>,
+    pub claude_cli_error: Option<String>,
     pub catalog: Vec<MultiModelCatalogEntry>,
     pub self_heal: MultiModelSelfHealState,
     pub xai_accounts: Vec<XaiAccountUsage>,
@@ -364,6 +366,7 @@ struct RuntimeState {
     child: Option<Child>,
     helpers: Vec<Child>,
     last_error: Option<String>,
+    claude_cli_error: Option<String>,
 }
 
 #[derive(Default)]
@@ -384,10 +387,91 @@ struct ClaudeWebLaunch {
     port: u16,
 }
 
+#[derive(Clone)]
+struct ClaudeCliLaunch {
+    port: u16,
+    secret: String,
+    credential_url: String,
+    credential_key: String,
+}
+
 struct MultiModelLaunch {
     config_path: PathBuf,
     runtime_path: PathBuf,
     claude_web: Option<ClaudeWebLaunch>,
+    claude_cli: Vec<ClaudeCliLaunch>,
+}
+
+// These values must stay stable when a quota refresh rewrites the running
+// sidecar manifest. Secrets belong to the current app process, not the user
+// account file, and are never reused after restarting C.le.
+fn claude_cli_launch(account_id: &str) -> Result<ClaudeCliLaunch, String> {
+    static HELPERS: OnceLock<StdMutex<BTreeMap<String, ClaudeCliLaunch>>> = OnceLock::new();
+    let mut helpers = HELPERS.get_or_init(|| StdMutex::new(BTreeMap::new()))
+        .lock().map_err(|_| "Claude CLI 通道状态不可用")?;
+    if let Some(helper) = helpers.get(account_id) { return Ok(helper.clone()); }
+    if account_id.is_empty() || !account_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("Claude CLI 账号标识无效".into());
+    }
+    let port = (0..32).find_map(|_| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+        let port = listener.local_addr().ok()?.port();
+        (!helpers.values().any(|helper| helper.port == port)).then_some(port)
+    }).ok_or("无法分配 Claude CLI 本机端口")?;
+    let bridge = workbuddy_api::descriptor().ok_or("C.le 凭证管理尚未启动")?;
+    let bridge_id = format!("claude~{account_id}");
+    let launch = ClaudeCliLaunch { port, secret: random_key(),
+        credential_url: bridge.url(&bridge_id), credential_key: bridge.key(&bridge_id) };
+    helpers.insert(account_id.to_string(), launch.clone());
+    Ok(launch)
+}
+
+// Add a separate route for a managed subscription without modifying the
+// original account, its OAuth credential, or the existing Claude route.
+fn ensure_claude_cli_routes(config: &mut MultiModelApiConfig) -> bool {
+    let parents: Vec<_> = config.accounts.iter().filter(|account|
+        account.provider == "claude" && account.auth_mode == "oauth_json"
+            && account.source.starts_with("cle:claude:"))
+        .cloned().collect();
+    let mut changed = false;
+    for parent in parents {
+        let Some(id) = parent.source.strip_prefix("cle:claude:") else { continue };
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') { continue; }
+        let source = format!("cle:claude-cli:{id}");
+        let cli_models: Vec<_> = parent.models.iter().filter(|m| m.id.starts_with("claude-"))
+            .map(|model| {
+                let mut model = model.clone();
+                model.id = format!("claude-cli/{}", model.id);
+                model.alias.clear();
+                model.capabilities.retain(|cap| cap == "text" || cap == "reasoning");
+                if !model.capabilities.iter().any(|cap| cap == "text") { model.capabilities.push("text".into()); }
+                model
+            }).collect();
+        if let Some(existing) = config.accounts.iter_mut().find(|item| item.source == source) {
+            let ids: BTreeSet<_> = existing.models.iter().map(|m| m.id.clone()).collect();
+            for model in cli_models.into_iter().filter(|m| !ids.contains(&m.id)) {
+                existing.models.push(model);
+                changed = true;
+            }
+        } else {
+            let mut route = parent.clone();
+            route.id = format!("cle-claude-cli-{id}");
+            if config.accounts.iter().any(|item| item.id == route.id) { continue; }
+            route.name = parent.name.replacen("Claude ·", "Claude CLI ·", 1);
+            route.provider = "claude-cli".into();
+            route.auth_mode = "local_cli".into();
+            route.source = source;
+            route.api_key.clear();
+            route.base_url.clear();
+            route.credential_json = None;
+            route.prefix.clear();
+            route.headers.clear();
+            route.models = cli_models;
+            config.accounts.push(route);
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn runtime() -> &'static Mutex<RuntimeState> {
@@ -800,6 +884,7 @@ fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
         if account.enabled
             && account.auth_mode != "oauth_json"
             && !(account.provider == "doubao-work" && account.auth_mode == "local_cli")
+            && !(account.provider == "claude-cli" && account.auth_mode == "local_cli" && account.source.starts_with("cle:claude-cli:"))
             && account.api_key.trim().is_empty()
             && account.credential_json.is_none()
         {
@@ -1174,8 +1259,9 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
     let claude_web_internal_key = random_key();
     let mut claude_web_accounts = Vec::new();
     let mut claude_web_models = BTreeMap::<String, MultiModelDefinition>::new();
+    let mut claude_cli_helpers = Vec::new();
 
-    for account in config.accounts.iter().filter(|item| item.enabled) {
+    for account in config.accounts.iter().filter(|item| item.enabled && !(item.provider == "claude-cli" && CLAUDE_CLI_SUPPRESSED.load(Ordering::Relaxed))) {
         let models: Vec<_> = account.models.iter().filter(|item| item.enabled).collect();
         for model in &models {
             model_ids.insert(model.id.clone());
@@ -1185,6 +1271,13 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             }
         }
         let provider = normalize_provider(&account.provider);
+        let cli_helper = if provider == "claude-cli" {
+            let id = account.source.strip_prefix("cle:claude-cli:")
+                .ok_or("Claude CLI 通道必须关联 C.le 账号")?;
+            let helper = claude_cli_launch(id)?;
+            claude_cli_helpers.push(helper.clone());
+            Some(helper)
+        } else { None };
         let workbuddy_id = account.source.strip_prefix("cle:workbuddy:");
         let native_id = (managed_provider_api::credential_supported(&provider)
             && (provider != "claude" || account.auth_mode == "oauth_json"))
@@ -1195,7 +1288,8 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
         } else { None };
         let workbuddy_key = bridge.as_ref().zip(workbuddy_id).map(|(bridge, id)| bridge.key(id));
         let native_key = bridge.as_ref().zip(native_bridge_id.as_ref()).map(|(bridge,id)| bridge.key(id));
-        let key = native_key.as_deref().or(workbuddy_key.as_deref()).unwrap_or_else(|| account.api_key.trim());
+        let key = cli_helper.as_ref().map(|helper| helper.secret.as_str())
+            .or(native_key.as_deref()).or(workbuddy_key.as_deref()).unwrap_or_else(|| account.api_key.trim());
         let common = json!({
             "api-key": key,
             "priority": account.priority,
@@ -1206,6 +1300,20 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "models": models.iter().map(|item| model_json(item, false)).collect::<Vec<_>>()
         });
         match provider.as_str() {
+            "claude-cli" => {
+                let helper = cli_helper.as_ref().ok_or("Claude CLI helper 不可用")?;
+                providers.insert("claude-cli".into());
+                let mapped_models = models.iter().map(|model| json!({
+                    "name": model.id.strip_prefix("claude-cli/").unwrap_or(&model.id),
+                    "alias": model.id
+                })).collect::<Vec<_>>();
+                compat.push(json!({
+                    "name": "claude-cli", "priority": account.priority,
+                    "base-url": format!("http://127.0.0.1:{}/v1", helper.port),
+                    "api-key-entries": [{"api-key": key, "proxy-url": "direct"}],
+                    "models": mapped_models, "disable-cooling": true
+                }));
+            }
             "claude" if native_id.is_some() => {
                 let bridge_id = native_bridge_id.as_ref().unwrap();
                 providers.insert("claude".into());
@@ -1545,6 +1653,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
         config_path,
         runtime_path,
         claude_web: claude_web_launch,
+        claude_cli: claude_cli_helpers,
     })
 }
 
@@ -1684,6 +1793,103 @@ async fn start_claude_web_helper(launch: &ClaudeWebLaunch) -> Result<Child, Stri
     }
     let _ = child.kill().await;
     Err("Claude Web helper 启动超时".into())
+}
+
+struct ClaudeCliTools {
+    node: PathBuf,
+    executable: PathBuf,
+    script: Option<PathBuf>,
+    bundle: PathBuf,
+}
+
+fn claude_cli_tools() -> Result<ClaudeCliTools, String> {
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    if let Some(home) = dirs::home_dir() {
+        dirs.extend([home.join(".local/bin"), home.join(".volta/bin"), home.join(".npm-global/bin")]);
+        if let Ok(entries) = std::fs::read_dir(home.join(".nvm/versions/node")) {
+            let mut versions: Vec<_> = entries.flatten().map(|e| e.path().join("bin")).collect();
+            versions.sort();
+            versions.reverse();
+            dirs.extend(versions);
+        }
+    }
+    dirs.extend([PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")]);
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") { dirs.push(PathBuf::from(appdata).join("npm")); }
+        if let Some(programs) = std::env::var_os("ProgramFiles") { dirs.push(PathBuf::from(programs).join("nodejs")); }
+    }
+    let node_name = if cfg!(target_os = "windows") { "node.exe" } else { "node" };
+    let node = dirs.iter().map(|d| d.join(node_name)).filter(|p| p.is_file()).find(|candidate| {
+        let Ok(version) = std::process::Command::new(candidate).arg("--version").output() else { return false };
+        let major = String::from_utf8_lossy(&version.stdout).trim_start_matches('v')
+            .split('.').next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+        version.status.success() && major >= 20
+    }).ok_or("Claude CLI 订阅通道需要安装 Node.js 20 或更新版本")?;
+    let cli_name = if cfg!(target_os = "windows") { "claude.exe" } else { "claude" };
+    let native_cli = dirs.iter().map(|d| d.join(cli_name)).find(|p| p.is_file());
+    let (executable, script) = if let Some(cli) = native_cli {
+        (cli, None)
+    } else {
+        // npm's Windows shim is a .cmd file; invoke its JS entry through node
+        // without a shell so arguments never undergo shell interpolation.
+        let script = dirs.iter().map(|d| d.join("node_modules/@anthropic-ai/claude-code/cli.js"))
+            .find(|p| p.is_file()).ok_or("Claude CLI 订阅通道需要先安装 Claude Code CLI")?;
+        (node.clone(), Some(script))
+    };
+    let mut bundles = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            bundles.push(dir.join("../Resources/scripts/cle-claude-cli.bundle.cjs"));
+            bundles.push(dir.join("resources/scripts/cle-claude-cli.bundle.cjs"));
+            bundles.push(dir.join("scripts/cle-claude-cli.bundle.cjs"));
+        }
+    }
+    bundles.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../third_party/claude-cli-proxy/cle-claude-cli.bundle.cjs"));
+    let bundle = bundles.into_iter().find(|p| p.is_file()).ok_or("Claude CLI 代理组件不存在，请重新安装 C.le")?;
+    Ok(ClaudeCliTools { node, executable, script, bundle })
+}
+
+async fn start_claude_cli_helper(launch: &ClaudeCliLaunch, tools: &ClaudeCliTools) -> Result<Child, String> {
+    let mut command = Command::new(&tools.node);
+    command.arg(&tools.bundle).arg(launch.port.to_string())
+        .env("CLE_CREDENTIAL_URL", &launch.credential_url)
+        .env("CLE_CREDENTIAL_KEY", &launch.credential_key)
+        .env("CLE_PROXY_AUTH_TOKEN", &launch.secret)
+        .env("CLE_CLAUDE_CLI", &tools.executable)
+        .env("CLAUDE_PROXY_HOST", "127.0.0.1")
+        .env("CLAUDE_PROXY_RUNTIME", "print")
+        .env("CLAUDE_PROXY_WARM_POOL", "0")
+        .env("CLAUDE_PROXY_ALLOW_RUNTIME_OVERRIDE", "0")
+        .env("CLAUDE_PROXY_TOOLS_TRANSLATION", "0")
+        .env("CLAUDE_PROXY_TRACE_ENABLED", "0")
+        .env_remove("CLAUDE_PROXY_TRACE_SQLITE_PATH")
+        .env_remove("CLAUDE_PROXY_TRACE_EXPORT_URL")
+        .env_remove("DEBUG")
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+        .kill_on_drop(true);
+    if let Some(script) = &tools.script { command.env("CLE_CLAUDE_CLI_SCRIPT", script); }
+    else { command.env_remove("CLE_CLAUDE_CLI_SCRIPT"); }
+    if let Some(node_dir) = tools.node.parent() {
+        let mut paths = vec![node_dir.to_path_buf()];
+        if let Some(path) = std::env::var_os("PATH") { paths.extend(std::env::split_paths(&path)); }
+        if let Ok(path) = std::env::join_paths(paths) { command.env("PATH", path); }
+    }
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    let mut child = command.spawn().map_err(|error| format!("无法启动 Claude CLI 订阅通道: {error}"))?;
+    let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(1)).build()
+        .map_err(|error| error.to_string())?;
+    for _ in 0..100 {
+        if let Ok(Some(status)) = child.try_wait() { return Err(format!("Claude CLI 通道启动失败: {status}")); }
+        if client.get(format!("http://127.0.0.1:{}/health", launch.port))
+            .bearer_auth(&launch.secret).send().await.is_ok_and(|response| response.status().is_success()) {
+            return Ok(child);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let _ = child.kill().await;
+    Err("Claude CLI 通道启动超时".into())
 }
 
 async fn stop_runtime_locked(state: &mut RuntimeState) {
@@ -1972,17 +2178,35 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
         });
     credential_changed |= hydrate_persisted_xai_credentials(&mut effective_config)?;
     credential_changed |= refresh_xai_credentials(&mut effective_config, false).await;
+    credential_changed |= ensure_claude_cli_routes(&mut effective_config);
     if credential_changed {
         save_config_file(&effective_config)?;
     }
+    // A missing optional CLI must not take down the other providers.
+    let mut claude_cli_error = None;
+    CLAUDE_CLI_SUPPRESSED.store(false, Ordering::Relaxed);
+    let cli_tools = if effective_config.accounts.iter().any(|account| account.enabled && account.provider == "claude-cli") {
+        match claude_cli_tools() {
+            Ok(tools) => Some(tools),
+            Err(error) => {
+                logger::log_warn(&format!("[MultiModelAPI] Claude CLI 通道暂不可用: {error}"));
+                claude_cli_error = Some(error);
+                CLAUDE_CLI_SUPPRESSED.store(true, Ordering::Relaxed);
+                for account in &mut effective_config.accounts {
+                    if account.provider == "claude-cli" { account.enabled = false; }
+                }
+                None
+            }
+        }
+    } else { None };
     {
         let mut state = runtime().lock().await;
         stop_runtime_locked(&mut state).await;
     }
     let has_workbuddy = effective_config.accounts.iter().any(|account| account.enabled
-        && (account.provider == "workbuddy" || managed_provider_api::credential_supported(&account.provider)));
+        && (account.provider == "workbuddy" || account.provider == "claude-cli" || managed_provider_api::credential_supported(&account.provider)));
     if has_workbuddy { workbuddy_api::ensure_bridge().await?; }
-    let launch = write_launch_files(&effective_config)?;
+    let mut launch = write_launch_files(&effective_config)?;
     let helper_port = launch.claude_web.as_ref().map(|helper| helper.port);
     if adopt_existing && !has_workbuddy
         && probe_sidecar_health(effective_config.port).await.is_ok()
@@ -1993,6 +2217,7 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
     {
         let mut state = runtime().lock().await;
         state.last_error = None;
+        state.claude_cli_error = claude_cli_error;
         logger::log_info("[MultiModelAPI] 已采用独立后台 API sidecar");
         return Ok(());
     }
@@ -2007,6 +2232,26 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
     let mut helper_children = Vec::new();
     if let Some(claude_web) = launch.claude_web.as_ref() {
         helper_children.push(start_claude_web_helper(claude_web).await?);
+    }
+    if let Some(tools) = cli_tools.as_ref() {
+        let cli_start = helper_children.len();
+        let mut failure = None;
+        for helper in &launch.claude_cli {
+            match start_claude_cli_helper(helper, tools).await {
+                Ok(child) => helper_children.push(child),
+                Err(error) => { failure = Some(error); break; }
+            }
+        }
+        if let Some(error) = failure {
+            logger::log_warn(&format!("[MultiModelAPI] Claude CLI 启动失败，其他渠道继续运行: {error}"));
+            claude_cli_error = Some(error);
+            CLAUDE_CLI_SUPPRESSED.store(true, Ordering::Relaxed);
+            for mut helper in helper_children.drain(cli_start..) { let _ = helper.kill().await; }
+            for account in &mut effective_config.accounts {
+                if account.provider == "claude-cli" { account.enabled = false; }
+            }
+            launch = write_launch_files(&effective_config)?;
+        }
     }
     let config_path = launch.config_path;
     let runtime_path = launch.runtime_path;
@@ -2150,6 +2395,7 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
         state.child = Some(child);
         state.helpers = helper_children;
         state.last_error = None;
+        state.claude_cli_error = claude_cli_error;
         return Ok(());
     }
 
@@ -2423,7 +2669,7 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
     let config = load_config()?;
     // This is a read-only UI snapshot.  Service startup/restart may briefly own
     // the runtime lock, so never queue the page behind that lifecycle work.
-    let (owned_running, last_error) = match runtime().try_lock() {
+    let (owned_running, last_error, claude_cli_error) = match runtime().try_lock() {
         Ok(mut state) => {
             let running = if let Some(child) = state.child.as_mut() {
                 child
@@ -2436,9 +2682,9 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
             let last_error = state.last_error.clone();
             // Reaping belongs to the lifecycle/watchdog path.  Awaiting child
             // shutdown here used to hold page rendering for several seconds.
-            (running, last_error)
+            (running, last_error, state.claude_cli_error.clone())
         }
-        Err(_) => (false, None),
+        Err(_) => (false, None, None),
     };
     let running = owned_running
         || timeout(Duration::from_millis(400), port_is_listening(config.port))
@@ -2461,6 +2707,7 @@ pub async fn get_state() -> Result<MultiModelApiState, String> {
         config,
         running,
         last_error,
+        claude_cli_error,
         self_heal,
         xai_accounts: load_xai_usage_cache(),
         account_usages,
@@ -2743,6 +2990,14 @@ fn cached_account_usages_snapshot(config: &MultiModelApiConfig) -> Vec<MultiMode
     snapshot
 }
 
+fn claude_usage_timestamp(value: i64) -> Option<chrono::DateTime<chrono::Utc>> {
+    if value > 100_000_000_000 || value < -100_000_000_000 {
+        chrono::DateTime::from_timestamp_millis(value)
+    } else {
+        chrono::DateTime::from_timestamp(value, 0)
+    }
+}
+
 fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccountUsage> {
     let workbuddy = workbuddy_account::list_accounts_checked().unwrap_or_default().into_iter()
         .map(|item| (item.id.clone(), item)).collect::<BTreeMap<_, _>>();
@@ -2842,7 +3097,7 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
                         .collect(),
                 });
             }
-            if let Some(id) = route.source.strip_prefix("cle:claude:").or_else(|| route.source.strip_prefix("cle:claude-web:")) {
+            if let Some(id) = route.source.strip_prefix("cle:claude:").or_else(|| route.source.strip_prefix("cle:claude-web:")).or_else(|| route.source.strip_prefix("cle:claude-cli:")) {
                 let item = claude.get(id)?;
                 let Some(quota) = item.quota.as_ref() else {
                     return Some(MultiModelAccountUsage {
@@ -2891,7 +3146,7 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
                     account_id: route.id.clone(),
                     updated_at: item
                         .usage_updated_at
-                        .and_then(|value| chrono::DateTime::from_timestamp(value, 0))
+                        .and_then(claude_usage_timestamp)
                         .map(|value| value.to_rfc3339()),
                     status: item.status.clone().unwrap_or_else(|| "normal".into()),
                     status_reason: item.quota_error.as_ref().map(|error| error.message.clone()).or_else(|| item.status_reason.clone()),
@@ -2909,6 +3164,7 @@ fn quota_refresh_supported(route: &MultiModelAccount) -> bool {
         || route.source.starts_with("cle:workbuddy:")
         || route.source.starts_with("cle:antigravity:")
         || route.source.starts_with("cle:gemini:")
+        || route.source.starts_with("cle:claude-cli:")
         || (managed_provider_api::supported(&route.provider) && route.source.starts_with(&format!("cle:{}:",route.provider)))
         || (route.auth_mode == "oauth_json" && (route.source.starts_with("cle:claude:") || route.source.starts_with("cle:claude-web:")))
 }
@@ -3019,7 +3275,7 @@ async fn refresh_managed_quota(route: &MultiModelAccount) -> Result<(), String> 
         account::update_account_quota(id, quota)?;
         return item.quota_error.map_or(Ok(()), |error| Err(error.message));
     }
-    if let Some(id) = route.source.strip_prefix("cle:claude:").or_else(|| route.source.strip_prefix("cle:claude-web:")) {
+    if let Some(id) = route.source.strip_prefix("cle:claude:").or_else(|| route.source.strip_prefix("cle:claude-web:")).or_else(|| route.source.strip_prefix("cle:claude-cli:")) {
         let item = claude_account::refresh_account_quota(id).await?;
         return match item.quota_error { Some(error) => Err(error.message), None if item.quota.is_some() => Ok(()), _ => Err("Claude 未返回订阅额度".into()) };
     }
@@ -4602,6 +4858,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
             }
         }
     }
+    ensure_claude_cli_routes(&mut config);
     let status = if sources_failed == 0 {
         "success"
     } else if sources_succeeded > 0 {
@@ -4654,7 +4911,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         .collect::<BTreeMap<_, _>>();
     config
         .accounts
-        .retain(|account| !account.source.starts_with("cle:") || account.source.starts_with("cle:workbuddy:") || managed_provider_api::supported(&account.provider));
+        .retain(|account| !account.source.starts_with("cle:") || account.source.starts_with("cle:workbuddy:") || account.source.starts_with("cle:claude-cli:") || managed_provider_api::supported(&account.provider));
 
     if let Ok(accounts) = account::list_accounts() {
         for managed in accounts.into_iter().filter(|item| {
@@ -4872,6 +5129,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
     if let Err(error) = import_workbuddy_routes(&mut config).await {
         logger::log_warn(&format!("[MultiModelAPI] WorkBuddy 账号同步: {error}"));
     }
+    ensure_claude_cli_routes(&mut config);
     import_native_routes(&mut config).await?;
     if config.accounts.iter().any(|route| route.source.starts_with("agent2api:")) {
         import_extension_routes(&mut config, false).await?;
@@ -5265,7 +5523,13 @@ pub fn start_runtime_watchdog() {
                     "[MultiModelAPI][watchdog] 读取 Antigravity 最新账号凭据失败: {error}"
                 )),
             }
-            let probe_error = match probe_gateway(&config).await {
+            let helper_exited = {
+                let mut state = runtime().lock().await;
+                state.helpers.iter_mut().any(|child| child.try_wait().is_ok_and(|status| status.is_some()))
+            };
+            let probe = if helper_exited { Err("API 辅助进程意外退出".to_string()) }
+                else { probe_gateway(&config).await };
+            let probe_error = match probe {
                 Ok(_) => {
                     record_health_success(false).await;
                     continue;
@@ -5389,6 +5653,41 @@ mod tests {
             "authMode": "oauth_json", "source": source,
             "credentialJson": {"access_token": "fixture"}
         })).unwrap()
+    }
+
+    #[test]
+    fn claude_cli_routes_preserve_accounts_credentials_and_user_choices() {
+        let mut config = default_config();
+        let mut parent = quota_test_account("claude", "cle:claude:fixture");
+        parent.name = "Claude · fixture".into();
+        parent.models = vec![MultiModelDefinition {
+            id: "claude-haiku-5-5".into(), alias: "old-alias".into(),
+            capabilities: vec!["text".into(), "vision".into(), "reasoning".into()],
+            max_input_tokens: Some(100_000), max_output_tokens: Some(8192), enabled: true,
+        }];
+        let original = serde_json::to_value(&parent).unwrap();
+        config.accounts.push(parent);
+        assert!(super::ensure_claude_cli_routes(&mut config));
+        assert_eq!(serde_json::to_value(&config.accounts[0]).unwrap(), original);
+        let route = &mut config.accounts[1];
+        assert_eq!(route.source, "cle:claude-cli:fixture");
+        assert_eq!(route.models[0].id, "claude-cli/claude-haiku-5-5");
+        assert_eq!(route.models[0].capabilities, ["text", "reasoning"]);
+        assert!(route.credential_json.is_none());
+        assert_eq!(route.models[0].max_input_tokens, Some(100_000));
+        route.enabled = false;
+        route.models[0].enabled = false;
+        assert!(!super::ensure_claude_cli_routes(&mut config));
+        assert!(!config.accounts[1].enabled && !config.accounts[1].models[0].enabled);
+        assert!(super::quota_refresh_supported(&config.accounts[1]));
+        normalize_config(&mut config).expect("managed CLI route validates without duplicating credentials");
+    }
+
+    #[test]
+    fn claude_usage_timestamp_accepts_milliseconds_and_legacy_seconds() {
+        let seconds = 1_793_078_560;
+        let millis = 1_793_078_560_000;
+        assert_eq!(super::claude_usage_timestamp(seconds), super::claude_usage_timestamp(millis));
     }
 
     #[test]

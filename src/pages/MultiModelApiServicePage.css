@@ -342,7 +342,7 @@ html body #root .mm-api-page .mm-menu-panel > button::after {
 .mm-provider-icon img { width: 17px !important; height: 17px !important; object-fit: contain; }
 .mm-provider-icon.xai { background: #111; color: #fff; }
 .mm-provider-icon.openai { background: color-mix(in srgb, #10a37f 15%, var(--bg-card)); color: #10a37f; }
-.mm-provider-icon.claude { background: color-mix(in srgb, #d97757 15%, var(--bg-card)); }
+.mm-provider-icon.claude, .mm-provider-icon.claude-cli { background: color-mix(in srgb, #d97757 15%, var(--bg-card)); }
 .mm-provider-icon.gemini { background: color-mix(in srgb, #4285f4 12%, var(--bg-card)); }
 .mm-provider-icon.codex { background: color-mix(in srgb, #111827 12%, var(--bg-card)); }
 .mm-provider-icon.antigravity { background: color-mix(in srgb, #7f96aa 12%, var(--bg-card)); }
@@ -908,6 +908,49 @@ html body #root .mm-api-page :is(input, textarea, select) {
   background-color: var(--lg-recess, rgba(4, 6, 9, 0.3)) !important;
   border-color: var(--lg-recess-edge, rgba(255, 255, 255, 0.14)) !important;
   color: var(--lg-ink, var(--text-primary)) !important;
+}
+
+/* On macOS the NSVisualEffectView already blurs the desktop once for the whole
+ * window. The shared glass theme also blurs every control and its decorative
+ * pseudo-elements; an account grid can otherwise create hundreds of live
+ * backdrop layers. Keep their translucent fills, borders and highlights, but
+ * let the native material supply the blur. Other platforms retain their CSS
+ * glass treatment. */
+html[data-mm-native-compositor='true'][data-mm-api-standalone='true'][data-native-liquid-glass='true'] body #root#root .mm-api-page-standalone,
+html[data-mm-native-compositor='true'][data-mm-api-standalone='true'][data-native-liquid-glass='true'] body #root#root .mm-api-page-standalone *,
+html[data-mm-native-compositor='true'][data-mm-api-standalone='true'][data-native-liquid-glass='true'] body #root#root .mm-api-page-standalone *::before,
+html[data-mm-native-compositor='true'][data-mm-api-standalone='true'][data-native-liquid-glass='true'] body #root#root .mm-api-page-standalone *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* The radial field is already soft; its previous full-window 42px CSS blur
+ * added another expensive pass above the native window material. */
+html[data-mm-native-compositor='true'][data-native-liquid-glass='true'] body::after {
+  filter: none !important;
+}
+
+/* A moving background-position and blurred shadow on every selected control
+ * keeps WebKit resolving and painting styles even while the page is idle.
+ * Keep the static glass highlights, and leave the separate SVG spinner and
+ * status indicators animated when a real operation is in progress. */
+html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone button,
+html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone button::before,
+html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone button::after {
+  animation: none !important;
+}
+
+/* Dense account grids can contain hundreds of small controls. A thin inset
+ * edge gives them the same glass separation without repainting large shadows. */
+html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone .mm-account button {
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.14) !important;
+}
+
+/* The card and button fills already have a static highlight. The shared
+ * decorative overlay adds another gradient and inset shadow to each one. */
+html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone .mm-account::before,
+html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone .mm-account button::before {
+  content: none !important;
 }
 
 /* WorkBuddy stays inside the independent API console so account management and
