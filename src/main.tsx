@@ -23,12 +23,24 @@ function isMacOSRuntime() {
   return /mac/i.test(runtimePlatform);
 }
 
+function markDesktopPlatform() {
+  const runtimePlatform = (navigator as Navigator & {
+    userAgentData?: { platform?: string };
+  }).userAgentData?.platform || navigator.platform || navigator.userAgent || "";
+  if (/win/i.test(runtimePlatform)) {
+    document.documentElement.dataset.platform = "windows";
+  } else if (/mac/i.test(runtimePlatform)) {
+    document.documentElement.dataset.platform = "macos";
+  }
+}
+
 function enableMacOSNativeLiquidGlassTheme() {
   if (isMacOSRuntime() && "__TAURI_INTERNALS__" in window) {
     document.documentElement.setAttribute("data-native-liquid-glass", "true");
   }
 }
 
+markDesktopPlatform();
 enableMacOSNativeLiquidGlassTheme();
 const isMultiModelConsole = "__TAURI_INTERNALS__" in window
   && getCurrentWindow().label === "multi-model-api-console";
@@ -200,12 +212,13 @@ if (visualReviewTarget === "jimeng") {
     );
   });
 } else if (isMultiModelConsole) {
-  // The dedicated console is a separate WKWebView. Mark its complete canvas
-  // explicitly so transparency does not depend on user-agent platform hints
-  // or the timing of the shared theme initializer.
-  document.documentElement.setAttribute("data-native-liquid-glass", "true");
+  // Only macOS has a native glass compositor behind this window. Windows keeps
+  // an opaque page; the thin Mac tint would otherwise show the empty window.
   document.documentElement.setAttribute("data-mm-api-standalone", "true");
-  if (isMacOSRuntime()) document.documentElement.dataset.mmNativeCompositor = "true";
+  if (isMacOSRuntime()) {
+    document.documentElement.setAttribute("data-native-liquid-glass", "true");
+    document.documentElement.dataset.mmNativeCompositor = "true";
+  }
   void import("./pages/MultiModelApiServiceWindow").then(({ MultiModelApiServiceWindow }) => {
     root.render(
       <React.StrictMode>

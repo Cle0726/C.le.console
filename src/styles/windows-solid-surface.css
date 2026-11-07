@@ -1,0 +1,97 @@
+/*
+ * Windows has no macOS Liquid Glass material behind the WebView. The shared
+ * glass tokens are thin tints meant to sit on that native refraction. On
+ * Windows those same fills look washed out, so this sheet replaces them with
+ * thicker, nearly opaque surfaces and turns off backdrop blur.
+ */
+
+html[data-platform='windows'] {
+  --bg-primary: #0c0e12;
+  --bg-secondary: #14171c;
+  --bg-surface: #181b21;
+  --bg-tertiary: #1e2229;
+  --bg-card: rgba(24, 27, 33, 0.96);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+
+  --lg-1-fill: rgba(22, 25, 31, 0.94);
+  --lg-1-fill-hover: rgba(32, 36, 44, 0.97);
+  --lg-1-blur: none;
+  --lg-1-edge: rgba(255, 255, 255, 0.1);
+  --lg-1-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  --lg-1-sheen: none;
+
+  --lg-2-fill: rgba(28, 32, 39, 0.97);
+  --lg-2-fill-hover: rgba(36, 41, 50, 0.98);
+  --lg-2-blur: none;
+  --lg-2-edge: rgba(255, 255, 255, 0.12);
+  --lg-2-edge-hover: rgba(255, 255, 255, 0.18);
+  --lg-2-shadow: 0 14px 32px rgba(0, 0, 0, 0.36);
+  --lg-2-specular: none;
+
+  --lg-3-fill: rgba(16, 18, 23, 0.98);
+  --lg-3-blur: none;
+  --lg-3-blur-value: 0px;
+  --lg-3-edge: rgba(255, 255, 255, 0.14);
+  --lg-3-shadow: 0 24px 56px rgba(0, 0, 0, 0.48);
+  --lg-3-specular: none;
+
+  --lg-recess: rgba(8, 9, 12, 0.72);
+  --lg-recess-soft: rgba(8, 9, 12, 0.56);
+
+  --glass-static-bg: rgba(20, 23, 28, 0.96);
+  --glass-content-bg: rgba(24, 27, 33, 0.97);
+  --glass-float-bg: rgba(28, 32, 38, 0.98);
+  --glass-modal-bg: rgba(14, 16, 20, 0.98);
+  --glass-static-blur: 0px;
+  --glass-content-blur: 0px;
+  --glass-float-blur: 0px;
+
+  --ui-surface: rgba(22, 25, 31, 0.96);
+  --ui-surface-raised: rgba(30, 34, 41, 0.98);
+  --ui-shadow-1: 0 8px 20px rgba(0, 0, 0, 0.28);
+  --ui-shadow-2: 0 16px 36px rgba(0, 0, 0, 0.38);
+}
+
+html[data-platform='windows'][data-theme='light'],
+html[data-platform='windows'][data-visual-theme='day'] {
+  --bg-primary: #e7e9ee;
+  --bg-secondary: #f4f6f8;
+  --bg-surface: #f7f8fa;
+  --bg-tertiary: #ffffff;
+  --bg-card: rgba(255, 255, 255, 0.96);
+  --bg-hover: rgba(18, 22, 30, 0.06);
+
+  --lg-1-fill: rgba(255, 255, 255, 0.94);
+  --lg-1-fill-hover: rgba(255, 255, 255, 0.98);
+  --lg-2-fill: rgba(255, 255, 255, 0.97);
+  --lg-2-fill-hover: #ffffff;
+  --lg-3-fill: rgba(246, 247, 249, 0.98);
+  --lg-recess: rgba(226, 229, 235, 0.9);
+  --lg-recess-soft: rgba(226, 229, 235, 0.72);
+  --glass-static-bg: rgba(255, 255, 255, 0.96);
+  --glass-content-bg: rgba(255, 255, 255, 0.97);
+  --glass-float-bg: rgba(255, 255, 255, 0.98);
+  --glass-modal-bg: rgba(247, 248, 250, 0.98);
+  --ui-surface: rgba(255, 255, 255, 0.96);
+  --ui-surface-raised: #ffffff;
+}
+
+html[data-platform='windows'],
+html[data-platform='windows'] body,
+html[data-platform='windows'] #root {
+  background: var(--bg-primary) !important;
+  background-color: var(--bg-primary) !important;
+  background-image: none !important;
+}
+
+html[data-platform='windows'] body::before,
+html[data-platform='windows'] body::after {
+  opacity: 0 !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html[data-platform='windows'] body #root * {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}

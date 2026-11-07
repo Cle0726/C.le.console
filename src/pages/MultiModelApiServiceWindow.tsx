@@ -3,6 +3,7 @@ import '../styles/ui-unified-2026.css';
 import '../styles/liquid-glass-26.css';
 import '../styles/liquid-glass-system.css';
 import '../styles/macos-native-liquid-glass.css';
+import '../styles/windows-solid-surface.css';
 import '../styles/responsive-text-safety.css';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { MultiModelApiServicePage } from './MultiModelApiServicePage';

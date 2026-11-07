@@ -19,6 +19,7 @@ import './styles/liquid-glass-26.css';
    pages inject at runtime. */
 import './styles/liquid-glass-system.css';
 import './styles/macos-native-liquid-glass.css';
+import './styles/windows-solid-surface.css';
 import './styles/responsive-text-safety.css';
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
