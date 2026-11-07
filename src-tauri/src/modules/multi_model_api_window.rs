@@ -54,6 +54,7 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
         .get_webview(MULTI_MODEL_API_WINDOW_LABEL)
         .map(|webview| webview.window())
         .ok_or_else(|| "多模型 API 独立窗口创建失败".to_string())?;
+    crate::modules::window_park::restore_parked_label(app, MULTI_MODEL_API_WINDOW_LABEL);
     window.show().map_err(|error| error.to_string())?;
 
     // NSGlassEffectView needs the final, visible AppKit geometry. Applying it

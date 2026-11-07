@@ -489,18 +489,29 @@ func doubaoJSONStatus(value map[string]any) string {
 func writeDoubaoWorkChatCompletion(c *gin.Context, model, reply string, stream bool) {
 	id := doubaoWorkResponseID("chatcmpl-")
 	created := time.Now().Unix()
+	reasoning, visible := splitDoubaoWorkThinking(reply)
+	message := gin.H{"role": "assistant", "content": visible}
+	if reasoning != "" {
+		message["reasoning_content"] = reasoning
+	}
 	if !stream {
 		c.JSON(http.StatusOK, gin.H{
 			"id": id, "object": "chat.completion", "created": created, "model": model,
-			"choices": []any{gin.H{"index": 0, "message": gin.H{"role": "assistant", "content": reply}, "finish_reason": "stop"}},
+			"choices": []any{gin.H{"index": 0, "message": message, "finish_reason": "stop"}},
 		})
 		return
 	}
 	setEventStreamHeaders(c.Writer.Header())
 	c.Status(http.StatusOK)
+	if reasoning != "" {
+		doubaoWriteSSE(c, gin.H{
+			"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+			"choices": []any{gin.H{"index": 0, "delta": gin.H{"role": "assistant", "reasoning_content": reasoning}, "finish_reason": nil}},
+		})
+	}
 	doubaoWriteSSE(c, gin.H{
 		"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
-		"choices": []any{gin.H{"index": 0, "delta": gin.H{"role": "assistant", "content": reply}, "finish_reason": nil}},
+		"choices": []any{gin.H{"index": 0, "delta": gin.H{"role": "assistant", "content": visible}, "finish_reason": nil}},
 	})
 	doubaoWriteSSE(c, gin.H{
 		"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
@@ -512,16 +523,30 @@ func writeDoubaoWorkChatCompletion(c *gin.Context, model, reply string, stream b
 	}
 }
 
+func splitDoubaoWorkThinking(reply string) (reasoning, visible string) {
+	return (*thinkSplitState)(nil).split(reply)
+}
+
 func writeDoubaoWorkResponses(c *gin.Context, model, reply string, stream bool) {
+	reasoning, visible := splitDoubaoWorkThinking(reply)
 	responseID := doubaoWorkResponseID("resp_")
 	itemID := doubaoWorkResponseID("msg_")
 	created := time.Now().Unix()
+	output := make([]any, 0, 2)
+	if reasoning != "" {
+		output = append(output, gin.H{
+			"id": doubaoWorkResponseID("rs_"), "type": "reasoning",
+			"summary": []any{gin.H{"type": "summary_text", "text": reasoning}},
+			"content": []any{gin.H{"type": "reasoning_text", "text": reasoning}},
+		})
+	}
+	output = append(output, gin.H{
+		"id": itemID, "type": "message", "status": "completed", "role": "assistant",
+		"content": []any{gin.H{"type": "output_text", "text": visible, "annotations": []any{}}},
+	})
 	response := gin.H{
 		"id": responseID, "object": "response", "created_at": created, "status": "completed",
-		"error": nil, "model": model, "output": []any{gin.H{
-			"id": itemID, "type": "message", "status": "completed", "role": "assistant",
-			"content": []any{gin.H{"type": "output_text", "text": reply, "annotations": []any{}}},
-		}},
+		"error": nil, "model": model, "output": output,
 	}
 	if !stream {
 		c.JSON(http.StatusOK, response)
@@ -542,12 +567,18 @@ func writeDoubaoWorkResponses(c *gin.Context, model, reply string, stream bool) 
 	responseInProgress := gin.H{"id": responseID, "object": "response", "created_at": created, "status": "in_progress", "model": model, "output": []any{}}
 	writeEvent("response.created", gin.H{"type": "response.created", "response": responseInProgress})
 	writeEvent("response.in_progress", gin.H{"type": "response.in_progress", "response": responseInProgress})
+	if reasoning != "" {
+		reasoningID := output[0].(gin.H)["id"]
+		writeEvent("response.output_item.added", gin.H{"type": "response.output_item.added", "output_index": 0, "item": output[0]})
+		writeEvent("response.reasoning_summary_text.delta", gin.H{"type": "response.reasoning_summary_text.delta", "item_id": reasoningID, "output_index": 0, "summary_index": 0, "delta": reasoning})
+		writeEvent("response.output_item.done", gin.H{"type": "response.output_item.done", "output_index": 0, "item": output[0]})
+	}
 	itemInProgress := gin.H{"id": itemID, "type": "message", "status": "in_progress", "role": "assistant", "content": []any{}}
 	writeEvent("response.output_item.added", gin.H{"type": "response.output_item.added", "output_index": 0, "item": itemInProgress})
 	writeEvent("response.content_part.added", gin.H{"type": "response.content_part.added", "item_id": itemID, "output_index": 0, "content_index": 0, "part": gin.H{"type": "output_text", "text": "", "annotations": []any{}}})
-	writeEvent("response.output_text.delta", gin.H{"type": "response.output_text.delta", "item_id": itemID, "output_index": 0, "content_index": 0, "delta": reply})
-	writeEvent("response.output_text.done", gin.H{"type": "response.output_text.done", "item_id": itemID, "output_index": 0, "content_index": 0, "text": reply})
-	writeEvent("response.content_part.done", gin.H{"type": "response.content_part.done", "item_id": itemID, "output_index": 0, "content_index": 0, "part": gin.H{"type": "output_text", "text": reply, "annotations": []any{}}})
+	writeEvent("response.output_text.delta", gin.H{"type": "response.output_text.delta", "item_id": itemID, "output_index": 0, "content_index": 0, "delta": visible})
+	writeEvent("response.output_text.done", gin.H{"type": "response.output_text.done", "item_id": itemID, "output_index": 0, "content_index": 0, "text": visible})
+	writeEvent("response.content_part.done", gin.H{"type": "response.content_part.done", "item_id": itemID, "output_index": 0, "content_index": 0, "part": gin.H{"type": "output_text", "text": visible, "annotations": []any{}}})
 	writeEvent("response.output_item.done", gin.H{"type": "response.output_item.done", "output_index": 0, "item": response["output"].([]any)[0]})
 	writeEvent("response.completed", gin.H{"type": "response.completed", "response": response})
 	_, _ = io.WriteString(c.Writer, "data: [DONE]\n\n")

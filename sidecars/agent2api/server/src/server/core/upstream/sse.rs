@@ -172,11 +172,12 @@ impl ReasoningCoalescer {
             out.push(Bytes::from_static(b"data: [DONE]\n\n"));
             return;
         }
-        let Ok(chunk) = serde_json::from_str::<Value>(data) else {
+        let Ok(mut chunk) = serde_json::from_str::<Value>(data) else {
             // 解析失败的行原样透传：上游的异常帧不能被我们吞掉
             out.push(plain_frame(line));
             return;
         };
+        let promoted = promote_reasoning_fields(&mut chunk);
         if chunk.is_object() {
             // ── usage 旁路提取（请求统计）──────────────────────────
             // 位置放在「已确定这是合法 JSON 对象」之后、「本行还没被改写」之前。
@@ -243,7 +244,25 @@ impl ReasoningCoalescer {
             out.push(self.coalesced_frame());
             self.acc.clear();
         }
-        out.push(self.rewritten_frame(line, &chunk));
+        if promoted {
+            out.push(self.rewritten_frame_from_value(&chunk));
+        } else {
+            out.push(self.rewritten_frame(line, &chunk));
+        }
+    }
+
+    /// 把已经改过的 chunk 下发。思考字段提升后不能再回放原始行，否则
+    /// `reasoning` / `reasoning_text` / `thinking` 到不了只认 `reasoning_content` 的客户端。
+    fn rewritten_frame_from_value(&self, chunk: &Value) -> Frame {
+        let mut next = chunk.clone();
+        if let Some(rewrite) = &self.rewrite {
+            if let Some(map) = next.as_object_mut() {
+                if map.contains_key("model") {
+                    map.insert("model".to_string(), Value::String(rewrite.requested.clone()));
+                }
+            }
+        }
+        sse_frame(&next)
     }
 
     /// 透传一帧，必要时把 `model` 改写成客户端请求的名字。
@@ -332,6 +351,40 @@ impl ReasoningCoalescer {
         );
         Bytes::from(format!("data: {text}\n\n"))
     }
+}
+
+/// 工作台扩展渠道的思考字段并不统一：Cline 用 `reasoning`，部分兼容网关用
+/// `reasoning_text` 或 `thinking`。统一抄到 `reasoning_content`，已有正文时保留。
+fn promote_reasoning_fields(chunk: &mut Value) -> bool {
+    let Some(choices) = chunk.get_mut("choices").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for choice in choices {
+        for key in ["delta", "message"] {
+            let Some(node) = choice.get_mut(key).and_then(Value::as_object_mut) else {
+                continue;
+            };
+            if node
+                .get("reasoning_content")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.is_empty())
+            {
+                continue;
+            }
+            let found = ["reasoning", "reasoning_text", "thinking"].iter().find_map(|name| {
+                node.get(*name)
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_string)
+            });
+            if let Some(text) = found {
+                node.insert("reasoning_content".to_string(), Value::String(text));
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 /// 一帧 SSE：`data: <JSON>\n\n`（Node 的 sseFrame）

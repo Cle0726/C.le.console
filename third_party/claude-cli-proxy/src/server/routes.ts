@@ -25,6 +25,7 @@ import {
   createDoneChunk,
   createToolCallChunks,
   extractTextContent,
+  extractThinkingContent,
   resultUsageToOpenAI,
 } from "../adapter/cli-to-openai.js";
 import { parseToolCalls, shouldBridgeExternalTools, type ToolCallParseResult } from "../adapter/tools.js";
@@ -53,6 +54,7 @@ import {
   chatUsageToResponsesUsage,
   buildResponsesStreamEvents,
   buildTextDeltaEvent,
+  buildReasoningDeltaEvent,
   buildStreamDoneEvents,
 } from "../adapter/responses.js";
 import { classifyError, isStreamLayerFault, type ProtocolErrorClass } from "../errors.js";
@@ -646,6 +648,16 @@ async function handleNonStreamingResponse(
 ): Promise<void> {
   return new Promise((resolve) => {
     let finalResult: ClaudeCliResult | null = null;
+    let reasoningText = "";
+
+    subprocess.on("content_delta", (event: ClaudeCliStreamEvent) => {
+      if (event.event.delta?.type !== "thinking_delta") return;
+      const thinking = event.event.delta.thinking || "";
+      if (thinking) reasoningText += thinking;
+    });
+    subprocess.on("assistant", (message: ClaudeCliAssistant) => {
+      if (!reasoningText) reasoningText = extractThinkingContent(message);
+    });
 
     subprocess.on("result", (result: ClaudeCliResult) => {
       finalResult = result;
@@ -676,6 +688,7 @@ async function handleNonStreamingResponse(
         annotateAndRecordUsage(finalResult, cliInput.model);
         setUsageHeaders(res, finalResult);
         const response = cliResultToOpenai(finalResult, requestId, body);
+        if (reasoningText && response.choices[0]) response.choices[0].message.reasoning_content = reasoningText;
         const finishReason = response.choices[0]?.finish_reason || "stop";
         tb.setFinishReason(finishReason as "stop" | "tool_calls");
         if (response.choices[0]?.message.tool_calls) {
@@ -820,6 +833,7 @@ async function handleStreamJsonRequest(
   let isFirst = true;
   let lastModel = "claude-sonnet-4";
   let assistantText = "";
+  let reasoningText = "";
   let assistantMessageText = "";
   let bridgeTextBuffer = "";
   let bridgeTextStreaming = false;
@@ -1024,7 +1038,28 @@ async function handleStreamJsonRequest(
     lastClientActivityAt = Date.now();
   };
 
+  const writeReasoningChunk = (text: string) => {
+    if (!stream || res.writableEnded || !text) return;
+    const chunk = {
+      id: `chatcmpl-${requestId}`,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model: lastModel,
+      choices: [{ index: 0, delta: { reasoning_content: text }, finish_reason: null }],
+    };
+    res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    lastClientActivityAt = Date.now();
+  };
+
   const onContentDelta = (event: ClaudeCliStreamEvent) => {
+    if (event.event.delta?.type === "thinking_delta") {
+      const thinking = event.event.delta.thinking || "";
+      if (!thinking) return;
+      reasoningText += thinking;
+      lastClaudeActivityAt = Date.now();
+      writeReasoningChunk(thinking);
+      return;
+    }
     const text = event.event.delta?.text || "";
     if (!text) return;
     assistantText += text;
@@ -1132,7 +1167,9 @@ async function handleStreamJsonRequest(
       res.end();
     } else if (!stream && !res.headersSent) {
       setUsageHeaders(res, result);
-      res.json(cliResultToOpenai(result, requestId, body));
+      const response = cliResultToOpenai(result, requestId, body);
+      if (reasoningText && response.choices[0]) response.choices[0].message.reasoning_content = reasoningText;
+      res.json(response);
     }
 
     // Re-pool or retain the subprocess for the next turn according to session mode.
@@ -1413,6 +1450,7 @@ async function handleResponsesStreamJson(
   const responseId = `resp_${requestId}`;
   const msgId = `msg_${uuidv4().replace(/-/g, "").slice(0, 12)}`;
   let assistantText = "";
+  let reasoningText = "";
   let assistantMessageText = "";
   let bridgeTextBuffer = "";
   let bridgeTextStreaming = false;
@@ -1599,6 +1637,16 @@ async function handleResponsesStreamJson(
   };
 
   const onContentDelta = (event: ClaudeCliStreamEvent) => {
+    if (event.event.delta?.type === "thinking_delta") {
+      const thinking = event.event.delta.thinking || "";
+      if (!thinking) return;
+      reasoningText += thinking;
+      lastClaudeActivityAt = Date.now();
+      if (stream && !res.writableEnded) {
+        res.write(`event: response.reasoning_summary_text.delta\ndata: ${buildReasoningDeltaEvent(thinking)}\n\n`);
+      }
+      return;
+    }
     const text = event.event.delta?.text || "";
     if (!text) return;
     assistantText += text;
@@ -1697,6 +1745,7 @@ async function handleResponsesStreamJson(
       res.end();
     } else if (!stream && !res.headersSent) {
       const chatResponse = cliResultToOpenai(resultForAdapters, requestId, chatReq);
+      if (reasoningText && chatResponse.choices[0]) chatResponse.choices[0].message.reasoning_content = reasoningText;
       res.json(chatResponseToResponses(chatResponse, requestId));
     }
   } catch (error) {

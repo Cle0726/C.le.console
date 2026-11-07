@@ -280,7 +280,7 @@ impl CompletionAccumulator {
         // 「empty response detected」。参考实现 cline-proxy 的 `sawContent`
         // 同样把 `reasoning` 算作内容，理由与这里一样（见其 proxy.go 的注释）。
         // 两个字段都累加、不互斥：与 cline-proxy 逐字同口径。
-        for key in ["reasoning_content", "reasoning"] {
+        for key in ["reasoning_content", "reasoning", "reasoning_text", "thinking"] {
             if let Some(reasoning) = delta.get(key).and_then(Value::as_str) {
                 self.reasoning.push_str(reasoning);
             }

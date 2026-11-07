@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	internalcache "github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -198,7 +199,9 @@ func ConvertGeminiResponseToOpenAI(_ context.Context, _ string, originalRequestR
 
 						functionCallTemplate := []byte(`{"id":"","index":0,"type":"function","function":{"name":"","arguments":""}}`)
 						fcName := util.RestoreSanitizedToolName(p.SanitizedNameMap, functionCallResult.Get("name").String())
-						functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "id", fmt.Sprintf("%s-%d-%d", fcName, time.Now().UnixNano(), atomic.AddUint64(&functionCallIDCounter, 1)))
+						callID := fmt.Sprintf("%s-%d-%d", fcName, time.Now().UnixNano(), atomic.AddUint64(&functionCallIDCounter, 1))
+						functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "id", callID)
+						internalcache.RememberGeminiToolCallSignature(callID, partResult.Get("thoughtSignature").String()+partResult.Get("thought_signature").String())
 						functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "index", functionCallIndex)
 						functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "function.name", fcName)
 						if fcArgsResult := functionCallResult.Get("args"); fcArgsResult.Exists() {
@@ -366,7 +369,9 @@ func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, origina
 						}
 						functionCallItemTemplate := []byte(`{"id":"","type":"function","function":{"name":"","arguments":""}}`)
 						fcName := util.RestoreSanitizedToolName(sanitizedNameMap, functionCallResult.Get("name").String())
-						functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "id", fmt.Sprintf("%s-%d-%d", fcName, time.Now().UnixNano(), atomic.AddUint64(&functionCallIDCounter, 1)))
+						callID := fmt.Sprintf("%s-%d-%d", fcName, time.Now().UnixNano(), atomic.AddUint64(&functionCallIDCounter, 1))
+						functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "id", callID)
+						internalcache.RememberGeminiToolCallSignature(callID, partResult.Get("thoughtSignature").String()+partResult.Get("thought_signature").String())
 						functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "function.name", fcName)
 						if fcArgsResult := functionCallResult.Get("args"); fcArgsResult.Exists() {
 							functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "function.arguments", fcArgsResult.Raw)

@@ -15,6 +15,7 @@ import { CodexIcon } from '../components/icons/CodexIcon';
 import { GeminiIcon } from '../components/icons/GeminiIcon';
 import { WorkbuddyIcon } from '../components/icons/WorkbuddyIcon';
 import { KiroIcon } from '../components/icons/KiroIcon';
+import { SubscriptionProxyCard } from '../components/SubscriptionProxyCard';
 import copilotIcon from '../assets/icons/github-copilot.svg';
 import { KiroAccountsPage } from './KiroAccountsPage';
 import { GitHubCopilotAccountsPage } from './GitHubCopilotAccountsPage';
@@ -34,7 +35,7 @@ import type {
 } from '../types/multiModelApi';
 import './MultiModelApiServicePage.css';
 
-type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'doubao-work' | 'workbuddy' | 'native' | 'extensions';
+type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'subscription' | 'doubao-work' | 'workbuddy' | 'native' | 'extensions';
 type MenuId = 'connect' | 'maintain' | 'accounts' | 'providers' | null;
 type AccountAddMode = 'oauth' | 'token' | 'api_key' | 'import';
 type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
@@ -699,7 +700,8 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
         <div className="page-tabs filter-tabs">
           {([
             ['accounts', Users, '账号池'], ['models', Boxes, '模型'],
-            ['keys', KeyRound, 'API Keys'], ['routes', Route, '路线'], ['overview', Settings2, '服务'],
+            ['keys', KeyRound, 'API Keys'], ['routes', Route, '路线'],
+            ['subscription', Globe, '订阅节点'], ['overview', Settings2, '服务'],
           ] as const).map(([id, Icon, label]) => (
             <button key={id} type="button" className={`filter-tab${tab === id ? ' active' : ''}`} onClick={() => selectTab(id)}>
               <Icon /><span>{label}</span>
@@ -881,6 +883,8 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
           <Metric label="可调用模型" value={summary.models} detail="账号实际声明" />
           <Metric label="下游 Keys" value={summary.keys} detail="一个 Key 调全部" />
         </section>
+
+        {tab === 'subscription' && <SubscriptionProxyCard />}
 
         {tab === 'overview' && (
           <Overview config={draft} setConfig={setDraft} onSave={() => void save()} busy={busy} testModel={testModel} setTestModel={setTestModel} testPrompt={testPrompt} setTestPrompt={setTestPrompt} onTest={() => void runTest()} testResult={testResult} running={state.running} />
@@ -1139,7 +1143,7 @@ function Overview({ config, setConfig, onSave, busy, testModel, setTestModel, te
         <label><span>访问范围</span><select value={config.accessScope} onChange={(event) => setConfig({ ...config, accessScope: event.target.value as 'localhost' | 'lan' })}><option value="localhost">仅本机 127.0.0.1</option><option value="lan">局域网 0.0.0.0</option></select><small>LAN 模式需要系统防火墙放行</small></label>
         <label><span>路由策略</span><select value={config.routingStrategy} onChange={(event) => setConfig({ ...config, routingStrategy: event.target.value as 'round-robin' | 'fill-first' })}><option value="round-robin">严格轮询（推荐）</option><option value="fill-first">Fill First 优先填满</option></select><small>每个模型独立轮询；仅跳过明确耗尽或临时冷却账号</small></label>
         <label><span>失败重试</span><input type="number" min={0} max={10} value={config.requestRetries} onChange={(event) => setConfig({ ...config, requestRetries: Number(event.target.value) })} /></label>
-        <label className="wide"><span>上游代理</span><input placeholder="http://127.0.0.1:7890（可选）" value={config.upstreamProxy} onChange={(event) => setConfig({ ...config, upstreamProxy: event.target.value })} /></label>
+        <label className="wide"><span>上游代理</span><input placeholder="留空则使用电脑系统代理" value={config.upstreamProxy} onChange={(event) => setConfig({ ...config, upstreamProxy: event.target.value })} /><small>这是系统代理之外的手动地址。订阅节点打开时不会使用这里，也不会改掉这里。</small></label>
         <label><span>模型同步间隔</span><select value={config.modelSyncIntervalMinutes} disabled={!config.autoSyncModels} onChange={(event) => setConfig({ ...config, modelSyncIntervalMinutes: Number(event.target.value) })}><option value={15}>每 15 分钟</option><option value={30}>每 30 分钟</option><option value={60}>每小时</option><option value={180}>每 3 小时</option><option value={360}>每 6 小时</option><option value={1440}>每天</option></select><small>应用启动后也会自动检查一次</small></label>
         <label className="switch-row"><span><b>自动同步上游模型</b><small>发现官方新增模型后自动加入现有账号目录</small></span><input type="checkbox" checked={config.autoSyncModels} onChange={(event) => setConfig({ ...config, autoSyncModels: event.target.checked })} /></label>
         <label className="switch-row"><span><b>会话固定（默认关闭）</b><small>开启后同一会话会固定一个账号，可能造成单号集中消耗</small></span><input type="checkbox" checked={config.sessionAffinity} onChange={(event) => setConfig({ ...config, sessionAffinity: event.target.checked })} /></label>

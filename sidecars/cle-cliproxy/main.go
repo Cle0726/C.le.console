@@ -4494,10 +4494,7 @@ func (s *relayServer) handleProviderGatewayRequest(c *gin.Context, gateway *prov
 				s.writeProviderGatewayChatStream(c, resp.Body, upstreamModel, body, upstreamBody)
 			case sourceFormatEqual(sourceFormat, sdktranslator.FormatOpenAI):
 				c.Status(http.StatusOK)
-				c.Stream(func(w io.Writer) bool {
-					_, _ = io.Copy(w, resp.Body)
-					return false
-				})
+				writeNormalizedOpenAIChatStream(c, resp.Body)
 			default:
 				alt := fixedAlt
 				if alt == "" {
@@ -4525,6 +4522,7 @@ func (s *relayServer) handleProviderGatewayRequest(c *gin.Context, gateway *prov
 		case sourceFormatEqual(sourceFormat, sdktranslator.FormatOpenAIResponse):
 			payload = responsesconverter.ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(relayContext(c), upstreamModel, body, upstreamBody, payload, nil)
 		case sourceFormatEqual(sourceFormat, sdktranslator.FormatOpenAI):
+			payload = normalizeOpenAIReasoningJSON(payload, nil)
 		default:
 			payload = sdktranslator.TranslateNonStream(relayContext(c), sdktranslator.FormatOpenAI, sourceFormat, upstreamModel, body, upstreamBody, payload, nil)
 		}
@@ -4844,7 +4842,11 @@ func (s *relayServer) handleNonStream(c *gin.Context, body []byte, model string,
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	c.Data(http.StatusOK, contentType, resp.Payload)
+	payload := resp.Payload
+	if sourceFormatEqual(sourceFormat, sdktranslator.FormatOpenAI) {
+		payload = normalizeOpenAIReasoningJSON(payload, nil)
+	}
+	c.Data(http.StatusOK, contentType, payload)
 }
 
 func (s *relayServer) handleStream(c *gin.Context, body []byte, model string, sourceFormat sdktranslator.Format, alt string) {
@@ -6475,6 +6477,7 @@ type relayStreamFramer struct {
 	responses      responsesSSEFramer
 	emitOpenAIDone bool
 	openAIDone     bool
+	think          thinkSplitState
 }
 
 func newRelayStreamFramer(sourceFormat sdktranslator.Format, path string) *relayStreamFramer {
@@ -6499,6 +6502,7 @@ func (f *relayStreamFramer) Write(w io.Writer, chunk []byte) error {
 	case relayStreamFrameResponses:
 		return f.responses.WriteChunk(w, normalizeResponsesInputChunk(f.responses.HasPending(), chunk))
 	case relayStreamFrameOpenAI:
+		chunk = normalizeOpenAIReasoningChunk(&f.think, chunk)
 		for _, line := range bytes.Split(chunk, []byte("\n")) {
 			data := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(line), []byte("data:")))
 			if bytes.Equal(data, []byte("[DONE]")) {
@@ -6519,6 +6523,23 @@ func (f *relayStreamFramer) Close(w io.Writer) error {
 	}
 	// Native OpenAI translators consume upstream [DONE]. Restore it once after
 	// successful channel completion; error and cancellation paths never call Close.
+	if f.mode == relayStreamFrameOpenAI {
+		if reasoning, visible := f.think.finish(); reasoning != "" || visible != "" {
+			payload := map[string]any{
+				"object": "chat.completion.chunk",
+				"choices": []any{map[string]any{
+					"index":         0,
+					"delta":         openAIReasoningTailDelta(reasoning, visible),
+					"finish_reason": nil,
+				}},
+			}
+			if encoded, err := json.Marshal(payload); err == nil {
+				if _, err := w.Write(frameOpenAIStreamChunk(encoded)); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	if f.mode == relayStreamFrameOpenAI && f.emitOpenAIDone && !f.openAIDone {
 		f.openAIDone = true
 		_, err := w.Write([]byte("data: [DONE]\n\n"))

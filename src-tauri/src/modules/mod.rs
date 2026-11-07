@@ -79,6 +79,7 @@ pub mod qoder_oauth;
 pub mod quota;
 pub mod quota_cache;
 pub mod status_window;
+pub mod subscription_proxy;
 pub mod sync_settings;
 #[cfg(test)]
 pub mod test_support;
@@ -95,6 +96,7 @@ pub mod wakeup_history;
 pub mod wakeup_scheduler;
 pub mod wakeup_verification;
 pub mod web_creator_workspace;
+pub mod window_park;
 pub mod web_report;
 pub mod webdav_sync;
 pub mod webkit_cache_maintenance;

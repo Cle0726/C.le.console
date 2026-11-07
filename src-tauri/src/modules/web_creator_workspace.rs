@@ -172,6 +172,7 @@ pub fn show_workspace_window(app: &AppHandle) -> Result<(), String> {
             window
         })
         .ok_or_else(|| "网页创作工作台仍在初始化，请稍后重试".to_string())?;
+    crate::modules::window_park::restore_parked_label(app, CREATOR_WORKSPACE_WINDOW_LABEL);
     window.show().map_err(|error| error.to_string())?;
     window.unminimize().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())?;

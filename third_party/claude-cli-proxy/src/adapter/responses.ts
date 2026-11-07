@@ -104,10 +104,20 @@ export function chatResponseToResponses(
 ): ResponsesResponse {
   const choice = chat.choices[0];
   const text = choice?.message?.content ?? "";
+  const thinking = choice?.message?.reasoning_content ?? "";
   const toolCalls = choice?.message?.tool_calls;
   const msgId = `msg_${uuidv4().replace(/-/g, "").slice(0, 24)}`;
 
-  const output: ResponsesOutputItem[] = [
+  const output: ResponsesOutputItem[] = [];
+  if (thinking) {
+    output.push({
+      type: "reasoning",
+      id: `rs_${uuidv4().replace(/-/g, "").slice(0, 24)}`,
+      summary: [{ type: "summary_text", text: thinking }],
+      content: [{ type: "reasoning_text", text: thinking }],
+    });
+  }
+  output.push(
     {
       type: "message",
       id: msgId,
@@ -121,7 +131,7 @@ export function chatResponseToResponses(
         },
       ],
     },
-  ];
+  );
 
   // Append function_call items for each tool_call.
   if (toolCalls && toolCalls.length > 0) {
@@ -210,6 +220,15 @@ export function buildTextDeltaEvent(text: string): string {
     type: "response.output_text.delta",
     output_index: 0,
     content_index: 0,
+    delta: text,
+  });
+}
+
+export function buildReasoningDeltaEvent(text: string): string {
+  return JSON.stringify({
+    type: "response.reasoning_summary_text.delta",
+    output_index: 0,
+    summary_index: 0,
     delta: text,
   });
 }

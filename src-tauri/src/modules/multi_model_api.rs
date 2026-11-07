@@ -1237,21 +1237,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
     let mut account_auth_ids = BTreeMap::new();
     let mut expected_auth_files = BTreeSet::new();
     let antigravity_model_quotas = managed_antigravity_model_quotas();
-    let effective_upstream_proxy = if config.upstream_proxy.trim().is_empty() {
-        let detected = codex_local_access::system_proxy_url_for_target("https://api.openai.com")
-            .unwrap_or_default();
-        if loopback_proxy_is_available(&detected) == Some(false) {
-            logger::log_warn(&format!(
-                "[MultiModelAPI] 检测到本机系统代理但端口不可用，已自动回退直连: {}",
-                detected
-            ));
-            String::new()
-        } else {
-            detected
-        }
-    } else {
-        config.upstream_proxy.trim().to_string()
-    };
+    let effective_upstream_proxy = resolve_workbench_proxy(&config.upstream_proxy);
     let helper_port = config
         .port
         .checked_add(CLAUDE_WEB_HELPER_PORT_OFFSET)
@@ -1961,9 +1947,48 @@ fn hydrate_persisted_xai_credentials(config: &mut MultiModelApiConfig) -> Result
     Ok(changed)
 }
 
+fn workbench_proxy_option(explicit: &str, system_target: &str) -> Option<String> {
+    if let Some(subscription) = crate::modules::subscription_proxy::enabled_local_proxy() {
+        return Some(subscription);
+    }
+    if !explicit.trim().is_empty() {
+        return Some(explicit.trim().to_string());
+    }
+    codex_local_access::system_proxy_url_for_target(system_target)
+}
+
+fn subscription_or_explicit(explicit: &str) -> String {
+    crate::modules::subscription_proxy::enabled_local_proxy()
+        .unwrap_or_else(|| explicit.trim().to_string())
+}
+
+fn resolve_workbench_proxy(explicit: &str) -> String {
+    if let Some(subscription) = crate::modules::subscription_proxy::enabled_local_proxy() {
+        return subscription;
+    }
+    if !explicit.trim().is_empty() {
+        return explicit.trim().to_string();
+    }
+    let detected =
+        codex_local_access::system_proxy_url_for_target("https://api.openai.com").unwrap_or_default();
+    if loopback_proxy_is_available(&detected) == Some(false) {
+        logger::log_warn(&format!(
+            "[MultiModelAPI] 检测到本机系统代理但端口不可用，已自动回退直连: {}",
+            detected
+        ));
+        String::new()
+    } else {
+        detected
+    }
+}
+
 async fn refresh_xai_credentials(config: &mut MultiModelApiConfig, force: bool) -> bool {
     const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
-    let system_proxy = codex_local_access::system_proxy_url_for_target("https://auth.x.ai");
+    let system_proxy = if crate::modules::subscription_proxy::enabled_local_proxy().is_some() {
+        crate::modules::subscription_proxy::enabled_local_proxy()
+    } else {
+        codex_local_access::system_proxy_url_for_target("https://auth.x.ai")
+    };
     let mut changed = false;
 
     for account in config.accounts.iter_mut().filter(|account| {
@@ -3830,6 +3855,14 @@ pub async fn diagnose_and_repair(deep: bool) -> Result<MultiModelRepairReport, S
     })
 }
 
+pub(crate) async fn reload_runtime_config() -> Result<(), String> {
+    let config = load_config()?;
+    if config.enabled {
+        apply_config(&config).await?;
+    }
+    Ok(())
+}
+
 pub async fn save_config(mut config: MultiModelApiConfig) -> Result<MultiModelApiState, String> {
     normalize_config(&mut config)?;
     save_config_file(&config)?;
@@ -4218,21 +4251,13 @@ fn upsert_xai_credential(
 
 pub async fn xai_oauth_start() -> Result<XaiOAuthStartResponse, String> {
     let config = load_config()?;
-    let proxy = if config.upstream_proxy.trim().is_empty() {
-        codex_local_access::system_proxy_url_for_target("https://auth.x.ai")
-    } else {
-        Some(config.upstream_proxy.clone())
-    };
+    let proxy = workbench_proxy_option(&config.upstream_proxy, "https://auth.x.ai");
     multi_model_xai::start_oauth(proxy.as_deref()).await
 }
 
 pub async fn xai_oauth_complete(login_id: &str) -> Result<MultiModelApiState, String> {
     let mut config = load_config()?;
-    let proxy = if config.upstream_proxy.trim().is_empty() {
-        codex_local_access::system_proxy_url_for_target("https://auth.x.ai")
-    } else {
-        Some(config.upstream_proxy.clone())
-    };
+    let proxy = workbench_proxy_option(&config.upstream_proxy, "https://auth.x.ai");
     let result = multi_model_xai::complete_oauth(login_id, proxy.as_deref()).await?;
     upsert_xai_credential(
         &mut config,
@@ -4345,10 +4370,10 @@ async fn refresh_xai_accounts_selected(force_credentials: bool, ids: Option<&BTr
         }
         let proxy = if !account.proxy_url.trim().is_empty() && account.proxy_url != "direct" {
             Some(account.proxy_url.clone())
-        } else if !config.upstream_proxy.trim().is_empty() {
-            Some(config.upstream_proxy.clone())
+        } else if account.proxy_url == "direct" {
+            None
         } else {
-            codex_local_access::system_proxy_url_for_target("https://cli-chat-proxy.grok.com")
+            workbench_proxy_option(&config.upstream_proxy, "https://cli-chat-proxy.grok.com")
         };
         match multi_model_xai::query_usage(&account.id, &account.name, credential, proxy.as_deref())
             .await
@@ -4810,7 +4835,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
         })
         .cloned()
         .collect::<Vec<_>>();
-    let proxy = config.upstream_proxy.clone();
+    let proxy = subscription_or_explicit(&config.upstream_proxy);
     let results = futures::future::join_all(remote_accounts.into_iter().map(|account| {
         let proxy = proxy.clone();
         async move {
@@ -5188,7 +5213,7 @@ async fn import_native_routes(config: &mut MultiModelApiConfig) -> Result<(),Str
     config.accounts.retain(|route|!managed_provider_api::supported(&route.provider) || sources.contains(&route.source));
     for (provider,id,name) in identities {
         let source = format!("cle:{provider}:{id}");
-        let proxy = config.accounts.iter().find(|route|route.source==source).filter(|route|!route.proxy_url.trim().is_empty()).map(|route|route.proxy_url.clone()).unwrap_or_else(||config.upstream_proxy.clone());
+        let proxy = config.accounts.iter().find(|route|route.source==source).filter(|route|!route.proxy_url.trim().is_empty()).map(|route|route.proxy_url.clone()).unwrap_or_else(||subscription_or_explicit(&config.upstream_proxy));
         let discovery = managed_provider_api::fetch_models(provider,&id,&proxy).await;
         if let Some(route) = config.accounts.iter_mut().find(|route|route.source==source) {
             route.name=format!("{provider} · {name}");
@@ -5209,7 +5234,7 @@ async fn import_workbuddy_routes(config: &mut MultiModelApiConfig) -> Result<(),
     config.accounts.retain(|account| !account.source.starts_with("cle:workbuddy:") || sources.contains(&account.source));
     let mut successes = 0;
     let mut errors = Vec::new();
-    let proxy = config.upstream_proxy.clone();
+    let proxy = subscription_or_explicit(&config.upstream_proxy);
     let results = futures::future::join_all(managed.into_iter().map(|account| {
         let proxy = config.accounts.iter().find(|route| route.source == format!("cle:workbuddy:{}", account.id))
             .map(|route| route.proxy_url.trim()).filter(|url| !url.is_empty()).unwrap_or(&proxy).to_string();
@@ -5275,6 +5300,11 @@ const DEFAULT_ANTIGRAVITY_MODELS: &[&str] = &[
     "gpt-oss-120b-medium",
     "gemini-3.1-flash-lite",
     "gemini-3.5-flash-low",
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash-high",
+    "gemini-4-argon-high",
+    "claude-opus-5-5-high",
+    "claude-sonnet-5-5-high",
     "veo-3.1-generate-preview",
 ];
 
@@ -5286,6 +5316,9 @@ const DEFAULT_GEMINI_MODELS: &[&str] = &[
     "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
     "gemini-3.1-flash-lite-preview",
+    "gemini-3.6-flash",
+    "gemini-3.8-flash",
+    "gemini-4-argon",
     "veo-3.1-generate-preview",
     "veo-3.0-generate-preview",
 ];
@@ -5409,6 +5442,7 @@ fn model_definition(id: String) -> MultiModelDefinition {
     } else if normalized.contains("thinking")
         || normalized.contains("reasoning")
         || normalized.contains("pro")
+        || normalized.contains("argon")
         || normalized.contains("gpt-5")
     {
         vec!["text".into(), "vision".into(), "reasoning".into()]

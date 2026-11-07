@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	internalcache "github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -170,7 +171,9 @@ func ConvertCliResponseToOpenAI(_ context.Context, _ string, originalRequestRawJ
 
 				functionCallTemplate := []byte(`{"id":"","index":0,"type":"function","function":{"name":"","arguments":""}}`)
 				fcName := util.RestoreSanitizedToolName((*param).(*convertCliResponseToOpenAIChatParams).SanitizedNameMap, functionCallResult.Get("name").String())
-				functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "id", fmt.Sprintf("%s-%d-%d", fcName, time.Now().UnixNano(), atomic.AddUint64(&functionCallIDCounter, 1)))
+				callID := fmt.Sprintf("%s-%d-%d", fcName, time.Now().UnixNano(), atomic.AddUint64(&functionCallIDCounter, 1))
+				functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "id", callID)
+				internalcache.RememberGeminiToolCallSignature(callID, partResult.Get("thoughtSignature").String()+partResult.Get("thought_signature").String())
 				functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "index", functionCallIndex)
 				functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "function.name", fcName)
 				if fcArgsResult := functionCallResult.Get("args"); fcArgsResult.Exists() {

@@ -592,3 +592,24 @@ func TestXAIExecutorExecuteVideosUsesNativeEndpointFromRequestPath(t *testing.T)
 		})
 	}
 }
+
+func TestXAINormalizeReasoningEventMovesFullThinkingIntoSummary(t *testing.T) {
+	delta := xaiNormalizeReasoningEvent([]byte(`{"type":"response.reasoning_text.delta","delta":"step","content_index":0}`))
+	if got := gjson.GetBytes(delta, "type").String(); got != "response.reasoning_summary_text.delta" {
+		t.Fatalf("delta type = %q", got)
+	}
+	if gjson.GetBytes(delta, "content_index").Exists() {
+		t.Fatalf("content_index should move to summary_index: %s", delta)
+	}
+	if got := gjson.GetBytes(delta, "summary_index").Int(); got != 0 {
+		t.Fatalf("summary_index = %d, want 0", got)
+	}
+
+	completed := xaiNormalizeReasoningEvent([]byte(`{"type":"response.completed","response":{"output":[{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"full chain"}]}]}}`))
+	if got := gjson.GetBytes(completed, "response.output.0.summary.0.text").String(); got != "full chain" {
+		t.Fatalf("summary text = %q, payload=%s", got, completed)
+	}
+	if gjson.GetBytes(completed, "response.output.0.content").Exists() {
+		t.Fatalf("reasoning content should be folded into summary: %s", completed)
+	}
+}

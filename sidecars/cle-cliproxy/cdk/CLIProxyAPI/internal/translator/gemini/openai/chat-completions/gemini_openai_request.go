@@ -4,6 +4,7 @@ package chat_completions
 
 import (
 	"fmt"
+	internalcache "github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
@@ -261,7 +262,7 @@ func ConvertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 						fargs := tc.Get("function.arguments").String()
 						node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".functionCall.name", fname)
 						node, _ = sjson.SetRawBytes(node, "parts."+itoa(p)+".functionCall.args", []byte(fargs))
-						node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".thoughtSignature", geminiFunctionThoughtSignature)
+						node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".thoughtSignature", internalcache.GeminiToolCallSignature(fid, geminiFunctionThoughtSignature))
 						p++
 						if fid != "" {
 							fIDs = append(fIDs, fid)

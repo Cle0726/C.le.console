@@ -370,6 +370,7 @@ pub fn show_floating_card_window<R: Runtime>(
     focus: bool,
 ) -> Result<(), String> {
     let window = ensure_floating_card_window(app)?;
+    crate::modules::window_park::restore_parked_label(app, FLOATING_CARD_WINDOW_LABEL);
     let config = config::get_user_config();
 
     apply_floating_card_position(app, &window)?;
@@ -392,6 +393,7 @@ pub fn show_instance_floating_card_window<R: Runtime>(
 ) -> Result<(), String> {
     let window_label = build_instance_floating_card_window_label(&context);
     let (window, created) = ensure_floating_card_window_with_label(app, &window_label)?;
+    crate::modules::window_park::restore_parked_label(app, &window_label);
 
     set_floating_card_instance_context(app, &window_label, context)?;
     if created {
@@ -450,6 +452,7 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     };
 
     logger::log_info("[Window] 尝试恢复主窗口");
+    crate::modules::window_park::restore_parked_label(app, "main");
     #[cfg(target_os = "macos")]
     show_macos_application(app);
 

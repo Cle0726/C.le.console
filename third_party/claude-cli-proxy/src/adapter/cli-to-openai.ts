@@ -12,7 +12,14 @@ import { parseToolCalls, shouldBridgeExternalTools } from "./tools.js";
 export function extractTextContent(message: ClaudeCliAssistant): string {
   return message.message.content
     .filter((c) => c.type === "text")
-    .map((c) => c.text)
+    .map((c) => c.text ?? "")
+    .join("");
+}
+
+export function extractThinkingContent(message: ClaudeCliAssistant): string {
+  return message.message.content
+    .filter((c) => c.type === "thinking" && c.thinking)
+    .map((c) => c.thinking ?? "")
     .join("");
 }
 
@@ -25,6 +32,7 @@ export function cliToOpenaiChunk(
   isFirst: boolean = false
 ): OpenAIChatChunk {
   const text = extractTextContent(message);
+  const thinking = extractThinkingContent(message);
 
   return {
     id: `chatcmpl-${requestId}`,
@@ -36,6 +44,7 @@ export function cliToOpenaiChunk(
         index: 0,
         delta: {
           role: isFirst ? "assistant" : undefined,
+          ...(thinking ? { reasoning_content: thinking } : {}),
           content: text,
         },
         finish_reason: message.message.stop_reason ? "stop" : null,

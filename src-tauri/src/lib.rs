@@ -747,6 +747,7 @@ pub fn run() {
                     if let Err(err) = window.hide() {
                         logger::log_warn(&format!("[WebCreator] 隐藏网页创作工作台失败: {}", err));
                     }
+                    modules::window_park::release_hidden_ui(window.app_handle());
                     return;
                 }
                 if window.label() == modules::multi_model_api_window::MULTI_MODEL_API_WINDOW_LABEL {
@@ -754,6 +755,7 @@ pub fn run() {
                     if let Err(err) = modules::multi_model_api_window::hide(window.app_handle()) {
                         logger::log_warn(&format!("[MultiModelAPI] 隐藏独立控制台失败: {}", err));
                     }
+                    modules::window_park::release_hidden_ui(window.app_handle());
                     return;
                 }
                 if window.label() != "main" {
@@ -771,6 +773,7 @@ pub fn run() {
                     if let Err(err) = window.hide() {
                         logger::log_warn(&format!("[Window] 隐藏主窗口失败: {}", err));
                     }
+                    modules::window_park::release_hidden_ui(window.app_handle());
                     return;
                 }
 
@@ -891,6 +894,9 @@ pub fn run() {
             commands::system::read_webdav_backup_file,
             commands::system::delete_webdav_backup_file,
             commands::system::get_network_config,
+            crate::modules::subscription_proxy::subscription_proxy_get,
+            crate::modules::subscription_proxy::subscription_proxy_refresh,
+            crate::modules::subscription_proxy::subscription_proxy_apply,
             commands::system::get_network_egress_snapshot,
             commands::system::save_network_config,
             commands::system::get_diagnostics_config,

@@ -89,7 +89,8 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 		}
 		params.ThinkingSummarySeen = true
 		output = append(output, startCodexThinkingBlock(params)...)
-	} else if typeStr == "response.reasoning_summary_text.delta" {
+	} else if typeStr == "response.reasoning_summary_text.delta" || typeStr == "response.reasoning_text.delta" {
+		output = append(output, startCodexThinkingBlock(params)...)
 		template = []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}`)
 		template, _ = sjson.SetBytes(template, "index", params.BlockIndex)
 		template, _ = sjson.SetBytes(template, "delta.thinking", rootResult.Get("delta").String())

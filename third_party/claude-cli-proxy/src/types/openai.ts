@@ -65,6 +65,7 @@ export interface OpenAIChatResponseChoice {
   message: {
     role: "assistant";
     content: string | null;
+    reasoning_content?: string;
     tool_calls?: OpenAIToolCall[];
   };
   finish_reason: "stop" | "length" | "content_filter" | "tool_calls" | null;
@@ -108,6 +109,7 @@ export interface OpenAIToolCallChunk {
 export interface OpenAIChatChunkDelta {
   role?: "assistant";
   content?: string | null;
+  reasoning_content?: string;
   tool_calls?: OpenAIToolCallChunk[];
 }
 
@@ -225,6 +227,13 @@ export interface ResponsesOutputMessageContent {
   annotations?: unknown[];
 }
 
+export interface ResponsesReasoningOutput {
+  type: "reasoning";
+  id: string;
+  summary: Array<{ type: "summary_text"; text: string }>;
+  content: Array<{ type: "reasoning_text"; text: string }>;
+}
+
 export interface ResponsesFunctionCallOutput {
   type: "function_call";
   id: string;
@@ -242,7 +251,7 @@ export interface ResponsesOutputMessage {
   content: ResponsesOutputMessageContent[];
 }
 
-export type ResponsesOutputItem = ResponsesOutputMessage | ResponsesFunctionCallOutput;
+export type ResponsesOutputItem = ResponsesOutputMessage | ResponsesFunctionCallOutput | ResponsesReasoningOutput;
 
 export interface ResponsesUsage {
   input_tokens: number;

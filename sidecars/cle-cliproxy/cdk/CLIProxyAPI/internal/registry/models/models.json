@@ -1,13 +1,77 @@
 {
   "claude": [
-    {"id":"claude-fable-5-1","object":"model","owned_by":"anthropic","type":"claude","display_name":"Claude Fable 5.1","context_length":1000000,"max_completion_tokens":128000},
-    {"id":"claude-opus-5-5","object":"model","owned_by":"anthropic","type":"claude","display_name":"Claude Opus 5.5","context_length":1000000,"max_completion_tokens":128000},
-    {"id":"claude-sonnet-5-5","object":"model","owned_by":"anthropic","type":"claude","display_name":"Claude Sonnet 5.5","context_length":1000000,"max_completion_tokens":128000},
-    {"id":"claude-haiku-5-5","object":"model","owned_by":"anthropic","type":"claude","display_name":"Claude Haiku 5.5","context_length":1000000,"max_completion_tokens":128000},
-    {"id":"claude-fable-5","object":"model","owned_by":"anthropic","type":"claude","display_name":"Claude Fable 5","context_length":1000000,"max_completion_tokens":128000},
-    {"id":"claude-opus-5","object":"model","owned_by":"anthropic","type":"claude","display_name":"Claude Opus 5","context_length":1000000,"max_completion_tokens":128000},
-    {"id":"claude-sonnet-5","object":"model","owned_by":"anthropic","type":"claude","display_name":"Claude Sonnet 5","context_length":1000000,"max_completion_tokens":128000},
-    {"id":"claude-opus-4-8","object":"model","owned_by":"anthropic","type":"claude","display_name":"Claude Opus 4.8","context_length":1000000,"max_completion_tokens":128000},
+    {
+      "id": "claude-fable-5-1",
+      "object": "model",
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Fable 5.1",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000
+    },
+    {
+      "id": "claude-opus-5-5",
+      "object": "model",
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Opus 5.5",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "object": "model",
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Sonnet 5.5",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000
+    },
+    {
+      "id": "claude-haiku-5-5",
+      "object": "model",
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Haiku 5.5",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000
+    },
+    {
+      "id": "claude-fable-5",
+      "object": "model",
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Fable 5",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000
+    },
+    {
+      "id": "claude-opus-5",
+      "object": "model",
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Opus 5",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000
+    },
+    {
+      "id": "claude-sonnet-5",
+      "object": "model",
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Sonnet 5",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000
+    },
+    {
+      "id": "claude-opus-4-8",
+      "object": "model",
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Opus 4.8",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000
+    },
     {
       "id": "claude-haiku-4-5-20251001",
       "object": "model",
@@ -454,6 +518,69 @@
         "dynamic_allowed": true,
         "levels": [
           "minimal",
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "object": "model",
+      "owned_by": "google",
+      "type": "gemini",
+      "display_name": "Gemini 3.6 Flash",
+      "name": "models/gemini-3.6-flash",
+      "description": "Gemini 3.6 Flash",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "min": 128,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "object": "model",
+      "owned_by": "google",
+      "type": "gemini",
+      "display_name": "Gemini 3.8 Flash",
+      "name": "models/gemini-3.8-flash",
+      "description": "Gemini 3.8 Flash",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "min": 128,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "gemini-4-argon",
+      "object": "model",
+      "owned_by": "google",
+      "type": "gemini",
+      "display_name": "Gemini 4 Argon",
+      "name": "models/gemini-4-argon",
+      "description": "Gemini 4 Argon",
+      "context_length": 1048576,
+      "max_completion_tokens": 1048576,
+      "thinking": {
+        "min": 128,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
           "low",
           "medium",
           "high"
@@ -2228,8 +2355,115 @@
           "high"
         ]
       }
+    },
+    {
+      "id": "claude-opus-5-5-high",
+      "object": "model",
+      "owned_by": "antigravity",
+      "type": "antigravity",
+      "display_name": "Claude Opus 5.5 (High)",
+      "name": "claude-opus-5-5-high",
+      "description": "Claude Opus 5.5 (High)",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000,
+      "thinking": {
+        "min": 1024,
+        "max": 64000,
+        "zero_allowed": true,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "claude-sonnet-5-5-high",
+      "object": "model",
+      "owned_by": "antigravity",
+      "type": "antigravity",
+      "display_name": "Claude Sonnet 5.5 (High)",
+      "name": "claude-sonnet-5-5-high",
+      "description": "Claude Sonnet 5.5 (High)",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000,
+      "thinking": {
+        "min": 1024,
+        "max": 64000,
+        "zero_allowed": true,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "gemini-4-argon-high",
+      "object": "model",
+      "owned_by": "antigravity",
+      "type": "antigravity",
+      "display_name": "Gemini 4 Argon",
+      "name": "gemini-4-argon-high",
+      "description": "Gemini 4 Argon (High)",
+      "context_length": 1048576,
+      "max_completion_tokens": 1048576,
+      "thinking": {
+        "min": 1,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "gemini-3.8-flash-high",
+      "object": "model",
+      "owned_by": "antigravity",
+      "type": "antigravity",
+      "display_name": "Gemini 3.8 Flash",
+      "name": "gemini-3.8-flash-high",
+      "description": "Gemini 3.8 Flash (High)",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "min": 1,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "gemini-3.5-flash-lite",
+      "object": "model",
+      "owned_by": "antigravity",
+      "type": "antigravity",
+      "display_name": "Gemini 3.5 Flash Lite",
+      "name": "gemini-3.5-flash-lite",
+      "description": "Gemini 3.5 Flash Lite",
+      "context_length": 1048576,
+      "max_completion_tokens": 65535,
+      "thinking": {
+        "min": 1,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ]
+      }
     }
-
   ],
   "xai": [
     {

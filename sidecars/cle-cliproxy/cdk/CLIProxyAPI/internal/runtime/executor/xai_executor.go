@@ -161,7 +161,7 @@ func (e *XAIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req 
 		if !bytes.HasPrefix(line, xaiDataTag) {
 			continue
 		}
-		eventData := bytes.TrimSpace(line[len(xaiDataTag):])
+		eventData := xaiNormalizeReasoningEvent(bytes.TrimSpace(line[len(xaiDataTag):]))
 		switch gjson.GetBytes(eventData, "type").String() {
 		case "response.output_item.done":
 			xaiCollectOutputItemDone(eventData, outputItemsByIndex, &outputItemsFallback)
@@ -350,7 +350,8 @@ func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth
 			helps.AppendAPIResponseChunk(ctx, e.cfg, line)
 			translatedLine := bytes.Clone(line)
 			if bytes.HasPrefix(line, xaiDataTag) {
-				eventData := bytes.TrimSpace(line[len(xaiDataTag):])
+				eventData := xaiNormalizeReasoningEvent(bytes.TrimSpace(line[len(xaiDataTag):]))
+				translatedLine = append([]byte("data: "), eventData...)
 				switch gjson.GetBytes(eventData, "type").String() {
 				case "response.output_item.done":
 					xaiCollectOutputItemDone(eventData, outputItemsByIndex, &outputItemsFallback)
@@ -882,6 +883,137 @@ func xaiSupportsReasoningEffort(model string) bool {
 	default:
 		return false
 	}
+}
+
+// xaiNormalizeReasoningEvent rewrites xAI's full chain-of-thought events into
+// the reasoning-summary shapes the Codex translators already understand.
+// Source: router-for-me/CLIProxyAPI internal/runtime/executor/xai_executor_response.go.
+func xaiNormalizeReasoningEvent(eventData []byte) []byte {
+	if len(eventData) == 0 || !gjson.ValidBytes(eventData) {
+		return eventData
+	}
+	switch gjson.GetBytes(eventData, "type").String() {
+	case "response.reasoning_text.delta":
+		eventData, _ = sjson.SetBytes(eventData, "type", "response.reasoning_summary_text.delta")
+		eventData = xaiMoveContentIndex(eventData)
+	case "response.reasoning_text.done":
+		eventData, _ = sjson.SetBytes(eventData, "type", "response.reasoning_summary_text.done")
+		eventData = xaiMoveContentIndex(eventData)
+	case "response.content_part.added":
+		if gjson.GetBytes(eventData, "part.type").String() == "reasoning_text" {
+			eventData, _ = sjson.SetBytes(eventData, "type", "response.reasoning_summary_part.added")
+			eventData, _ = sjson.SetBytes(eventData, "part.type", "summary_text")
+			eventData = xaiMoveContentIndex(eventData)
+		}
+	case "response.content_part.done":
+		if gjson.GetBytes(eventData, "part.type").String() == "reasoning_text" {
+			eventData, _ = sjson.SetBytes(eventData, "type", "response.reasoning_summary_part.done")
+			eventData, _ = sjson.SetBytes(eventData, "part.type", "summary_text")
+			eventData = xaiMoveContentIndex(eventData)
+		}
+	}
+	if item := gjson.GetBytes(eventData, "item"); item.Exists() && item.Type == gjson.JSON {
+		updated := xaiNormalizeReasoningOutputItem([]byte(item.Raw))
+		if !bytes.Equal(updated, []byte(item.Raw)) {
+			eventData, _ = sjson.SetRawBytes(eventData, "item", updated)
+		}
+	}
+	if output := gjson.GetBytes(eventData, "response.output"); output.IsArray() {
+		updated, changed := xaiNormalizeReasoningOutputItems(output.Array())
+		if changed {
+			eventData, _ = sjson.SetRawBytes(eventData, "response.output", updated)
+		}
+	}
+	return eventData
+}
+
+func xaiMoveContentIndex(eventData []byte) []byte {
+	contentIndex := gjson.GetBytes(eventData, "content_index")
+	if contentIndex.Exists() && !gjson.GetBytes(eventData, "summary_index").Exists() {
+		eventData, _ = sjson.SetRawBytes(eventData, "summary_index", []byte(contentIndex.Raw))
+	}
+	if gjson.GetBytes(eventData, "content_index").Exists() {
+		eventData, _ = sjson.DeleteBytes(eventData, "content_index")
+	}
+	return eventData
+}
+
+func xaiNormalizeReasoningOutputItems(items []gjson.Result) ([]byte, bool) {
+	var buf bytes.Buffer
+	buf.WriteByte('[')
+	changed := false
+	for i, item := range items {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		updated := xaiNormalizeReasoningOutputItem([]byte(item.Raw))
+		if !bytes.Equal(updated, []byte(item.Raw)) {
+			changed = true
+		}
+		buf.Write(updated)
+	}
+	buf.WriteByte(']')
+	return buf.Bytes(), changed
+}
+
+func xaiNormalizeReasoningOutputItem(item []byte) []byte {
+	if !gjson.ValidBytes(item) || gjson.GetBytes(item, "type").String() != "reasoning" {
+		return item
+	}
+	content := gjson.GetBytes(item, "content")
+	if content.IsArray() {
+		summary := make([][]byte, 0, len(content.Array()))
+		for _, part := range content.Array() {
+			if part.Get("type").String() != "reasoning_text" {
+				continue
+			}
+			raw, errSet := sjson.SetBytes([]byte(part.Raw), "type", "summary_text")
+			if errSet != nil {
+				raw = []byte(part.Raw)
+			}
+			summary = append(summary, raw)
+		}
+		if len(summary) > 0 {
+			item, _ = sjson.SetRawBytes(item, "summary", joinJSONArray(summary))
+			item, _ = sjson.DeleteBytes(item, "content")
+			return item
+		}
+	}
+	summary := gjson.GetBytes(item, "summary")
+	if !summary.IsArray() {
+		return item
+	}
+	changed := false
+	parts := make([][]byte, 0, len(summary.Array()))
+	for _, part := range summary.Array() {
+		raw := []byte(part.Raw)
+		if part.Get("type").String() == "reasoning_text" {
+			updated, errSet := sjson.SetBytes(raw, "type", "summary_text")
+			if errSet == nil {
+				raw = updated
+				changed = true
+			}
+		}
+		parts = append(parts, raw)
+	}
+	if !changed {
+		return item
+	}
+	item, _ = sjson.SetRawBytes(item, "summary", joinJSONArray(parts))
+	return item
+}
+
+func joinJSONArray(parts [][]byte) []byte {
+	var buf bytes.Buffer
+	buf.WriteByte('[')
+	for i, part := range parts {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.Write(part)
+	}
+	buf.WriteByte(']')
+	return buf.Bytes()
 }
 
 func xaiCollectOutputItemDone(eventData []byte, outputItemsByIndex map[int64][]byte, outputItemsFallback *[][]byte) {

@@ -39,8 +39,9 @@ export interface ClaudeCliHookResponse {
 }
 
 export interface ClaudeCliAssistantContent {
-  type: "text";
-  text: string;
+  type: "text" | "thinking" | "tool_use";
+  text?: string;
+  thinking?: string;
 }
 
 export interface ClaudeCliAssistant {

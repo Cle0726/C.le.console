@@ -424,7 +424,9 @@ func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, origina
 	// Add reasoning content if available (following OpenAI reasoning format)
 	if len(reasoningParts) > 0 {
 		reasoningContent := strings.Join(reasoningParts, "")
-		// Add reasoning as a separate field in the message
+		// Chat Completions clients read reasoning_content. Keep reasoning for
+		// callers that already consumed the previous field name.
+		out, _ = sjson.SetBytes(out, "choices.0.message.reasoning_content", reasoningContent)
 		out, _ = sjson.SetBytes(out, "choices.0.message.reasoning", reasoningContent)
 	}
 

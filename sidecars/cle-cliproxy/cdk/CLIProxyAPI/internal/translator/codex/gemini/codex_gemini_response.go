@@ -171,7 +171,7 @@ func ConvertCodexResponseToGemini(_ context.Context, modelName string, originalR
 		template, _ = sjson.SetBytes(template, "modelVersion", rootResult.Get("response.model").String())
 		template, _ = sjson.SetBytes(template, "responseId", rootResult.Get("response.id").String())
 		params.ResponseID = rootResult.Get("response.id").String()
-	} else if typeStr == "response.reasoning_summary_text.delta" { // Handle reasoning/thinking content delta
+	} else if typeStr == "response.reasoning_summary_text.delta" || typeStr == "response.reasoning_text.delta" { // Handle reasoning/thinking content delta
 		part := []byte(`{"thought":true,"text":""}`)
 		part, _ = sjson.SetBytes(part, "text", rootResult.Get("delta").String())
 		template, _ = sjson.SetRawBytes(template, "candidates.0.content.parts.-1", part)
@@ -302,10 +302,9 @@ func ConvertCodexResponseToGeminiNonStream(_ context.Context, modelName string, 
 					// Flush any pending function calls before adding non-function content
 					flushPendingFunctionCalls()
 
-					// Add thinking content
-					if content := value.Get("content"); content.Exists() {
+					for _, text := range extractCodexGeminiReasoningTexts(value) {
 						part := []byte(`{"text":"","thought":true}`)
-						part, _ = sjson.SetBytes(part, "text", content.String())
+						part, _ = sjson.SetBytes(part, "text", text)
 						template, _ = sjson.SetRawBytes(template, "candidates.0.content.parts.-1", part)
 					}
 
@@ -408,6 +407,32 @@ func buildReverseMapFromGeminiOriginal(original []byte) map[string]string {
 		}
 	}
 	return rev
+}
+
+// extractCodexGeminiReasoningTexts reads both Codex reasoning summaries and
+// full reasoning_text parts. Upstream Responses backends are not consistent
+// about which of the two they fill.
+func extractCodexGeminiReasoningTexts(value gjson.Result) []string {
+	var thoughtTexts []string
+	if summary := value.Get("summary"); summary.IsArray() {
+		for _, entry := range summary.Array() {
+			if text := entry.Get("text").String(); text != "" {
+				thoughtTexts = append(thoughtTexts, text)
+			}
+		}
+	}
+	if content := value.Get("content"); content.IsArray() {
+		for _, entry := range content.Array() {
+			if entry.Get("type").String() == "reasoning_text" {
+				if text := entry.Get("text").String(); text != "" {
+					thoughtTexts = append(thoughtTexts, text)
+				}
+			}
+		}
+	} else if content.Type == gjson.String && content.String() != "" {
+		thoughtTexts = append(thoughtTexts, content.String())
+	}
+	return thoughtTexts
 }
 
 func GeminiTokenCount(ctx context.Context, count int64) []byte {

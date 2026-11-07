@@ -220,6 +220,7 @@ func (e *GitHubCopilotExecutor) Execute(ctx context.Context, auth *cliproxyauth.
 		reporter.Publish(ctx, detail)
 	}
 
+	data = normalizeGitHubCopilotReasoningField(data)
 	var param any
 	converted := ""
 	if useResponses && from.String() == "claude" {
@@ -374,11 +375,12 @@ func (e *GitHubCopilotExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 				}
 			}
 
+			translatedLine := normalizeGitHubCopilotReasoningLine(bytes.Clone(line))
 			var chunks []string
 			if useResponses && from.String() == "claude" {
-				chunks = translateGitHubCopilotResponsesStreamToClaude(bytes.Clone(line), &param)
+				chunks = translateGitHubCopilotResponsesStreamToClaude(bytes.Clone(translatedLine), &param)
 			} else {
-				chunks = plusTranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, bytes.Clone(line), &param)
+				chunks = plusTranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, bytes.Clone(translatedLine), &param)
 			}
 			for i := range chunks {
 				out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunks[i])}
@@ -593,6 +595,52 @@ func flattenAssistantContent(body []byte) []byte {
 		result, _ = sjson.SetBytes(result, path, joined)
 	}
 	return result
+}
+
+// normalizeGitHubCopilotReasoningField maps Copilot's reasoning_text onto the
+// OpenAI reasoning_content field. Source: router-for-me/CLIProxyAPIPlus
+// github_copilot_executor.go normalizeGitHubCopilotReasoningField.
+func normalizeGitHubCopilotReasoningField(data []byte) []byte {
+	choices := gjson.GetBytes(data, "choices")
+	if !choices.Exists() || !choices.IsArray() {
+		return data
+	}
+	for i := range choices.Array() {
+		msgRT := fmt.Sprintf("choices.%d.message.reasoning_text", i)
+		msgRC := fmt.Sprintf("choices.%d.message.reasoning_content", i)
+		if rt := gjson.GetBytes(data, msgRT); rt.Exists() && rt.String() != "" {
+			if rc := gjson.GetBytes(data, msgRC); !rc.Exists() || rc.Type == gjson.Null || rc.String() == "" {
+				data, _ = sjson.SetBytes(data, msgRC, rt.String())
+			}
+		}
+		deltaRT := fmt.Sprintf("choices.%d.delta.reasoning_text", i)
+		deltaRC := fmt.Sprintf("choices.%d.delta.reasoning_content", i)
+		if rt := gjson.GetBytes(data, deltaRT); rt.Exists() && rt.String() != "" {
+			if rc := gjson.GetBytes(data, deltaRC); !rc.Exists() || rc.Type == gjson.Null || rc.String() == "" {
+				data, _ = sjson.SetBytes(data, deltaRC, rt.String())
+			}
+		}
+	}
+	return data
+}
+
+func normalizeGitHubCopilotReasoningLine(line []byte) []byte {
+	trimmed := bytes.TrimSpace(line)
+	if !bytes.HasPrefix(trimmed, dataTag) {
+		return line
+	}
+	payload := bytes.TrimSpace(trimmed[len(dataTag):])
+	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+		return line
+	}
+	normalized := normalizeGitHubCopilotReasoningField(payload)
+	if bytes.Equal(normalized, payload) {
+		return line
+	}
+	out := make([]byte, 0, len(dataTag)+1+len(normalized))
+	out = append(out, dataTag...)
+	out = append(out, ' ')
+	return append(out, normalized...)
 }
 
 func normalizeGitHubCopilotChatTools(body []byte) []byte {
@@ -1110,7 +1158,16 @@ func translateGitHubCopilotResponsesStreamToClaude(line []byte, param *any) []st
 		thinkingStart := `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`
 		thinkingStart, _ = sjson.Set(thinkingStart, "index", state.ReasoningIndex)
 		results = append(results, "event: content_block_start\ndata: "+thinkingStart+"\n\n")
-	case "response.reasoning_summary_text.delta":
+	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+		if !state.ReasoningActive {
+			ensureMessageStart()
+			state.ReasoningActive = true
+			state.ReasoningIndex = state.NextContentIndex
+			state.NextContentIndex++
+			thinkingStart := `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`
+			thinkingStart, _ = sjson.Set(thinkingStart, "index", state.ReasoningIndex)
+			results = append(results, "event: content_block_start\ndata: "+thinkingStart+"\n\n")
+		}
 		if state.ReasoningActive {
 			delta := gjson.GetBytes(payload, "delta").String()
 			if delta != "" {

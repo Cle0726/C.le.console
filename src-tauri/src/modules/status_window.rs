@@ -247,6 +247,7 @@ pub fn apply_native_status_window_shape<R: Runtime>(
 
 pub fn show_status_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let window = ensure_status_window(app)?;
+    crate::modules::window_park::restore_parked_label(app, STATUS_WINDOW_LABEL);
     apply_native_status_window_shape(&window)?;
     window.show().map_err(|err| err.to_string())?;
     window.unminimize().map_err(|err| err.to_string())?;
@@ -273,6 +274,7 @@ pub fn hide_status_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> 
 
     let restore_epoch = crate::begin_main_window_restore();
     let restore_result = (|| -> Result<(), String> {
+        crate::modules::window_park::restore_parked_label(app, "main");
         main_window.show().map_err(|err| err.to_string())?;
         main_window.unminimize().map_err(|err| err.to_string())?;
         if let Err(err) = main_window.set_focus() {
