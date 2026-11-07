@@ -810,7 +810,7 @@ func stringValue(m map[string]any, key string) string {
 // so that upstream identifies the request as a native GeminiCLI client.
 func applyGeminiCLIHeaders(r *http.Request, model string) {
 	r.Header.Set("User-Agent", misc.GeminiCLIUserAgent(model))
-	r.Header.Set("X-Goog-Api-Client", misc.GeminiCLIApiClientHeader)
+	r.Header.Set("X-Goog-Api-Client", misc.GeminiCLIApiClientHeaderValue())
 }
 
 // cliPreviewFallbackOrder returns preview model candidates for a base model.

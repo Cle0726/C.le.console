@@ -15,6 +15,7 @@ import (
 
 	xaiauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/xai"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
@@ -572,6 +573,13 @@ func applyXAIHeaders(r *http.Request, auth *cliproxyauth.Auth, token string, str
 		r.Header.Set("Accept", "application/json")
 	}
 	r.Header.Set("Connection", "Keep-Alive")
+	if strings.TrimSpace(r.Header.Get("User-Agent")) == "" {
+		version := misc.ClientVersion(misc.ClientXAI)
+		if version == "" {
+			version = "1.0.77"
+		}
+		r.Header.Set("User-Agent", "xai-grok-workspace/"+version)
+	}
 	if sessionID != "" {
 		r.Header.Set("x-grok-conv-id", sessionID)
 	}

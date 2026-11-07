@@ -23,10 +23,10 @@ import (
 const (
 	// Kiro auth endpoint
 	kiroAuthEndpoint = "https://prod.us-east-1.auth.desktop.kiro.dev"
-	
+
 	// Default callback port
 	defaultCallbackPort = 9876
-	
+
 	// Auth timeout
 	authTimeout = 10 * time.Minute
 )
@@ -190,7 +190,7 @@ func (o *KiroOAuth) exchangeCodeForToken(ctx context.Context, code, codeVerifier
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "KiroIDE-0.7.45-cli-proxy-api")
+	req.Header.Set("User-Agent", "KiroIDE-"+currentKiroVersion()+"-cli-proxy-api")
 
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
@@ -311,7 +311,7 @@ func buildKiroUserAgent(tokenKey string) string {
 		return fmt.Sprintf("KiroIDE-%s-%s", fp.KiroVersion, fp.KiroHash[:16])
 	}
 	// Default KiroIDE User-Agent matching kiro-openai-gateway format
-	return "KiroIDE-0.7.45-cli-proxy-api"
+	return "KiroIDE-" + currentKiroVersion() + "-cli-proxy-api"
 }
 
 // LoginWithGoogle performs OAuth login with Google using Kiro's social auth.

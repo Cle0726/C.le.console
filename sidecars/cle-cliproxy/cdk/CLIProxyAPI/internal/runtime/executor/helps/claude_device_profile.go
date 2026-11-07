@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
@@ -113,9 +114,9 @@ func defaultClaudeDeviceProfile(cfg *config.Config) ClaudeDeviceProfile {
 	}
 
 	profile := ClaudeDeviceProfile{
-		UserAgent:      hdrDefault(hd.UserAgent, defaultClaudeFingerprintUserAgent),
-		PackageVersion: hdrDefault(hd.PackageVersion, defaultClaudeFingerprintPackageVersion),
-		RuntimeVersion: hdrDefault(hd.RuntimeVersion, defaultClaudeFingerprintRuntimeVersion),
+		UserAgent:      hdrDefault(hd.UserAgent, claudeFingerprintUserAgent()),
+		PackageVersion: hdrDefault(hd.PackageVersion, claudeFingerprintPackageVersion()),
+		RuntimeVersion: hdrDefault(hd.RuntimeVersion, claudeFingerprintRuntimeVersion()),
 		OS:             hdrDefault(hd.OS, defaultClaudeFingerprintOS),
 		Arch:           hdrDefault(hd.Arch, defaultClaudeFingerprintArch),
 	}
@@ -364,6 +365,44 @@ func DefaultClaudeVersion(cfg *config.Config) string {
 	profile := defaultClaudeDeviceProfile(cfg)
 	if version, ok := parseClaudeCLIVersion(profile.UserAgent); ok {
 		return strconv.Itoa(version.major) + "." + strconv.Itoa(version.minor) + "." + strconv.Itoa(version.patch)
+	}
+	return ClaudeCodeVersion()
+}
+
+func claudeFingerprintUserAgent() string {
+	if misc.ClientVersionsActive() {
+		if version := misc.ClientVersion(misc.ClientClaudeCode); version != "" {
+			return "claude-cli/" + version + " (external, cli)"
+		}
+	}
+	return defaultClaudeFingerprintUserAgent
+}
+
+func claudeFingerprintPackageVersion() string {
+	if misc.ClientVersionsActive() {
+		if version := misc.ClientVersion(misc.ClientAnthropicSDK); version != "" {
+			return version
+		}
+	}
+	return defaultClaudeFingerprintPackageVersion
+}
+
+func claudeFingerprintRuntimeVersion() string {
+	if misc.ClientVersionsActive() {
+		if version := misc.ClientVersion(misc.ClientNode); version != "" {
+			return "v" + strings.TrimPrefix(version, "v")
+		}
+	}
+	return defaultClaudeFingerprintRuntimeVersion
+}
+
+// ClaudeCodeVersion is the Claude Code version stamped into billing headers.
+// Unit tests keep the historical fixture until the updater is started.
+func ClaudeCodeVersion() string {
+	if misc.ClientVersionsActive() {
+		if version := misc.ClientVersion(misc.ClientClaudeCode); version != "" {
+			return version
+		}
 	}
 	return "2.1.63"
 }

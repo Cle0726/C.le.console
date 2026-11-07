@@ -1043,7 +1043,7 @@ func claudeCreds(a *cliproxyauth.Auth) (apiKey, baseURL string) {
 }
 
 func checkSystemInstructions(payload []byte) []byte {
-	return checkSystemInstructionsWithSigningMode(payload, false, false, false, "2.1.63", "", "")
+	return checkSystemInstructionsWithSigningMode(payload, false, false, false, helps.ClaudeCodeVersion(), "", "")
 }
 
 func isClaudeOAuthToken(apiKey string) bool {
@@ -1616,7 +1616,7 @@ func generateBillingHeader(payload []byte, experimentalCCHSigning bool, version,
 }
 
 func checkSystemInstructionsWithMode(payload []byte, strictMode bool) []byte {
-	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, false, "2.1.63", "", "")
+	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, false, helps.ClaudeCodeVersion(), "", "")
 }
 
 // checkSystemInstructionsWithSigningMode injects Claude Code-style system blocks:

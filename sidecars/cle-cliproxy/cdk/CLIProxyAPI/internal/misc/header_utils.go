@@ -12,7 +12,7 @@ import (
 
 const (
 	// GeminiCLIVersion is the version string reported in the User-Agent for upstream requests.
-	GeminiCLIVersion = "0.34.0"
+	GeminiCLIVersion = "0.67.0"
 
 	// GeminiCLIApiClientHeader is the value for the X-Goog-Api-Client header sent to the Gemini CLI upstream.
 	GeminiCLIApiClientHeader = "google-genai-sdk/1.41.0 gl-node/v22.19.0"
@@ -46,7 +46,26 @@ func GeminiCLIUserAgent(model string) string {
 	if model == "" {
 		model = "unknown"
 	}
-	return fmt.Sprintf("GeminiCLI/%s/%s (%s; %s; terminal)", GeminiCLIVersion, model, geminiCLIOS(), geminiCLIArch())
+	version := ClientVersion(ClientGeminiCLI)
+	if version == "" {
+		version = GeminiCLIVersion
+	}
+	return fmt.Sprintf("GeminiCLI/%s/%s (%s; %s; terminal)", version, model, geminiCLIOS(), geminiCLIArch())
+}
+
+// GeminiCLIApiClientHeaderValue is the live X-Goog-Api-Client value.
+// It follows the current Gemini CLI and Node releases after the updater starts.
+func GeminiCLIApiClientHeaderValue() string {
+	sdk := ClientVersion(ClientGoogleGenAI)
+	node := ClientVersion(ClientNode)
+	if sdk == "" {
+		sdk = "1.41.0"
+	}
+	if node == "" {
+		node = "22.19.0"
+	}
+	node = strings.TrimPrefix(node, "v")
+	return fmt.Sprintf("google-genai-sdk/%s gl-node/v%s", sdk, node)
 }
 
 // ScrubProxyAndFingerprintHeaders removes all headers that could reveal

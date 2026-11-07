@@ -26,10 +26,9 @@ const API_CACHE_TTL_MS: i64 = 60_000;
 const DEFAULT_CLOUD_CODE_IDE_VERSION: &str = "2.29.0";
 const DEFAULT_LOAD_CODE_ASSIST_UA_OS: &str = "windows";
 const DEFAULT_LOAD_CODE_ASSIST_UA_ARCH: &str = "amd64";
-const DEFAULT_GOOGLE_API_NODEJS_CLIENT_VERSION: &str = "10.3.0";
-const DEFAULT_CLOUD_CODE_USER_AGENT: &str = "antigravity/2.29.0 windows/amd64";
-const DEFAULT_LOAD_CODE_ASSIST_USER_AGENT: &str =
-    "antigravity/2.29.0 windows/amd64 google-api-nodejs-client/10.3.0";
+const DEFAULT_CLOUD_CODE_USER_AGENT: &str =
+    "antigravity/hub/2.29.0 (aidev_client; os_type=windows; arch=amd64; cl=1013060670)";
+const DEFAULT_LOAD_CODE_ASSIST_USER_AGENT: &str = DEFAULT_CLOUD_CODE_USER_AGENT;
 const DEFAULT_X_GOOG_API_CLIENT_NODE_VERSION: &str = "22.21.1";
 
 #[derive(Debug, Clone, Default)]
@@ -76,12 +75,115 @@ fn env_quality_is_insider_or_dev() -> bool {
 }
 
 fn official_antigravity_version_for_cloud_code() -> String {
-    let version = crate::modules::wakeup_gateway::official_antigravity_app_version();
-    let trimmed = version.trim();
-    if trimmed.is_empty() {
+    let installed = crate::modules::wakeup_gateway::official_antigravity_app_version();
+    let hub = refreshed_antigravity_hub_version();
+    let chosen = if installed.trim().is_empty() {
+        hub
+    } else {
+        newer_dotted_version(installed.trim(), &hub)
+    };
+    if semver_prefix(&chosen).is_some() {
+        chosen
+    } else {
+        DEFAULT_CLOUD_CODE_IDE_VERSION.to_string()
+    }
+}
+
+fn semver_prefix(version: &str) -> Option<(u64, u64, u64)> {
+    let core = version.split(['-', '+']).next().unwrap_or(version);
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
+}
+
+fn newer_dotted_version(left: &str, right: &str) -> String {
+    match (semver_prefix(left), semver_prefix(right)) {
+        (Some(lhs), Some(rhs)) if lhs >= rhs => left.to_string(),
+        (Some(_), Some(_)) => right.to_string(),
+        (Some(_), None) => left.to_string(),
+        (None, Some(_)) => right.to_string(),
+        (None, None) => DEFAULT_CLOUD_CODE_IDE_VERSION.to_string(),
+    }
+}
+
+fn refreshed_antigravity_hub_version() -> String {
+    if cfg!(test) {
         return DEFAULT_CLOUD_CODE_IDE_VERSION.to_string();
     }
-    trimmed.to_string()
+    const MANIFEST_URL: &str = "https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/manifest/latest-arm64-mac.yml";
+    struct Cache {
+        at: std::time::Instant,
+        version: String,
+    }
+    static CACHE: std::sync::Mutex<Option<Cache>> = std::sync::Mutex::new(None);
+    if let Ok(guard) = CACHE.lock() {
+        if let Some(cache) = guard.as_ref() {
+            if cache.at.elapsed() < std::time::Duration::from_secs(6 * 60 * 60)
+                && semver_prefix(&cache.version).is_some()
+            {
+                return cache.version.clone();
+            }
+        }
+    }
+    let fetched = std::thread::spawn(|| {
+        reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(4))
+            .build()
+            .ok()
+            .and_then(|client| {
+                client
+                    .get(MANIFEST_URL)
+                    .header(reqwest::header::USER_AGENT, "electron-builder")
+                    .send()
+                    .ok()
+            })
+            .filter(|response| response.status().is_success())
+            .and_then(|response| response.text().ok())
+            .and_then(|body| {
+                body.lines().find_map(|line| {
+                    let line = line.trim();
+                    let version = line
+                        .strip_prefix("version:")
+                        .map(|value| value.trim().trim_matches('"').trim_matches('\'').to_string())?;
+                    semver_prefix(&version).map(|_| version)
+                })
+            })
+    })
+    .join()
+    .ok()
+    .flatten();
+    if let Some(version) = fetched.clone() {
+        if let Ok(mut guard) = CACHE.lock() {
+            *guard = Some(Cache {
+                at: std::time::Instant::now(),
+                version,
+            });
+        }
+    }
+    fetched.unwrap_or_else(|| DEFAULT_CLOUD_CODE_IDE_VERSION.to_string())
+}
+
+fn antigravity_hub_user_agent() -> String {
+    let version = official_antigravity_version_for_cloud_code();
+    let os = load_code_assist_user_agent_os();
+    let arch = load_code_assist_user_agent_arch();
+    if version.trim().is_empty() || os.trim().is_empty() || arch.trim().is_empty() {
+        return DEFAULT_CLOUD_CODE_USER_AGENT.to_string();
+    }
+    let changelist = match version.as_str() {
+        "2.23.0" => Some("998057262"),
+        "2.24.0" => Some("1000335682"),
+        "2.29.0" => Some("1013060670"),
+        _ => None,
+    };
+    match changelist {
+        Some(changelist) => format!(
+            "antigravity/hub/{version} (aidev_client; os_type={os}; arch={arch}; cl={changelist})"
+        ),
+        None => format!("antigravity/hub/{version} (aidev_client; os_type={os}; arch={arch})"),
+    }
 }
 
 fn load_code_assist_user_agent_os() -> &'static str {
@@ -101,73 +203,12 @@ fn load_code_assist_user_agent_arch() -> &'static str {
     }
 }
 
-fn read_json_version_field(path: &std::path::Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let value = serde_json::from_str::<serde_json::Value>(&content).ok()?;
-    value
-        .get("version")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(str::to_string)
-}
-
-fn google_api_nodejs_client_version_for_load_code_assist() -> String {
-    if let Some(root) = crate::modules::wakeup_gateway::official_antigravity_root_for_version() {
-        let candidates = [
-            root.join("Contents")
-                .join("Resources")
-                .join("app")
-                .join("node_modules")
-                .join("google-auth-library")
-                .join("package.json"),
-            root.join("resources")
-                .join("app")
-                .join("node_modules")
-                .join("google-auth-library")
-                .join("package.json"),
-            root.join("node_modules")
-                .join("google-auth-library")
-                .join("package.json"),
-        ];
-
-        for candidate in candidates {
-            if let Some(version) = read_json_version_field(&candidate) {
-                return version;
-            }
-        }
-    }
-
-    DEFAULT_GOOGLE_API_NODEJS_CLIENT_VERSION.to_string()
-}
-
 fn build_load_code_assist_user_agent() -> String {
-    let ide_version = official_antigravity_version_for_cloud_code();
-    let os = load_code_assist_user_agent_os();
-    let arch = load_code_assist_user_agent_arch();
-    let google_client_version = google_api_nodejs_client_version_for_load_code_assist();
-    if ide_version.trim().is_empty()
-        || os.trim().is_empty()
-        || arch.trim().is_empty()
-        || google_client_version.trim().is_empty()
-    {
-        return DEFAULT_LOAD_CODE_ASSIST_USER_AGENT.to_string();
-    }
-
-    format!(
-        "antigravity/{} {}/{} google-api-nodejs-client/{}",
-        ide_version, os, arch, google_client_version
-    )
+    antigravity_hub_user_agent()
 }
 
 fn build_cloud_code_user_agent() -> String {
-    let ide_version = official_antigravity_version_for_cloud_code();
-    let os = load_code_assist_user_agent_os();
-    let arch = load_code_assist_user_agent_arch();
-    if ide_version.trim().is_empty() || os.trim().is_empty() || arch.trim().is_empty() {
-        return DEFAULT_CLOUD_CODE_USER_AGENT.to_string();
-    }
-    format!("antigravity/{} {}/{}", ide_version, os, arch)
+    antigravity_hub_user_agent()
 }
 
 fn load_code_assist_user_agent() -> String {

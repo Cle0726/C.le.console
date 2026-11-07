@@ -11,14 +11,21 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	log "github.com/sirupsen/logrus"
 )
 
 const (
 	codeWhispererAPI = "https://codewhisperer.us-east-1.amazonaws.com"
-	kiroVersion      = "0.6.18"
 )
+
+func currentKiroVersion() string {
+	if version := misc.ClientVersion(misc.ClientKiro); version != "" {
+		return version
+	}
+	return "0.8.1"
+}
 
 // CodeWhispererClient handles CodeWhisperer API calls.
 type CodeWhispererClient struct {
@@ -28,11 +35,11 @@ type CodeWhispererClient struct {
 
 // UsageLimitsResponse represents the getUsageLimits API response.
 type UsageLimitsResponse struct {
-	DaysUntilReset     *int                `json:"daysUntilReset,omitempty"`
-	NextDateReset      *float64            `json:"nextDateReset,omitempty"`
-	UserInfo           *UserInfo           `json:"userInfo,omitempty"`
-	SubscriptionInfo   *SubscriptionInfo   `json:"subscriptionInfo,omitempty"`
-	UsageBreakdownList []UsageBreakdown    `json:"usageBreakdownList,omitempty"`
+	DaysUntilReset     *int              `json:"daysUntilReset,omitempty"`
+	NextDateReset      *float64          `json:"nextDateReset,omitempty"`
+	UserInfo           *UserInfo         `json:"userInfo,omitempty"`
+	SubscriptionInfo   *SubscriptionInfo `json:"subscriptionInfo,omitempty"`
+	UsageBreakdownList []UsageBreakdown  `json:"usageBreakdownList,omitempty"`
 }
 
 // UserInfo contains user information from the API.
@@ -49,13 +56,13 @@ type SubscriptionInfo struct {
 
 // UsageBreakdown contains usage details.
 type UsageBreakdown struct {
-	UsageLimit                 *int     `json:"usageLimit,omitempty"`
-	CurrentUsage               *int     `json:"currentUsage,omitempty"`
-	UsageLimitWithPrecision    *float64 `json:"usageLimitWithPrecision,omitempty"`
-	CurrentUsageWithPrecision  *float64 `json:"currentUsageWithPrecision,omitempty"`
-	NextDateReset              *float64 `json:"nextDateReset,omitempty"`
-	DisplayName                string   `json:"displayName,omitempty"`
-	ResourceType               string   `json:"resourceType,omitempty"`
+	UsageLimit                *int     `json:"usageLimit,omitempty"`
+	CurrentUsage              *int     `json:"currentUsage,omitempty"`
+	UsageLimitWithPrecision   *float64 `json:"usageLimitWithPrecision,omitempty"`
+	CurrentUsageWithPrecision *float64 `json:"currentUsageWithPrecision,omitempty"`
+	NextDateReset             *float64 `json:"nextDateReset,omitempty"`
+	DisplayName               string   `json:"displayName,omitempty"`
+	ResourceType              string   `json:"resourceType,omitempty"`
 }
 
 // NewCodeWhispererClient creates a new CodeWhisperer client.
@@ -89,6 +96,7 @@ func (c *CodeWhispererClient) GetUsageLimits(ctx context.Context, accessToken st
 	}
 
 	// Set headers to match Kiro IDE
+	kiroVersion := currentKiroVersion()
 	xAmzUserAgent := fmt.Sprintf("aws-sdk-js/1.0.0 KiroIDE-%s-%s", kiroVersion, c.machineID)
 	userAgent := fmt.Sprintf("aws-sdk-js/1.0.0 ua/2.1 os/windows lang/js md/nodejs#20.16.0 api/codewhispererruntime#1.0.0 m/E KiroIDE-%s-%s", kiroVersion, c.machineID)
 

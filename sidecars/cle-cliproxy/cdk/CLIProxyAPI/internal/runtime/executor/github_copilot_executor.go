@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	copilotauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/copilot"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -35,10 +36,8 @@ const (
 	// maxScannerBufferSize is the maximum buffer size for SSE scanning (20MB).
 	maxScannerBufferSize = 20_971_520
 
-	// Copilot API header values.
-	copilotUserAgent     = "GitHubCopilotChat/0.35.0"
+	// Copilot API header values. The chat version is refreshed by misc.StartClientVersionUpdaters.
 	copilotEditorVersion = "vscode/1.107.0"
-	copilotPluginVersion = "copilot-chat/0.35.0"
 	copilotIntegrationID = "vscode-chat"
 	copilotOpenAIIntent  = "conversation-panel"
 	copilotGitHubAPIVer  = "2025-04-01"
@@ -484,9 +483,13 @@ func (e *GitHubCopilotExecutor) applyHeaders(r *http.Request, apiToken string, b
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer "+apiToken)
 	r.Header.Set("Accept", "application/json")
-	r.Header.Set("User-Agent", copilotUserAgent)
+	version := misc.ClientVersion(misc.ClientCopilotChat)
+	if version == "" {
+		version = "0.48.1"
+	}
+	r.Header.Set("User-Agent", "GitHubCopilotChat/"+version)
 	r.Header.Set("Editor-Version", copilotEditorVersion)
-	r.Header.Set("Editor-Plugin-Version", copilotPluginVersion)
+	r.Header.Set("Editor-Plugin-Version", "copilot-chat/"+version)
 	r.Header.Set("Openai-Intent", copilotOpenAIIntent)
 	r.Header.Set("Copilot-Integration-Id", copilotIntegrationID)
 	r.Header.Set("X-Github-Api-Version", copilotGitHubAPIVer)

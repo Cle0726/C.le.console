@@ -60,7 +60,7 @@ use toml_edit::{value, Document};
 const CODEX_LOCAL_ACCESS_FILE: &str = "codex_local_access.json";
 const CODEX_UPSTREAM_MODELS_CACHE_FILE: &str = "codex_upstream_models.json";
 const CODEX_UPSTREAM_MODELS_BASE_URL: &str = "https://chatgpt.com/backend-api/codex/models";
-const FALLBACK_CODEX_CLIENT_VERSION: &str = "0.158.0-alpha.2.1";
+const FALLBACK_CODEX_CLIENT_VERSION: &str = "0.167.0";
 const CODEX_UPSTREAM_MODELS_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const CODEX_LOCAL_ACCESS_CHAT_TEST_STREAM_EVENT: &str = "codex-local-access-chat-test-stream";
 const CODEX_LOCAL_ACCESS_TEST_DISABLE_IMAGE_GENERATION_HEADER: &str =
@@ -140,8 +140,6 @@ const GATEWAY_PORT_RECOVERY_SCAN_LIMIT: u16 = 32;
 const SIDECAR_READY_TIMEOUT: Duration = Duration::from_secs(15);
 const UPSTREAM_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const DEFAULT_OPENAI_RESPONSES_BASE_URL: &str = "https://api.openai.com/v1";
-const DEFAULT_CODEX_USER_AGENT: &str =
-    "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)";
 const DEFAULT_CODEX_ORIGINATOR: &str = "codex-tui";
 const CODEX_RESPONSES_WEBSOCKET_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const MAX_GPT_REASONING_SIGNATURE_LEN: usize = 32 * 1024 * 1024;
@@ -1420,11 +1418,91 @@ fn detect_codex_client_version() -> String {
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         if let Some(version) = parse_codex_cli_version(&stdout) {
-            return version;
+            return newer_client_version(&version, &npm_latest_version("@openai/codex").unwrap_or_default());
         }
     }
 
-    FALLBACK_CODEX_CLIENT_VERSION.to_string()
+    npm_latest_version("@openai/codex").unwrap_or_else(|| FALLBACK_CODEX_CLIENT_VERSION.to_string())
+}
+
+fn newer_client_version(left: &str, right: &str) -> String {
+    let parse = |version: &str| -> Option<(u64, u64, u64)> {
+        let core = version.split(['-', '+']).next().unwrap_or(version);
+        let mut parts = core.split('.');
+        Some((
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next().unwrap_or("0").parse().ok()?,
+        ))
+    };
+    match (parse(left), parse(right)) {
+        (Some(lhs), Some(rhs)) if lhs >= rhs => left.to_string(),
+        (Some(_), Some(_)) => right.to_string(),
+        (Some(_), None) => left.to_string(),
+        (None, Some(_)) => right.to_string(),
+        (None, None) if !left.is_empty() => left.to_string(),
+        (None, None) => FALLBACK_CODEX_CLIENT_VERSION.to_string(),
+    }
+}
+
+fn npm_latest_version(package: &str) -> Option<String> {
+    if cfg!(test) {
+        return None;
+    }
+    struct Cache {
+        at: std::time::Instant,
+        version: String,
+    }
+    static CACHE: std::sync::Mutex<Option<Cache>> = std::sync::Mutex::new(None);
+    if let Ok(guard) = CACHE.lock() {
+        if let Some(cache) = guard.as_ref() {
+            if cache.at.elapsed() < std::time::Duration::from_secs(6 * 60 * 60) && !cache.version.is_empty() {
+                return Some(cache.version.clone());
+            }
+        }
+    }
+    let package = package.to_string();
+    let fetched = std::thread::spawn(move || {
+        let url = format!(
+            "https://registry.npmjs.org/{}/latest",
+            package.replace('/', "%2f")
+        );
+        let body = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(4))
+            .build()
+            .ok()?
+            .get(url)
+            .send()
+            .ok()?
+            .error_for_status()
+            .ok()?
+            .text()
+            .ok()?;
+        let value: serde_json::Value = serde_json::from_str(&body).ok()?;
+        value
+            .get("version")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(str::to_string)
+    })
+    .join()
+    .ok()
+    .flatten();
+    if let Some(version) = fetched.clone() {
+        if let Ok(mut guard) = CACHE.lock() {
+            *guard = Some(Cache {
+                at: std::time::Instant::now(),
+                version,
+            });
+        }
+    }
+    fetched
+}
+
+fn codex_user_agent() -> String {
+    let version = detect_codex_client_version();
+    format!("codex-tui/{version} (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; {version})")
 }
 
 fn codex_upstream_models_url(client_version: &str) -> String {
@@ -7897,7 +7975,7 @@ async fn prepare_sidecar_launch_config_in_dir(
     config.insert(
         "codex-header-defaults".to_string(),
         json!({
-            "user-agent": DEFAULT_CODEX_USER_AGENT,
+            "user-agent": codex_user_agent(),
             "beta-features": CODEX_RESPONSES_WEBSOCKET_BETA_HEADER_VALUE,
         }),
     );
@@ -17081,14 +17159,15 @@ async fn send_upstream_request(
 
         request = request.header(AUTHORIZATION, format!("Bearer {}", upstream_token));
         if !account.is_api_key_auth() && !headers.contains_key("user-agent") {
-            request = request.header(USER_AGENT, DEFAULT_CODEX_USER_AGENT);
+            request = request.header(USER_AGENT, codex_user_agent());
         }
         if !account.is_api_key_auth()
             && !headers.contains_key("session_id")
             && !headers.contains_key("session-id")
         {
-            let user_agent =
-                header_value(headers, "user-agent").unwrap_or(DEFAULT_CODEX_USER_AGENT);
+            let user_agent = header_value(headers, "user-agent")
+                .map(str::to_string)
+                .unwrap_or_else(codex_user_agent);
             if user_agent.contains("Mac OS") {
                 request = request.header("Session_id", uuid::Uuid::new_v4().to_string());
             }
@@ -18232,7 +18311,7 @@ async fn connect_upstream_websocket(
     if !account.is_api_key_auth() && header_value(&request.headers, "user-agent").is_none() {
         upstream_request.headers_mut().insert(
             "User-Agent",
-            websocket_header_value(DEFAULT_CODEX_USER_AGENT)
+            websocket_header_value(codex_user_agent())
                 .map_err(WebSocketConnectError::upstream)?,
         );
     }
@@ -23311,9 +23390,9 @@ data: {"error":{"code":"server_error","type":"upstream","message":"stream aborte
 
     #[test]
     fn default_codex_identity_headers_match_official_tui() {
-        assert!(super::DEFAULT_CODEX_USER_AGENT.starts_with("codex-tui/"));
+        assert!(super::codex_user_agent().starts_with("codex-tui/"));
         assert_eq!(super::DEFAULT_CODEX_ORIGINATOR, "codex-tui");
-        assert!(!super::DEFAULT_CODEX_USER_AGENT.contains("codex_cli_rs"));
+        assert!(!super::codex_user_agent().contains("codex_cli_rs"));
     }
 
     #[test]

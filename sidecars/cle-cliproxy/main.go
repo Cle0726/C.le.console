@@ -27,6 +27,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
+	internalmisc "github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	internalregistry "github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	responsesconverter "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/openai/openai/responses"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
@@ -6863,6 +6864,8 @@ func main() {
 	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()
 	monitorParentProcess(ctx, *parentPID, cancel, emitter)
+	internalmisc.StartAntigravityVersionUpdater(ctx)
+	internalmisc.StartClientVersionUpdaters(ctx)
 
 	coreusage.RegisterPlugin(&usagePlugin{manifest: m, tracker: usageTracker})
 

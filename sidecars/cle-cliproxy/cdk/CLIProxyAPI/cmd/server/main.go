@@ -565,6 +565,7 @@ func main() {
 				// Standalone mode: start an embedded local server and connect TUI client to it.
 				managementasset.StartAutoUpdater(context.Background(), configFilePath)
 				misc.StartAntigravityVersionUpdater(context.Background())
+				misc.StartClientVersionUpdaters(context.Background())
 				if !localModel && !cfg.Home.Enabled {
 					registry.StartModelsUpdater(context.Background())
 				} else if cfg.Home.Enabled {
@@ -643,6 +644,7 @@ func main() {
 			// Start the main proxy service
 			managementasset.StartAutoUpdater(context.Background(), configFilePath)
 			misc.StartAntigravityVersionUpdater(context.Background())
+			misc.StartClientVersionUpdaters(context.Background())
 			if !localModel && !cfg.Home.Enabled {
 				registry.StartModelsUpdater(context.Background())
 			} else if cfg.Home.Enabled {

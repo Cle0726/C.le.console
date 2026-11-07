@@ -37,7 +37,7 @@ var (
 		"1.0.20", "1.0.21", "1.0.22", "1.0.23",
 		"1.0.24", "1.0.25", "1.0.26", "1.0.27",
 	}
-	osTypes = []string{"darwin", "windows", "linux"}
+	osTypes    = []string{"darwin", "windows", "linux"}
 	osVersions = map[string][]string{
 		"darwin":  {"14.0", "14.1", "14.2", "14.3", "14.4", "14.5", "15.0", "15.1"},
 		"windows": {"10.0.19041", "10.0.19042", "10.0.19043", "10.0.19044", "10.0.22621", "10.0.22631"},
@@ -47,10 +47,6 @@ var (
 		"18.17.0", "18.18.0", "18.19.0", "18.20.0",
 		"20.9.0", "20.10.0", "20.11.0", "20.12.0", "20.13.0",
 		"22.0.0", "22.1.0", "22.2.0", "22.3.0",
-	}
-	kiroVersions = []string{
-		"0.3.0", "0.3.1", "0.4.0", "0.4.1", "0.5.0", "0.5.1",
-		"0.6.0", "0.6.1", "0.7.0", "0.7.1", "0.8.0", "0.8.1",
 	}
 	acceptLanguages = []string{
 		"en-US,en;q=0.9",
@@ -67,9 +63,9 @@ var (
 		"1366x768", "1440x900", "1680x1050",
 		"2560x1600", "3440x1440",
 	}
-	colorDepths          = []int{24, 32}
+	colorDepths           = []int{24, 32}
 	hardwareConcurrencies = []int{4, 6, 8, 10, 12, 16, 20, 24, 32}
-	timezoneOffsets      = []int{-480, -420, -360, -300, -240, 0, 60, 120, 480, 540}
+	timezoneOffsets       = []int{-480, -420, -360, -300, -240, 0, 60, 120, 480, 540}
 )
 
 // NewFingerprintManager 创建指纹管理器
@@ -105,7 +101,7 @@ func (fm *FingerprintManager) GetFingerprint(tokenKey string) *Fingerprint {
 func (fm *FingerprintManager) generateFingerprint(tokenKey string) *Fingerprint {
 	osType := fm.randomChoice(osTypes)
 	osVersion := fm.randomChoice(osVersions[osType])
-	kiroVersion := fm.randomChoice(kiroVersions)
+	kiroVersion := currentKiroVersion()
 
 	fp := &Fingerprint{
 		SDKVersion:          fm.randomChoice(sdkVersions),

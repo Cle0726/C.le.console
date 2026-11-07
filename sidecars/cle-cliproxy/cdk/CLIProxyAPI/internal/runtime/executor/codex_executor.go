@@ -35,10 +35,17 @@ import (
 )
 
 const (
-	codexUserAgent             = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
 	codexOriginator            = "codex-tui"
 	codexDefaultImageToolModel = "gpt-image-2"
 )
+
+func codexUserAgent() string {
+	version := misc.ClientVersion(misc.ClientCodex)
+	if version == "" {
+		version = "0.167.0"
+	}
+	return fmt.Sprintf("codex-tui/%s (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; %s)", version, version)
+}
 
 var dataTag = []byte("data:")
 var codexClaudeCodeSessionPattern = regexp.MustCompile(`_session_([a-f0-9-]+)$`)
@@ -1648,7 +1655,7 @@ func applyCodexHeaders(r *http.Request, auth *cliproxyauth.Auth, token string, s
 	misc.EnsureHeader(r.Header, ginHeaders, "X-Client-Request-Id", "")
 	copyCodexAgtoolsDiagnosticHeaders(r.Header, ginHeaders)
 	cfgUserAgent, _ := codexHeaderDefaults(cfg, auth)
-	ensureHeaderWithConfigPrecedence(r.Header, ginHeaders, "User-Agent", cfgUserAgent, codexUserAgent)
+	ensureHeaderWithConfigPrecedence(r.Header, ginHeaders, "User-Agent", cfgUserAgent, codexUserAgent())
 
 	if strings.Contains(r.Header.Get("User-Agent"), "Mac OS") {
 		misc.EnsureHeader(r.Header, ginHeaders, "Session_id", uuid.NewString())

@@ -229,7 +229,7 @@ func (c *SocialAuthClient) CreateToken(ctx context.Context, req *CreateTokenRequ
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", "KiroIDE-0.7.45-cli-proxy-api")
+	httpReq.Header.Set("User-Agent", "KiroIDE-"+currentKiroVersion()+"-cli-proxy-api")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -464,7 +464,7 @@ func forceDefaultProtocolHandler() {
 	if runtime.GOOS != "linux" {
 		return // Non-Linux platforms use different handler mechanisms
 	}
-	
+
 	// Set our handler as default using xdg-mime
 	cmd := exec.Command("xdg-mime", "default", "kiro-oauth-handler.desktop", "x-scheme-handler/kiro")
 	if err := cmd.Run(); err != nil {
