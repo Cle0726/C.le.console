@@ -192,6 +192,23 @@ if (visualReviewTarget === "jimeng") {
       </React.StrictMode>,
     );
   });
+} else if (visualReviewTarget === "extensions") {
+  document.documentElement.dataset.platform = "windows";
+  document.documentElement.setAttribute("data-mm-api-standalone", "true");
+  void Promise.all([
+    import("./pages/MultiModelApiServiceWindow"),
+    import("./pages/ExtensionProviderPage"),
+  ]).then(([, page]) => {
+    root.render(
+      <React.StrictMode>
+        <div className="mm-api-standalone-window">
+          <div className="mm-api-page mm-api-page-standalone">
+            <page.ExtensionProviderPage onSynced={() => {}} />
+          </div>
+        </div>
+      </React.StrictMode>,
+    );
+  });
 } else if (visualReviewTarget === "manual") {
   void import("./dev/ManualVisualReview").then(({ ManualVisualReview }) => {
     root.render(

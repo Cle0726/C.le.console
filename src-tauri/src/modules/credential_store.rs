@@ -142,6 +142,10 @@ fn private_dir(path: &Path) -> Result<(), String> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
             .map_err(|_| "无法保护账号目录权限")?;
     }
+    #[cfg(windows)]
+    {
+        crate::modules::atomic_write::restrict_to_current_user(path, true)?;
+    }
     Ok(())
 }
 

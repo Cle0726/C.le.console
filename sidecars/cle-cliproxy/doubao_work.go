@@ -147,7 +147,9 @@ func (s *relayServer) findDoubaoWorkAccount(ctx context.Context, spec *apiKeySpe
 		if !stringSliceContainsFold(account.Models, model) {
 			continue
 		}
-		if spec != nil && len(spec.AccountIDs) > 0 && !stringSliceContainsFold(spec.AccountIDs, account.ID) {
+		if spec != nil && len(spec.AccountIDs) > 0 &&
+			!stringSliceContainsFold(spec.AccountIDs, account.ID) &&
+			!stringSliceContainsFold(spec.AccountIDs, account.AuthID) {
 			continue
 		}
 		candidates = append(candidates, account)
@@ -567,19 +569,21 @@ func writeDoubaoWorkResponses(c *gin.Context, model, reply string, stream bool) 
 	responseInProgress := gin.H{"id": responseID, "object": "response", "created_at": created, "status": "in_progress", "model": model, "output": []any{}}
 	writeEvent("response.created", gin.H{"type": "response.created", "response": responseInProgress})
 	writeEvent("response.in_progress", gin.H{"type": "response.in_progress", "response": responseInProgress})
+	messageIndex := 0
 	if reasoning != "" {
+		messageIndex = 1
 		reasoningID := output[0].(gin.H)["id"]
 		writeEvent("response.output_item.added", gin.H{"type": "response.output_item.added", "output_index": 0, "item": output[0]})
 		writeEvent("response.reasoning_summary_text.delta", gin.H{"type": "response.reasoning_summary_text.delta", "item_id": reasoningID, "output_index": 0, "summary_index": 0, "delta": reasoning})
 		writeEvent("response.output_item.done", gin.H{"type": "response.output_item.done", "output_index": 0, "item": output[0]})
 	}
 	itemInProgress := gin.H{"id": itemID, "type": "message", "status": "in_progress", "role": "assistant", "content": []any{}}
-	writeEvent("response.output_item.added", gin.H{"type": "response.output_item.added", "output_index": 0, "item": itemInProgress})
-	writeEvent("response.content_part.added", gin.H{"type": "response.content_part.added", "item_id": itemID, "output_index": 0, "content_index": 0, "part": gin.H{"type": "output_text", "text": "", "annotations": []any{}}})
-	writeEvent("response.output_text.delta", gin.H{"type": "response.output_text.delta", "item_id": itemID, "output_index": 0, "content_index": 0, "delta": visible})
-	writeEvent("response.output_text.done", gin.H{"type": "response.output_text.done", "item_id": itemID, "output_index": 0, "content_index": 0, "text": visible})
-	writeEvent("response.content_part.done", gin.H{"type": "response.content_part.done", "item_id": itemID, "output_index": 0, "content_index": 0, "part": gin.H{"type": "output_text", "text": visible, "annotations": []any{}}})
-	writeEvent("response.output_item.done", gin.H{"type": "response.output_item.done", "output_index": 0, "item": response["output"].([]any)[0]})
+	writeEvent("response.output_item.added", gin.H{"type": "response.output_item.added", "output_index": messageIndex, "item": itemInProgress})
+	writeEvent("response.content_part.added", gin.H{"type": "response.content_part.added", "item_id": itemID, "output_index": messageIndex, "content_index": 0, "part": gin.H{"type": "output_text", "text": "", "annotations": []any{}}})
+	writeEvent("response.output_text.delta", gin.H{"type": "response.output_text.delta", "item_id": itemID, "output_index": messageIndex, "content_index": 0, "delta": visible})
+	writeEvent("response.output_text.done", gin.H{"type": "response.output_text.done", "item_id": itemID, "output_index": messageIndex, "content_index": 0, "text": visible})
+	writeEvent("response.content_part.done", gin.H{"type": "response.content_part.done", "item_id": itemID, "output_index": messageIndex, "content_index": 0, "part": gin.H{"type": "output_text", "text": visible, "annotations": []any{}}})
+	writeEvent("response.output_item.done", gin.H{"type": "response.output_item.done", "output_index": messageIndex, "item": output[messageIndex]})
 	writeEvent("response.completed", gin.H{"type": "response.completed", "response": response})
 	_, _ = io.WriteString(c.Writer, "data: [DONE]\n\n")
 	if flusher, ok := c.Writer.(http.Flusher); ok {

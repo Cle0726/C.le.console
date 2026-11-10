@@ -7045,6 +7045,16 @@ fn sidecar_disable_image_generation_value(
     }
 }
 
+fn cpa_routing_strategy_value(strategy: CodexLocalAccessRoutingStrategy) -> &'static str {
+    match strategy {
+        // The vendored executor pins a session when the strategy is fill-first.
+        // single_account is that pin; the manifest still says single_account so
+        // cleSelector does not rotate.
+        CodexLocalAccessRoutingStrategy::SingleAccount => "fill-first",
+        _ => "round-robin",
+    }
+}
+
 fn sidecar_routing_strategy_value(strategy: CodexLocalAccessRoutingStrategy) -> &'static str {
     match strategy {
         CodexLocalAccessRoutingStrategy::Auto => "auto",
@@ -7949,7 +7959,7 @@ async fn prepare_sidecar_launch_config_in_dir(
     config.insert(
         "routing".to_string(),
         json!({
-            "strategy": "round-robin",
+            "strategy": cpa_routing_strategy_value(collection.routing_strategy),
             "session-affinity": collection.session_affinity,
             "session-affinity-ttl": sidecar_duration_ms(collection.session_affinity_ttl_ms),
         }),
@@ -19647,7 +19657,8 @@ mod tests {
         sidecar_auth_json_for_account, sidecar_auths_dir,
         sidecar_cached_account_usable_after_prepare_error, sidecar_codex_api_key_auth_id,
         sidecar_config_fingerprint, sidecar_payload_default_service_tier,
-        sidecar_routing_strategy_value, sidecar_stable_id, supported_codex_model_ids,
+        cpa_routing_strategy_value, sidecar_routing_strategy_value, sidecar_stable_id,
+        supported_codex_model_ids,
         system_proxy_target_scheme, system_proxy_value_url, validate_client_model_visible,
         visible_codex_model_ids_for_api_key, websocket_accept_value,
         websocket_connect_error_from_http_response, windows_proxy_url_from_server,
@@ -21797,6 +21808,14 @@ data: {"type":"response.completed","response":{"id":"resp_123","usage":{"input_t
         assert_eq!(
             sidecar_routing_strategy_value(CodexLocalAccessRoutingStrategy::SingleAccount),
             "single_account"
+        );
+        assert_eq!(
+            cpa_routing_strategy_value(CodexLocalAccessRoutingStrategy::SingleAccount),
+            "fill-first"
+        );
+        assert_eq!(
+            cpa_routing_strategy_value(CodexLocalAccessRoutingStrategy::Auto),
+            "round-robin"
         );
     }
 

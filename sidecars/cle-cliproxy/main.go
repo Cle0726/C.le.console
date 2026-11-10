@@ -92,16 +92,18 @@ type manifest struct {
 	ExcludedModels      []string            `json:"excludedModels"`
 	RoutingStrategy     string              `json:"routingStrategy"`
 	CustomRoutingRules  []customRoutingRule `json:"customRoutingRules"`
+	AccountModelRules   []accountModelRule  `json:"accountModelRules"`
 	DebugLogs           *bool               `json:"debugLogs,omitempty"`
 	Providers           []string            `json:"providers,omitempty"`
 	NativeModelRegistry bool                `json:"nativeModelRegistry,omitempty"`
 
-	apiKeyByValue     map[string]*apiKeySpec
-	accountByID       map[string]*accountSpec
-	accountByAuthID   map[string]*accountSpec
-	accountByAPIKey   map[string]*accountSpec
-	aliasToSource     map[string]string
-	originalIndexByID map[string]int
+	apiKeyByValue         map[string]*apiKeySpec
+	accountByID           map[string]*accountSpec
+	accountByAuthID       map[string]*accountSpec
+	accountByAPIKey       map[string]*accountSpec
+	aliasToSource         map[string]string
+	originalIndexByID     map[string]int
+	accountExcludedModels map[string][]string
 }
 
 type apiKeySpec struct {
@@ -167,6 +169,11 @@ type customRoutingRule struct {
 	AccountID string `json:"accountId"`
 	Priority  int    `json:"priority"`
 	Weight    int    `json:"weight"`
+}
+
+type accountModelRule struct {
+	AccountID      string   `json:"accountId"`
+	ExcludedModels []string `json:"excludedModels"`
 }
 
 type usagePayload struct {
@@ -481,6 +488,18 @@ func loadManifest(path string) (*manifest, error) {
 	m.ModelIDs = normalizeStringList(m.ModelIDs)
 	m.ExcludedModels = normalizeStringList(m.ExcludedModels)
 	m.Providers = normalizeStringList(m.Providers)
+	m.accountExcludedModels = make(map[string][]string)
+	for _, rule := range m.AccountModelRules {
+		id := strings.ToLower(strings.TrimSpace(rule.AccountID))
+		if id == "" {
+			continue
+		}
+		excluded := normalizeStringList(rule.ExcludedModels)
+		if len(excluded) == 0 {
+			continue
+		}
+		m.accountExcludedModels[id] = append(m.accountExcludedModels[id], excluded...)
+	}
 	return &m, nil
 }
 
@@ -1451,6 +1470,7 @@ func (s *cleSelector) Pick(ctx context.Context, provider, model string, opts cli
 	available := make([]*coreauth.Auth, 0, len(auths))
 	for _, auth := range auths {
 		if authAvailable(auth, model, now) && s.authAllowedForAccounts(auth, allowedAccounts) &&
+			s.accountAllowsModel(auth, model) &&
 			(!imageRequest || imageAccountEligible(s.accountForAuth(auth), auth)) {
 			available = append(available, auth)
 		}
@@ -1595,22 +1615,65 @@ func (s *cleSelector) orderAuths(auths []*coreauth.Auth, model string, start int
 		return auths
 	}
 	strategy := strings.TrimSpace(strings.ToLower(s.manifest.RoutingStrategy))
-	if strategy == "custom" {
+	switch strategy {
+	case "custom":
 		return s.orderCustom(auths, start)
-	}
-	if strategy == "round-robin" || strategy == "round_robin" {
+	case "round-robin", "round_robin":
 		return s.orderRoundRobin(s.excludeExhaustedModelQuota(auths, model), start)
+	case "fill-first", "fillfirst", "ff", "single_account", "single-account":
+		// Stay on the first available manifest account. Equal quota must not
+		// rotate, and a higher snapshot quota must not jump the queue.
+		return s.orderStable(s.excludeExhaustedModelQuota(auths, model))
+	default:
+		out := append([]*coreauth.Auth(nil), auths...)
+		sort.SliceStable(out, func(i, j int) bool {
+			left := s.accountForAuth(out[i])
+			right := s.accountForAuth(out[j])
+			if compareAccountSpecs(left, right, strategy) != 0 {
+				return compareAccountSpecs(left, right, strategy) < 0
+			}
+			return s.rotatedIndex(left, start) < s.rotatedIndex(right, start)
+		})
+		return out
+	}
+}
+
+func (s *cleSelector) orderStable(auths []*coreauth.Auth) []*coreauth.Auth {
+	if len(auths) <= 1 {
+		return auths
 	}
 	out := append([]*coreauth.Auth(nil), auths...)
 	sort.SliceStable(out, func(i, j int) bool {
-		left := s.accountForAuth(out[i])
-		right := s.accountForAuth(out[j])
-		if compareAccountSpecs(left, right, strategy) != 0 {
-			return compareAccountSpecs(left, right, strategy) < 0
-		}
-		return s.rotatedIndex(left, start) < s.rotatedIndex(right, start)
+		return s.manifestIndex(out[i]) < s.manifestIndex(out[j])
 	})
 	return out
+}
+
+func (s *cleSelector) manifestIndex(auth *coreauth.Auth) int {
+	account := s.accountForAuth(auth)
+	if account == nil || s == nil || s.manifest == nil {
+		return 1 << 30
+	}
+	if index, ok := s.manifest.originalIndexByID[account.ID]; ok {
+		return index
+	}
+	return 1 << 30
+}
+
+func (s *cleSelector) accountAllowsModel(auth *coreauth.Auth, model string) bool {
+	if s == nil || s.manifest == nil || len(s.manifest.accountExcludedModels) == 0 {
+		return true
+	}
+	account := s.accountForAuth(auth)
+	if account == nil {
+		return true
+	}
+	excluded := s.manifest.accountExcludedModels[strings.ToLower(account.ID)]
+	if len(excluded) == 0 {
+		return true
+	}
+	base := resolveBaseModelKey(model)
+	return !modelMatchesAnyRule(model, excluded) && !modelMatchesAnyRule(base, excluded)
 }
 
 // orderRoundRobin rotates the actual candidate set, not the full manifest.

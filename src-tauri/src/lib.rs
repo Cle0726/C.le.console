@@ -1499,7 +1499,9 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
-        if matches!(event, tauri::RunEvent::Exit) { modules::agent_provider_bridge::stop(); }
+        if matches!(event, tauri::RunEvent::Exit) {
+            modules::app_lifecycle::shutdown_for_exit();
+        }
         #[cfg(target_os = "macos")]
         {
             match event {

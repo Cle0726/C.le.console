@@ -1382,10 +1382,13 @@ async fn stop_runtime_locked(config: &JimengApiConfig) -> Result<(), String> {
         if terminate_owned_sidecar_from_pid_file()? {
             return wait_for_runtime_port_release(config.port).await;
         }
-        return Err(format!("?? {} ???????????? sidecar?????????", config.port));
+        return Err(format!(
+            "端口 {} 上的进程不是即梦 sidecar，已拒绝结束",
+            config.port
+        ));
     }
-    process::kill_port_processes(config.port)
-        .map_err(|error| format!("???? API sidecar ??: {error}"))?;
+    process::kill_owned_sidecar_listeners(config.port)
+        .map_err(|error| format!("停止即梦 API sidecar 失败: {error}"))?;
     wait_for_runtime_port_release(config.port).await
 }
 
@@ -1460,6 +1463,15 @@ pub async fn set_enabled(enabled: bool) -> Result<JimengApiState, String> {
         stop_runtime(&config).await?;
     }
     get_state().await
+}
+
+pub async fn shutdown_for_exit() {
+    let Ok(config) = load_config() else {
+        return;
+    };
+    if let Err(error) = stop_runtime(&config).await {
+        logger::log_warn(&format!("[JimengAPI] 应用退出时关闭 sidecar 失败: {error}"));
+    }
 }
 
 pub async fn restore() {

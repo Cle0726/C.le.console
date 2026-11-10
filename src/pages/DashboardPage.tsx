@@ -646,8 +646,13 @@ export function DashboardPage({
     };
 
     if (!dashboardStartupPrefetched) {
-      dashboardStartupPrefetched = true;
-      deferredTimer = window.setTimeout(loadDeferredPlatforms, DASHBOARD_DEFERRED_PREFETCH_DELAY_MS);
+      deferredTimer = window.setTimeout(() => {
+        if (disposed) {
+          return;
+        }
+        dashboardStartupPrefetched = true;
+        loadDeferredPlatforms();
+      }, DASHBOARD_DEFERRED_PREFETCH_DELAY_MS);
     }
 
     return () => {

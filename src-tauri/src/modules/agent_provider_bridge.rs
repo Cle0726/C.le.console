@@ -5,7 +5,23 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use super::config;
 
-pub const PROVIDERS: &[&str] = &["qoder", "trae", "raccoon", "catpaw", "autoclaw", "autoclaw-intl", "accio", "loomy"];
+pub const PROVIDERS: &[&str] = &[
+    "qoder",
+    "trae",
+    "raccoon",
+    "catpaw",
+    "autoclaw",
+    "autoclaw-intl",
+    "accio",
+    "accio-cn",
+    "loomy",
+    "cline-free",
+    "cline-pass",
+    "codearts",
+    "zcode",
+    "zcode-intl",
+    "kuku",
+];
 pub const CHECKIN_PROVIDERS: &[&str] = &["raccoon", "autoclaw", "autoclaw-intl", "qoder", "trae", "loomy"];
 #[derive(Clone, Serialize, Deserialize)]
 struct Connection { port: u16, key: String }
@@ -180,7 +196,7 @@ pub fn allowed(method: &str, path: &str) -> bool {
     if !query_allowed { return false; }
     match (method, base) {
         ("GET", "/api/accounts" | "/api/accounts/usage" | "/api/accounts/usage/snapshot" | "/api/checkin-center" | "/api/auto-checkin" | "/api/models/manage" | "/api/session/login/wait") => true,
-        ("POST", "/api/accounts" | "/api/accounts/checkin" | "/api/models/refresh" | "/api/auto-checkin" | "/api/auto-checkin/run" | "/api/session/login/start" | "/api/session/login/cancel" | "/api/session/login/callback" | "/api/session/login/sms/send" | "/api/session/login/sms/verify" | "/api/session/login/loomy/sms/send" | "/api/session/login/loomy/sms/verify") => true,
+        ("POST", "/api/accounts" | "/api/accounts/checkin" | "/api/models/refresh" | "/api/auto-checkin" | "/api/auto-checkin/run" | "/api/session/login/start" | "/api/session/login/cancel" | "/api/session/login/callback" | "/api/session/login/sms/send" | "/api/session/login/sms/verify" | "/api/session/login/loomy/sms/send" | "/api/session/login/loomy/sms/verify" | "/api/session/login/oauth/captcha-config" | "/api/session/login/oauth/start" | "/api/session/login/kuku/complete") => true,
         ("PATCH" | "DELETE", _) => base.strip_prefix("/api/accounts/").is_some_and(valid_id), _ => false,
     }
 }

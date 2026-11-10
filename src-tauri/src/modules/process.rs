@@ -10809,7 +10809,90 @@ pub fn is_port_in_use(port: u16) -> Result<bool, String> {
 }
 
 pub fn kill_port_processes(port: u16) -> Result<usize, String> {
+    kill_pids(&find_pids_by_port(port)?)
+}
+
+/// Stop listeners on `port` only when every listener is one of our sidecars.
+/// A foreign process is left running and reported instead of being killed.
+pub fn kill_owned_sidecar_listeners(port: u16) -> Result<usize, String> {
     let pids = find_pids_by_port(port)?;
+    let (owned, foreign) = partition_owned_sidecar_pids(&pids);
+    if !foreign.is_empty() {
+        return Err(format!(
+            "端口 {port} 被其他程序占用（pid {}），已拒绝结束",
+            foreign
+                .iter()
+                .map(|pid| pid.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    kill_pids(&owned)
+}
+
+pub fn owned_sidecar_pids_on_port(port: u16) -> Vec<u32> {
+    find_pids_by_port(port)
+        .map(|pids| partition_owned_sidecar_pids(&pids).0)
+        .unwrap_or_default()
+}
+
+pub fn kill_owned_sidecar_pids(pids: &[u32]) -> Result<usize, String> {
+    let (owned, _) = partition_owned_sidecar_pids(pids);
+    kill_pids(&owned)
+}
+
+fn partition_owned_sidecar_pids(pids: &[u32]) -> (Vec<u32>, Vec<u32>) {
+    use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
+
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet),
+    );
+    let mut owned = Vec::new();
+    let mut foreign = Vec::new();
+    for pid in pids {
+        if *pid == 0 {
+            continue;
+        }
+        match system.process(Pid::from(*pid as usize)) {
+            Some(process) if process_is_owned_sidecar(process) => owned.push(*pid),
+            Some(_) => foreign.push(*pid),
+            None => {}
+        }
+    }
+    (owned, foreign)
+}
+
+fn process_is_owned_sidecar(process: &sysinfo::Process) -> bool {
+    let name = process.name().to_string_lossy().to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "cle-cliproxy"
+            | "cle-cliproxy.exe"
+            | "cockpit-cliproxy"
+            | "cockpit-cliproxy.exe"
+            | "jimeng-api"
+            | "jimeng-api.exe"
+    ) || helper_command_is_owned(process, &name)
+}
+
+fn helper_command_is_owned(process: &sysinfo::Process, name: &str) -> bool {
+    if !matches!(name, "node" | "node.exe" | "claude" | "claude.exe") {
+        return false;
+    }
+    process.cmd().iter().any(|arg| {
+        let text = arg.to_string_lossy().to_ascii_lowercase();
+        text.contains("cle-claude")
+            || text.contains("claude-cli-proxy")
+            || text.contains("claude-desktop-auth")
+    })
+}
+
+fn kill_pids(pids: &[u32]) -> Result<usize, String> {
     if pids.is_empty() {
         return Ok(0);
     }
@@ -10820,7 +10903,7 @@ pub fn kill_port_processes(port: u16) -> Result<usize, String> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        for pid in &pids {
+        for pid in pids {
             if *pid == 0 || !is_pid_running(*pid) {
                 cleaned += 1;
                 continue;
@@ -10857,7 +10940,7 @@ pub fn kill_port_processes(port: u16) -> Result<usize, String> {
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        for pid in &pids {
+        for pid in pids {
             if *pid == 0 || !is_pid_running(*pid) {
                 cleaned += 1;
                 continue;

@@ -170,6 +170,47 @@ func TestSelectorRoundRobinSkipsOnlyExplicitlyExhaustedQuota(t *testing.T) {
 	}
 }
 
+func TestFillFirstAndSingleAccountStayOnFirstManifestAccount(t *testing.T) {
+	accounts := []accountSpec{
+		{ID: "first", AuthID: "first.json", RemainingQuota: intPtr(10)},
+		{ID: "second", AuthID: "second.json", RemainingQuota: intPtr(100)},
+	}
+	auths := []*coreauth.Auth{{ID: "second.json"}, {ID: "first.json"}}
+	for _, strategy := range []string{"fill-first", "single_account"} {
+		selector := testRoundRobinSelector(accounts)
+		selector.manifest.RoutingStrategy = strategy
+		for start := 0; start < 3; start++ {
+			selected, err := selector.Pick(context.Background(), "antigravity", "claude-sonnet-4-6", cliproxyexecutor.Options{}, auths)
+			if err != nil {
+				t.Fatalf("%s pick %d failed: %v", strategy, start, err)
+			}
+			if selected.ID != "first.json" {
+				t.Fatalf("%s pick %d = %s, want first.json", strategy, start, selected.ID)
+			}
+		}
+	}
+}
+
+func TestAccountModelRuleSkipsExcludedModel(t *testing.T) {
+	selector := testRoundRobinSelector([]accountSpec{
+		{ID: "blocked", AuthID: "blocked.json"},
+		{ID: "open", AuthID: "open.json"},
+	})
+	selector.manifest.accountExcludedModels = map[string][]string{
+		"blocked": {"claude-sonnet-4-6"},
+	}
+	auths := []*coreauth.Auth{{ID: "blocked.json"}, {ID: "open.json"}}
+	selected, err := selector.Pick(context.Background(), "codex", "claude-sonnet-4-6", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.ID != "open.json" {
+		t.Fatalf("excluded account was selected: %s", selected.ID)
+	}
+}
+
+func intPtr(value int) *int { return &value }
+
 func TestClaudeWebGatewayForModelUsesLoopbackCompatibilityEntry(t *testing.T) {
 	server := &relayServer{
 		manifest: &manifest{Accounts: []accountSpec{{

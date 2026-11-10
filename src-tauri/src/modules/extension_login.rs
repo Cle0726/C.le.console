@@ -12,6 +12,7 @@ use std::{
 use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
+use std::time::Duration;
 use url::Url;
 
 #[derive(Clone)]
@@ -72,6 +73,16 @@ fn validate_entry(provider: &str, url: &Url) -> Result<Option<Url>, String> {
             }
             Ok(Some(callback))
         }
+        "kuku"
+            if matches!(
+                url.host_str(),
+                Some(
+                    "kuku.baidu.com" | "www.baidu.com" | "passport.baidu.com" | "wappass.baidu.com"
+                )
+            ) =>
+        {
+            Ok(None)
+        }
         _ => Err("上游返回了未识别的官方授权页，请更新授权组件".into()),
     }
 }
@@ -98,9 +109,30 @@ fn is_callback(login: &Login, url: &Url) -> bool {
         })
     }
 }
-fn allow_navigation(url: &Url) -> bool {
-    url.scheme() == "https" || url.as_str() == "about:blank"
+fn allow_navigation(provider: &str, url: &Url) -> bool {
+    if url.as_str() == "about:blank" {
+        return true;
+    }
+    if url.scheme() != "https" {
+        return false;
+    }
+    if provider == "kuku" {
+        return url.host_str().is_some_and(|host| host == "baidu.com" || host.ends_with(".baidu.com"));
+    }
+    true
 }
+fn hosted_provider(provider: &str) -> bool {
+    matches!(provider, "raccoon" | "trae" | "kuku")
+}
+
+fn login_window_title(provider: &str) -> &'static str {
+    match provider {
+        "raccoon" => "C.le. · 小浣熊官方登录",
+        "kuku" => "C.le. · 库库 AI 登录",
+        _ => "C.le. · Trae 官方登录",
+    }
+}
+
 fn prefer_system_browser(provider: &str) -> bool {
     // The browser uses the user's normal network/PAC/SSO session. A Rust HTTP
     // preflight can take a different route and must not cancel a valid listener
@@ -155,19 +187,18 @@ async fn open_window(app: AppHandle, login: Login) -> Result<(), String> {
         let popup_login = login.clone();
         let window =
             WebviewWindowBuilder::new(&app, &login.label, WebviewUrl::External(login.url.clone()))
-                .title(if login.provider == "raccoon" {
-                    "C.le. · 小浣熊官方登录"
-                } else {
-                    "C.le. · Trae 官方登录"
-                })
+                .title(login_window_title(&login.provider))
                 .inner_size(1000., 760.)
                 .min_inner_size(700., 540.)
                 .incognito(true)
                 .on_navigation(move |url| {
-                    !capture(&nav_app, &nav_login, url) && allow_navigation(url)
+                    !capture(&nav_app, &nav_login, url)
+                        && allow_navigation(&nav_login.provider, url)
                 })
                 .on_new_window(move |url, _| {
-                    if !capture(&popup_app, &popup_login, &url) && allow_navigation(&url) {
+                    if !capture(&popup_app, &popup_login, &url)
+                        && allow_navigation(&popup_login.provider, &url)
+                    {
                         if let Some(window) = popup_app.get_webview_window(&popup_login.label) {
                             let _ = window.navigate(url);
                         }
@@ -228,7 +259,7 @@ pub async fn start(
         .filter(|s| valid_state(s))
         .ok_or("授权任务 ID 无效")?
         .to_string();
-    if !matches!(provider.as_str(), "raccoon" | "trae") {
+    if !hosted_provider(&provider) {
         result["hosted"] = json!(false);
         return Ok(result);
     }
@@ -265,8 +296,16 @@ pub async fn start(
             }
             map.insert(state.clone(), login.clone());
         }
-        if prefer_system_browser(&login.provider) { Ok(()) }
-        else { open_window(app.clone(), login).await }
+        if prefer_system_browser(&login.provider) {
+            Ok(())
+        } else {
+            let provider_name = login.provider.clone();
+            open_window(app.clone(), login.clone()).await?;
+            if provider_name == "kuku" {
+                watch_kuku_cookies(app.clone(), login);
+            }
+            Ok(())
+        }
     }
     .await;
     if let Err(error) = hosted {
@@ -276,6 +315,76 @@ pub async fn start(
     result["hosted"] = json!(hosted_by_default);
     Ok(result)
 }
+fn watch_kuku_cookies(app: AppHandle, login: Login) {
+    tauri::async_runtime::spawn(async move {
+        for _ in 0..75 {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            if login.submitting.load(Ordering::Acquire) {
+                return;
+            }
+            let still_open = logins()
+                .lock()
+                .ok()
+                .is_some_and(|map| map.contains_key(&login.state));
+            if !still_open {
+                return;
+            }
+            let app_for_read = app.clone();
+            let label = login.label.clone();
+            let header = tauri::async_runtime::spawn_blocking(move || {
+                let window = app_for_read.get_webview_window(&label)?;
+                let cookies = window.cookies().ok()?;
+                let pairs: Vec<String> = cookies
+                    .iter()
+                    .filter(|cookie| {
+                        cookie.domain().is_none_or(|domain| {
+                            let domain = domain.trim_start_matches('.');
+                            domain == "baidu.com" || domain.ends_with(".baidu.com")
+                        })
+                    })
+                    .filter(|cookie| !cookie.name().is_empty() && !cookie.value().is_empty())
+                    .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+                    .collect();
+                pairs
+                    .iter()
+                    .any(|pair| pair.to_ascii_lowercase().starts_with("bduss="))
+                    .then(|| pairs.join("; "))
+            })
+            .await
+            .ok()
+            .flatten();
+            let Some(cookie) = header else {
+                continue;
+            };
+            if login.submitting.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            match bridge::request(
+                "POST".into(),
+                "/api/session/login/kuku/complete".into(),
+                Some(json!({"state": login.state, "cookie": cookie})),
+            )
+            .await
+            {
+                Ok(_) => {
+                    if let Some(window) = app.get_webview_window(&login.label) {
+                        let _ = window.close();
+                    }
+                    return;
+                }
+                Err(error) => {
+                    login.submitting.store(false, Ordering::Release);
+                    let _ = app.emit(
+                        "extension-login:status",
+                        json!({"state": login.state, "error": error}),
+                    );
+                    return;
+                }
+            }
+        }
+    });
+}
+
 pub async fn reopen(app: AppHandle, state: String) -> Result<(), String> {
     let login = logins()
         .lock()
@@ -283,6 +392,9 @@ pub async fn reopen(app: AppHandle, state: String) -> Result<(), String> {
         .get(&state)
         .cloned()
         .ok_or("授权窗口已关闭，请重新开始登录")?;
+    if login.provider == "kuku" {
+        watch_kuku_cookies(app.clone(), login.clone());
+    }
     open_window(app, login).await
 }
 pub async fn finish(app: AppHandle, state: String, cancel: bool) -> Result<(), String> {
@@ -373,10 +485,20 @@ mod tests {
             assert!(validate_entry("raccoon", &Url::parse(url).unwrap()).is_err());
         }
         assert!(!allow_navigation(
+            "raccoon",
             &Url::parse("file:///etc/passwd").unwrap()
         ));
         assert!(!allow_navigation(
+            "raccoon",
             &Url::parse("http://127.0.0.1:9999/api/accounts").unwrap()
+        ));
+        assert!(allow_navigation(
+            "kuku",
+            &Url::parse("https://passport.baidu.com/").unwrap()
+        ));
+        assert!(!allow_navigation(
+            "kuku",
+            &Url::parse("https://evil.example/").unwrap()
         ));
     }
     #[test]
@@ -384,5 +506,8 @@ mod tests {
         assert!(prefer_system_browser("trae"));
         assert!(!prefer_system_browser("raccoon"));
         assert!(!prefer_system_browser("qoder"));
+        assert!(hosted_provider("kuku"));
+        assert!(validate_entry("kuku", &Url::parse("https://kuku.baidu.com/").unwrap()).is_ok());
+        assert!(validate_entry("kuku", &Url::parse("https://evil.example/").unwrap()).is_err());
     }
 }

@@ -365,6 +365,7 @@ pub struct MultiModelRepairReport {
 struct RuntimeState {
     child: Option<Child>,
     helpers: Vec<Child>,
+    adopted_pids: Vec<u32>,
     last_error: Option<String>,
     claude_cli_error: Option<String>,
 }
@@ -1887,6 +1888,10 @@ async fn stop_runtime_locked(state: &mut RuntimeState) {
         let _ = helper.kill().await;
         let _ = timeout(Duration::from_secs(5), helper.wait()).await;
     }
+    let adopted = std::mem::take(&mut state.adopted_pids);
+    if !adopted.is_empty() {
+        let _ = process::kill_owned_sidecar_pids(&adopted);
+    }
 }
 
 fn oauth_expiration(credential: &Value) -> Option<chrono::DateTime<chrono::FixedOffset>> {
@@ -2243,12 +2248,17 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
         let mut state = runtime().lock().await;
         state.last_error = None;
         state.claude_cli_error = claude_cli_error;
+        state.adopted_pids = process::owned_sidecar_pids_on_port(effective_config.port);
+        if let Some(port) = helper_port {
+            state.adopted_pids
+                .extend(process::owned_sidecar_pids_on_port(port));
+        }
         logger::log_info("[MultiModelAPI] 已采用独立后台 API sidecar");
         return Ok(());
     }
     for port in std::iter::once(effective_config.port).chain(helper_port) {
         if port_is_listening(port).await {
-            process::kill_port_processes(port)
+            process::kill_owned_sidecar_listeners(port)
                 .map_err(|error| format!("停止占用端口 {port} 的旧 API sidecar 失败: {error}"))?;
             wait_for_port_release(port).await?;
         }
@@ -2419,6 +2429,7 @@ async fn start_runtime(config: &MultiModelApiConfig, adopt_existing: bool) -> Re
         let mut state = runtime().lock().await;
         state.child = Some(child);
         state.helpers = helper_children;
+        state.adopted_pids.clear();
         state.last_error = None;
         state.claude_cli_error = claude_cli_error;
         return Ok(());
@@ -2595,7 +2606,7 @@ async fn apply_config(config: &MultiModelApiConfig) -> Result<(), String> {
             config.port.saturating_add(CLAUDE_WEB_HELPER_PORT_OFFSET),
         ] {
             if port_is_listening(port).await {
-                process::kill_port_processes(port)
+                process::kill_owned_sidecar_listeners(port)
                     .map_err(|error| format!("停止占用端口 {port} 的 API sidecar 失败: {error}"))?;
                 wait_for_port_release(port).await?;
             }

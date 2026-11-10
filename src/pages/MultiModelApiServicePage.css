@@ -160,6 +160,37 @@ html body #root .mm-api-page .mm-menu-panel > button::after {
   cursor: default;
 }
 
+/* Windows keeps the native title bar, so this strip would cover the top of the
+ * page. It exists to dodge the macOS traffic lights. */
+html[data-platform='windows'] .mm-api-window-drag-region {
+  display: none;
+}
+
+html[data-platform='windows'] .mm-extension-fields {
+  display: grid;
+  align-items: stretch;
+  justify-items: start;
+}
+
+html[data-platform='windows'] .mm-extension-fields label {
+  display: grid;
+  justify-items: start;
+  width: min(100%, 440px);
+  gap: 6px;
+}
+
+html[data-platform='windows'] .mm-extension-fields select,
+html[data-platform='windows'] .mm-extension-fields input:not([type='checkbox']),
+html[data-platform='windows'] .mm-extension-host textarea {
+  width: 100%;
+  background: var(--bg-tertiary, #1e2229);
+  color: var(--text-primary);
+}
+
+html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-page-standalone {
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+}
+
 .mm-api-page-standalone {
   position: relative;
   z-index: 1;
@@ -984,6 +1015,229 @@ html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root
   margin: 0;
   padding: 0;
   gap: 14px;
+}
+
+/* Windows 11 Fluent fallback: solid layers, 8px cards, 4px controls.
+ * Acrylic stays off this scrolling page. Mac keeps the glass sheet above. */
+html[data-platform='windows'][data-mm-api-standalone='true'] body,
+html[data-platform='windows'][data-mm-api-standalone='true'] body #root,
+html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-standalone-window,
+html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-page-standalone,
+html[data-platform='windows'] body #root .mm-api-page {
+  background: #0c0e12 !important;
+  background-color: #0c0e12 !important;
+  background-image: none !important;
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif !important;
+}
+
+html[data-platform='windows'] body #root .mm-api-page {
+  --mm-surface: #1b1f26;
+  --mm-surface-strong: #232830;
+  --mm-border: rgba(255, 255, 255, 0.1);
+  --mm-border-soft: rgba(255, 255, 255, 0.08);
+  --lg-1-fill: #1b1f26;
+  --lg-2-fill: #232830;
+  --lg-3-fill: #16191e;
+  --lg-recess: #12151a;
+  --lg-recess-soft: #12151a;
+  --lg-1-edge: rgba(255, 255, 255, 0.1);
+  --lg-1-sheen: none;
+  --lg-1-shadow: none;
+  --lg-3-specular: none;
+  --lg-r-panel: 8px;
+  gap: 16px;
+}
+
+html[data-platform='windows'] body #root .mm-api-page :is(
+  .mm-api-hero,
+  .mm-api-panel,
+  .mm-api-summary-card,
+  .mm-provider-strip,
+  .mm-repair-report,
+  .mm-workbuddy-host,
+  .mm-extension-host .mm-api-panel,
+  .mm-extension-hero
+) {
+  background-color: #1b1f26 !important;
+  background-image: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+html[data-platform='windows'] body #root .mm-api-page :is(
+  .mm-account,
+  .mm-model-table,
+  .mm-key,
+  .mm-route,
+  .mm-add-section,
+  .mm-xai-quota,
+  .mm-empty,
+  .mm-oauth-draft-card,
+  .mm-test-result,
+  .mm-api-message,
+  .mm-repair-check,
+  .mm-model-table .head,
+  .mm-route pre
+) {
+  background-color: #12151a !important;
+  background-image: none !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+html[data-platform='windows'] body #root .mm-api-page :is(input, textarea, select),
+html[data-platform='windows'] .mm-extension-fields select,
+html[data-platform='windows'] .mm-extension-fields input:not([type='checkbox']),
+html[data-platform='windows'] .mm-extension-host textarea {
+  background-color: #12151a !important;
+  background-image: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+  min-height: 32px;
+  font-size: 14px;
+}
+
+html[data-platform='windows'] body #root .mm-api-page .mm-modal {
+  background-color: #16191e !important;
+  background-image: none !important;
+  border-radius: 8px !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45) !important;
+}
+
+html[data-platform='windows'] body #root .mm-api-page :is(.btn, .btn.btn-primary, .btn.btn-secondary) {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 4px !important;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: none !important;
+  background-image: none !important;
+  animation: none !important;
+  backdrop-filter: none !important;
+}
+
+html[data-platform='windows'] body #root .mm-api-page .btn.btn-primary {
+  background-color: #4f8cff !important;
+  border-color: #4f8cff !important;
+  color: #ffffff !important;
+}
+
+html[data-platform='windows'] body #root .mm-api-page .btn.btn-primary:hover:not(:disabled) {
+  background-color: #6ba0ff !important;
+  border-color: #6ba0ff !important;
+}
+
+html[data-platform='windows'] body #root .mm-api-page .btn.btn-secondary {
+  background-color: #232830 !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  color: #f3f4f6 !important;
+}
+
+html[data-platform='windows'] .mm-extension-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  width: 100%;
+  margin: 0;
+  padding: 16px 18px;
+  box-sizing: border-box;
+}
+
+html[data-platform='windows'] .mm-extension-hero > div {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+html[data-platform='windows'] .mm-extension-hero .mm-inline-actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 100%;
+}
+
+html[data-platform='windows'] .mm-extension-hero h1 {
+  margin: 0;
+  color: #f3f4f6;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+html[data-platform='windows'] .mm-extension-hero p,
+html[data-platform='windows'] .mm-extension-host .mm-api-panel p,
+html[data-platform='windows'] .mm-extension-empty p {
+  max-width: 68ch;
+  margin: 6px 0 0;
+  color: #a7b0bd !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+}
+
+html[data-platform='windows'] .mm-extension-host {
+  gap: 12px;
+}
+
+html[data-platform='windows'] .mm-extension-host .mm-api-panel {
+  padding: 16px 18px;
+}
+
+html[data-platform='windows'] .mm-extension-host h2 {
+  margin: 0 0 12px;
+  color: #f3f4f6;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+html[data-platform='windows'] .mm-extension-fields {
+  display: grid;
+  justify-items: stretch;
+  gap: 12px;
+  width: min(100%, 480px);
+}
+
+html[data-platform='windows'] .mm-extension-fields label {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  color: #d5dbe3;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+html[data-platform='windows'] .mm-extension-login .mm-extension-fields {
+  margin-bottom: 12px;
+}
+
+html[data-platform='windows'] .mm-extension-empty {
+  display: grid;
+  align-content: start;
+  min-height: 112px;
+}
+
+html[data-platform='windows'] .mm-extension-empty h2 {
+  margin-bottom: 4px;
+}
+
+html[data-platform='windows'] .mm-extension-host details {
+  margin-top: 14px;
+  color: #d5dbe3;
+  font-size: 14px;
+}
+
+html[data-platform='windows'] .mm-extension-host summary {
+  cursor: pointer;
+}
+
+html[data-platform='windows'] .mm-api-message {
+  padding: 10px 12px;
+  color: #f3f4f6 !important;
+  font-size: 13px;
 }
 
 .mm-workbuddy-host .workbuddy-accounts-embedded::after {

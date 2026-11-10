@@ -235,9 +235,13 @@ pub async fn ensure_fresh_token(
     )
     .await?;
 
+    let refresh_token = response
+        .refresh_token
+        .filter(|token| !token.trim().is_empty())
+        .unwrap_or_else(|| current_token.refresh_token.clone());
     let mut token = crate::models::TokenData::new(
         response.access_token,
-        current_token.refresh_token.clone(),
+        refresh_token,
         response.expires_in,
         current_token.email.clone(),
         current_token.project_id.clone(),

@@ -560,6 +560,10 @@ fn stop_engines() {
     runtime.route = None;
 }
 
+pub fn shutdown_for_exit() {
+    stop_engines();
+}
+
 async fn fetch_subscription(url: &str) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(25))

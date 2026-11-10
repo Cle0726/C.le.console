@@ -148,6 +148,50 @@ pub fn write_string_atomic(path: &Path, content: &str) -> Result<(), String> {
     write_string_atomic_internal(path, content, true)
 }
 
+/// Remove inherited ACEs and leave access with the current user.
+/// Unix callers already set the mode before calling this.
+pub fn restrict_to_current_user(path: &Path, directory: bool) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let _ = (path, directory);
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let name = std::env::var("USERNAME").map_err(|_| "读取当前用户失败".to_string())?;
+        let user = match std::env::var("USERDOMAIN") {
+            Ok(domain) if !domain.trim().is_empty() => format!("{}\\{}", domain.trim(), name.trim()),
+            _ => name.trim().to_string(),
+        };
+        if user.is_empty() {
+            return Err("读取当前用户失败".to_string());
+        }
+        let rights = if directory {
+            format!("{user}:(OI)(CI)(F)")
+        } else {
+            format!("{user}:(F)")
+        };
+        let output = std::process::Command::new("icacls")
+            .arg(path)
+            .args(["/inheritance:r", "/grant:r", &rights])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|error| format!("收紧文件权限失败: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            Err(format!("收紧文件权限失败: {}", detail.trim()))
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (path, directory);
+        Ok(())
+    }
+}
+
 /// Sensitive user-selected exports: private from creation, no extra plaintext .bak.
 pub fn write_private_string_atomic(path: &Path, content: &str) -> Result<(), String> {
     let parent = path.parent().filter(|dir| dir.is_dir()).ok_or("备份目录不存在")?;
@@ -172,6 +216,7 @@ pub fn write_private_string_atomic(path: &Path, content: &str) -> Result<(), Str
             let target: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
             unsafe { MoveFileExW(PCWSTR(source.as_ptr()), PCWSTR(target.as_ptr()), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) }
                 .map_err(|_| "备份替换失败，原文件保留")?;
+            restrict_to_current_user(path, false)?;
         }
         Ok(())
     })();

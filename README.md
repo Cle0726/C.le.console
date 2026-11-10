@@ -18,7 +18,7 @@ C.le.控制台将分散在不同 AI 客户端和命令行工具中的账户、�
 
 项目目前支持 Codex、Claude、Antigravity、Gemini、GitHub Copilot、Windsurf、Cursor、Trae、Kiro、Qoder、Zed、CodeBuddy、WorkBuddy 等平台，并提供昼夜主题、简模式、状态浮窗和自适应界面。
 
-> 当前稳定发布版本为 **1.1.4（Windows x64）**。`main` 分支包含 1.1.4 之后的最新源码更新；这些更新尚未重新生成正式安装包。
+> 当前稳定发布版本为 **1.1.43（Windows x64）**。`main` 分支包含 1.1.43 之后的源码更新；这些更新尚未重新生成正式安装包。
 
 ## 主要功能
 

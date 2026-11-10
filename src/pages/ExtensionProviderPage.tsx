@@ -10,7 +10,10 @@ export const EXTENSION_PROVIDERS = [
   { id: 'qoder', label: 'Qoder / QoderWork' }, { id: 'trae', label: 'Trae' },
   { id: 'raccoon', label: '小浣熊' }, { id: 'catpaw', label: 'CatPaw' },
   { id: 'autoclaw', label: 'AutoClaw 国内' }, { id: 'autoclaw-intl', label: 'AutoClaw 国际' },
-  { id: 'accio', label: 'Accio' }, { id: 'loomy', label: 'Loomy' },
+  { id: 'accio', label: 'Accio' }, { id: 'accio-cn', label: 'Accio 国内' }, { id: 'loomy', label: 'Loomy' },
+  { id: 'cline-free', label: 'Cline 免费池' }, { id: 'cline-pass', label: 'Cline 订阅池' },
+  { id: 'codearts', label: 'CodeArts' }, { id: 'zcode', label: 'ZCode 国内' },
+  { id: 'zcode-intl', label: 'ZCode 国际' }, { id: 'kuku', label: '库库 AI' },
 ] as const;
 interface Account { id: string; name: string; provider: string; enabled: boolean; edition?: string; available?: boolean }
 interface CheckinAccount { id: string; name: string; checkedInToday: boolean }
@@ -20,6 +23,67 @@ interface Center { daily: { providers: CheckinGroup[]; todayDone: number; todayE
 interface UsageResult { id: string; usage?: unknown; error?: string; at?: number }
 
 // Display precise upstream fields, never invent totals or turn unknown quota into zero.
+type LoginTask = { state: string; authUrl: string; hosted: boolean; provider: string; startedAt: number };
+
+async function startAutoclawIntlLogin(
+  vendor: 'zai' | 'google',
+  name: string,
+  mounted: { current: boolean },
+  setTask: (task: LoginTask) => void,
+) {
+  const config = await api.extensionRequest<{ enabled?: boolean; region?: string; prefix?: string; sceneId?: string }>(
+    'POST',
+    '/api/session/login/oauth/captcha-config',
+    { provider: 'autoclaw-intl' },
+  );
+  if (!config.enabled || !config.sceneId) {
+    throw new Error('AutoClaw 国际版当前没有开放网页授权，请导入桌面登录态或粘贴凭证');
+  }
+  const captchaVerifyParam = await runAliyunCaptcha(config);
+  const login = await api.extensionRequest<{ state: string; authUrl: string }>(
+    'POST',
+    '/api/session/login/oauth/start',
+    { provider: 'autoclaw-intl', vendor, name, captchaVerifyParam },
+  );
+  if (!mounted.current) {
+    await api.finishExtensionLogin(login.state, true);
+    return;
+  }
+  setTask({ state: login.state, authUrl: login.authUrl, hosted: false, provider: 'autoclaw-intl', startedAt: Date.now() });
+  await openUrl(login.authUrl);
+}
+
+function runAliyunCaptcha(config: { region?: string; prefix?: string; sceneId?: string }): Promise<string> {
+  const page = window as Window & {
+    AliyunCaptchaConfig?: { region?: string; prefix?: string };
+    initAliyunCaptcha?: (options: Record<string, unknown>) => void;
+  };
+  page.AliyunCaptchaConfig = { region: config.region, prefix: config.prefix };
+  const start = () => new Promise<string>((resolve, reject) => {
+    if (!page.initAliyunCaptcha) {
+      reject(new Error('验证码组件没有就绪'));
+      return;
+    }
+    page.initAliyunCaptcha({
+      SceneId: config.sceneId,
+      mode: 'popup',
+      element: '#autoclaw-captcha',
+      button: '#autoclaw-captcha-button',
+      success: (captchaVerifyParam: string) => resolve(captchaVerifyParam),
+      fail: () => reject(new Error('验证码未通过，请重试')),
+    });
+    document.getElementById('autoclaw-captcha-button')?.click();
+  });
+  if (page.initAliyunCaptcha) return start();
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js';
+    script.onload = () => { start().then(resolve, reject); };
+    script.onerror = () => reject(new Error('无法加载验证码组件，请检查网络后重试'));
+    document.head.appendChild(script);
+  });
+}
+
 function usageLabel(usage: unknown): string {
   if (!usage || typeof usage !== 'object') return '上游未返回额度';
   const data = usage as Record<string, unknown>;
@@ -126,18 +190,37 @@ export function ExtensionProviderPage({ initialProvider = 'qoder', onSynced }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task, reload]);
   const sms = provider === 'autoclaw' || provider === 'loomy';
-  const desktopImport = ['raccoon', 'catpaw', 'autoclaw', 'autoclaw-intl'].includes(provider);
+  const desktopImport = ['raccoon', 'catpaw', 'autoclaw', 'autoclaw-intl', 'cline-free', 'cline-pass', 'kuku'].includes(provider);
+  const hint: Record<string, string> = {
+    trae: '用系统浏览器登录。官网如果提示当前区域不支持访问，需要更换网络。',
+    raccoon: '在弹出的窗口里登录。系统浏览器收不到专用回调。',
+    qoder: '在授权页确认后，本页会继续等待。也可以粘贴 PAT 或完整 JSON。',
+    catpaw: '在系统浏览器完成登录，或导入当前桌面登录态。',
+    autoclaw: '用手机验证码登录，或导入当前桌面登录态。',
+    'autoclaw-intl': '先完成验证码，再打开 Zai 或 Google。也可以导入桌面登录态。',
+    accio: '在系统浏览器完成登录，完成后会回到本机。',
+    'accio-cn': '在系统浏览器完成登录，完成后会回到本机。',
+    loomy: '用手机验证码登录。',
+    'cline-free': '在授权页确认设备登录。也可以导入本机 Cline 登录态。',
+    'cline-pass': '在授权页确认设备登录，账号记在订阅池。也可以导入本机 Cline 登录态。',
+    codearts: '在系统浏览器完成登录，完成后会回到本机。',
+    zcode: '在授权页确认后，本页会继续等待。',
+    'zcode-intl': '在授权页确认后，本页会继续等待。',
+    kuku: '在弹出的窗口里登录百度，或导入本机库库客户端登录态。',
+  };
   const smsPath = provider === 'loomy' ? '/api/session/login/loomy/sms' : '/api/session/login/sms';
   const visible = accounts.filter(account => account.provider === provider);
   const checkinIds = new Set(center?.daily.providers.flatMap(group => group.accounts.map(account => account.id)) ?? []);
   return <section className="mm-extension-host">
-    <header className="mm-api-panel-head"><div><h1>扩展账号池 / 每日签到</h1><p>个人自用组件。各渠道按优先级选路，限流或额度不足时切换账号；不会把订阅伪装成官方 API Key，也不会运行付费测试。</p></div>
+    <header className="mm-extension-hero"><div><h1>扩展账号池</h1><p>按渠道登录或导入。限流和额度不足时切换账号，不会把订阅伪装成官方 API Key。</p></div>
       <div className="mm-inline-actions"><button className="btn btn-secondary" disabled={busy} onClick={() => void action(reload, '列表已更新')}><RefreshCw />刷新列表</button><button className="btn btn-primary" disabled={busy} onClick={() => void action(sync, '账号池与模型已接入 API')}><Plus />接入 API / 同步模型</button></div></header>
     {message && <div className="mm-api-message" role="status">{message}</div>}
-    <nav className="mm-extension-providers" aria-label="扩展渠道">{EXTENSION_PROVIDERS.map(item => <button key={item.id} disabled={busy || !!task} className={`btn ${provider === item.id ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setProvider(item.id); setCredentials(''); setCallback(''); }}><Globe size={16} />{item.label}<small>{accounts.filter(account => account.provider === item.id).length}</small></button>)}</nav>
+    <label className="mm-extension-fields">渠道<select value={provider} disabled={busy || !!task} onChange={event => { setProvider(event.target.value); setCredentials(''); setCallback(''); }}>{EXTENSION_PROVIDERS.map(item => <option key={item.id} value={item.id}>{item.label}（{accounts.filter(account => account.provider === item.id).length}）</option>)}</select></label>
     <section className="mm-api-panel mm-extension-login"><h2>添加 {EXTENSION_PROVIDERS.find(item => item.id === provider)?.label} 账号</h2>
       <div className="mm-extension-fields"><label>备注名<input value={name} onChange={event => setName(event.target.value)} placeholder="可选，方便区分多个账号" /></label>
       {provider === 'qoder' && <label>地区<select value={edition} onChange={event => setEdition(event.target.value)}><option value="cn">中国版（可签到）</option><option value="intl">国际版</option></select></label>}
+      <div id="autoclaw-captcha" hidden />
+      <button id="autoclaw-captcha-button" type="button" hidden />
       {sms ? <><label>手机号<input value={phone} onChange={event => setPhone(event.target.value)} autoComplete="tel" /></label><label>验证码<input value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" /></label>
         <button className="btn btn-secondary" disabled={busy || !phone} onClick={() => void action(async () => { const result = await api.extensionRequest<{ deviceId?: string }>('POST', `${smsPath}/send`, { provider, phone }); setDeviceId(result.deviceId ?? ''); }, '验证码已发送')} >发送验证码</button>
         <button className="btn btn-primary" disabled={busy || !phone || !code} onClick={() => void action(async () => { await api.extensionRequest('POST', `${smsPath}/verify`, { provider, phone, code, deviceId, name }); setCode(''); await sync(); }, '登录完成并接入 API')} >登录并添加</button></> : provider !== 'autoclaw-intl' && <button className="btn btn-primary" disabled={busy || !!task} onClick={() => void action(async () => {
@@ -147,18 +230,13 @@ export function ExtensionProviderPage({ initialProvider = 'qoder', onSynced }: {
           if (!login.hosted) await openUrl(login.authUrl);
         }, '已打开官方授权页，完成登录后会自动接入。')}><Globe />网页登录 / 添加账号</button>}
       {desktopImport && <button className="btn btn-secondary" disabled={busy || !!task} onClick={() => void action(async () => { await api.extensionRequest('POST', '/api/accounts', { provider, edition, name, importDesktop: true }); await sync(); }, '桌面登录态已导入并接入 API')}>导入当前桌面登录态</button>}</div>
-      {provider === 'trae' && <p>Trae 国内 / 国内 SOLO：默认用系统浏览器登录，沿用浏览器的网络与登录环境；后台预检不会再提前取消授权。完成后请保留本页面等待账号返回。若官网仍提示地区限制，需要使用官方支持的网络；不要改回调端口或换国际版链接。</p>}
-      {provider === 'raccoon' && <p>请在弹出的独立窗口完成官方登录。每次使用全新会话，可添加多个账号；直接在外部浏览器登录无法把专用回调交回 C.le。</p>}
-      {provider === 'qoder' && <p>支持网页登录，或在下方粘贴完整凭证 / {`{"pat":"你的个人访问令牌"}`}；不提供点了必失败的桌面导入。</p>}
-      {provider === 'autoclaw-intl' && <p>国际版需要浏览器风控验证，先在官方客户端登录，再导入登录态或凭证；不会提供点了必失败的授权按钮。</p>}
-      {task && <div className="mm-extension-fields"><span>等待 {EXTENSION_PROVIDERS.find(item => item.id === task.provider)?.label} 官方授权（5 分钟内）…{task.hosted && '独立窗口登录，每次可添加不同账号。'}</span><button className="btn btn-secondary" disabled={busy} onClick={() => void action(() => task.hosted ? api.openExtensionLogin(task.state) : openUrl(task.authUrl), '已重新打开授权页')}>重新打开授权页</button>
-        {task.hosted && task.provider !== 'raccoon' && <button className="btn btn-secondary" disabled={busy} onClick={() => void action(() => openUrl(task.authUrl), '已交给系统浏览器打开；完成后保留本应用等待回调')}>用系统浏览器打开</button>}
-        {task.provider === 'trae' && !task.hosted && <button className="btn btn-secondary" disabled={busy} onClick={() => void action(() => api.openExtensionLogin(task.state), '已打开独立授权窗口；仍使用同一轮 PKCE 和本机回调')}>在独立窗口重试</button>}
-        <button className="btn btn-secondary" disabled={busy} onClick={() => void action(() => navigator.clipboard.writeText(task.authUrl), task.provider === 'raccoon' ? '链接已复制；小浣熊须在本应用授权窗口完成，系统浏览器不能接回专用协议' : '授权链接已复制')}>复制授权链接</button>
-        <input placeholder="没有自动回跳？粘贴完整回调链接" value={callback} onChange={event => setCallback(event.target.value)} /><button className="btn btn-secondary" disabled={busy || !callback} onClick={() => void action(async () => {
-        const response = await api.extensionRequest<{ continue?: boolean; nextUrl?: string }>('POST', '/api/session/login/callback', { callbackUrl: callback, state: task.state });
-        if (response.continue && response.nextUrl) await openUrl(response.nextUrl);
-      }, '回调已提交，等待上游确认')}>提交回调</button><button className="btn btn-secondary" disabled={busy} onClick={() => void action(async () => { await api.finishExtensionLogin(task.state, true); setTask(null); setCallback(''); }, '登录已取消')}>取消</button></div>}
+      {provider === 'autoclaw-intl' && <><button className="btn btn-primary" disabled={busy || !!task} onClick={() => void action(() => startAutoclawIntlLogin('zai', name, mounted, setTask), '验证通过后会打开 Zai 授权页')}>网页登录（Zai）</button><button className="btn btn-secondary" disabled={busy || !!task} onClick={() => void action(() => startAutoclawIntlLogin('google', name, mounted, setTask), '验证通过后会打开 Google 授权页')}>网页登录（Google）</button></>}
+      {hint[provider] && <p>{hint[provider]}</p>}
+      {task && <div className="mm-extension-fields"><span>等待 {EXTENSION_PROVIDERS.find(item => item.id === task.provider)?.label} 官方授权（5 分钟内）…</span><button className="btn btn-secondary" disabled={busy} onClick={() => void action(() => task.hosted ? api.openExtensionLogin(task.state) : openUrl(task.authUrl), '已重新打开授权页')}>重新打开授权页</button>
+        {task.provider === 'raccoon' && <><input placeholder="没有自动回跳？粘贴完整回调链接" value={callback} onChange={event => setCallback(event.target.value)} /><button className="btn btn-secondary" disabled={busy || !callback} onClick={() => void action(async () => {
+        await api.extensionRequest('POST', '/api/session/login/callback', { callbackUrl: callback, state: task.state });
+      }, '回调已提交，等待上游确认')}>提交回调</button></>}
+        <button className="btn btn-secondary" disabled={busy} onClick={() => void action(async () => { await api.finishExtensionLogin(task.state, true); setTask(null); setCallback(''); }, '登录已取消')}>取消</button></div>}
       <details><summary>粘贴已有账号凭证（Token / JSON）</summary><p>每次提交添加一个账号，不会覆盖其他账号。凭证只保存本机，不要分享或提交到 Git。</p><textarea value={credentials} onChange={event => setCredentials(event.target.value)} placeholder='{"accessToken":"…","refreshToken":"…"}' spellCheck={false} /><button className="btn btn-secondary" disabled={busy || !credentials.trim()} onClick={() => void action(async () => {
         const text = credentials.trim(); const payload = text.startsWith('{') ? JSON.parse(text) : { accessToken: text, token: text };
         await api.extensionRequest('POST', '/api/accounts', { ...payload, provider, edition, name }); setCredentials(''); await sync();
@@ -172,7 +250,7 @@ export function ExtensionProviderPage({ initialProvider = 'qoder', onSynced }: {
         {checkinIds.has(account.id) && <button className="btn btn-secondary" disabled={busy || today} onClick={() => void action(async () => { const report = await api.extensionRequest<{ failedCount?: number }>('POST', '/api/accounts/checkin', { id: account.id }); if (report.failedCount) throw new Error(JSON.stringify(report)); }, '签到完成，详细结果见下方记录')}><CalendarCheck />{today ? '今日已签到' : '签到'}</button>}
         <button className="btn btn-secondary" disabled={busy} onClick={() => void action(async () => { await api.extensionRequest('PATCH', `/api/accounts/${account.id}`, { enabled: !account.enabled }); await sync(); }, '账号状态已更新')}>{account.enabled ? '停用' : '启用'}</button>
         <button className="btn btn-secondary" disabled={busy} onClick={() => void (async () => { if (await confirm(`删除 ${account.name} 的扩展登录态？不影响其他账号。`, { title: '删除扩展账号', kind: 'warning' })) await action(async () => { await api.extensionRequest('DELETE', `/api/accounts/${account.id}`); await sync(); }, '扩展账号已删除'); })()}><Trash2 /></button></div></article>;
-    })}{!visible.length && <p>还没有这个渠道的账号，请先登录；不会预填不存在的模型。</p>}</div>
+    })}{!visible.length && <section className="mm-api-panel mm-extension-empty"><h2>还没有账号</h2><p>先用上面的登录或导入。这里不会预填不存在的模型。</p></section>}</div>
     {auto && <section className="mm-api-panel"><h2><CalendarCheck size={20} />每天自动签到</h2><p>有接口的才显示。按本机时间每天一次，休眠错过会补签；不调用模型。WorkBuddy 继续使用原来的签到设置。</p>
       <div className="mm-extension-fields"><label><input type="checkbox" checked={auto.enabled} onChange={event => setAuto({ ...auto, enabled: event.target.checked })} />开启自动签到</label><label>时间<input type="time" value={auto.time} onChange={event => setAuto({ ...auto, time: event.target.value })} /></label>
       {auto.providerOptions.map(option => <label key={option.id}><input type="checkbox" checked={auto.providers.includes(option.id)} onChange={event => setAuto({ ...auto, providers: event.target.checked ? [...auto.providers, option.id] : auto.providers.filter(id => id !== option.id) })} />{option.label}</label>)}

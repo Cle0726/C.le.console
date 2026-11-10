@@ -13,12 +13,17 @@ interface TaskNotificationMapping {
 
 // 存储通知 ID 到任务 ID 的映射
 const notificationTaskMap = new Map<number, string>();
+let wakeupListenerStarted = false;
 
 export function mapNotificationToTask(notificationId: number, taskId: string): void {
   notificationTaskMap.set(notificationId, taskId);
 }
 
 export function initWakeupNotificationListener(): void {
+  if (wakeupListenerStarted) {
+    return;
+  }
+  wakeupListenerStarted = true;
   // 监听通知动作事件
   listen<NotificationAction>('notification://action', async (event) => {
     const { actionId, notificationId } = event.payload;
