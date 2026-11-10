@@ -7,7 +7,7 @@ import './StartupGreeting.css';
 
 type StartupPhase = 'loading' | 'ready' | 'leaving';
 
-function waitForPageResources(timeoutMs: number): Promise<void> {
+function waitForGreetingResources(root: ParentNode | null, timeoutMs: number): Promise<void> {
   const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, timeoutMs));
 
   const ready = new Promise<void>((resolve) => {
@@ -17,7 +17,7 @@ function waitForPageResources(timeoutMs: number): Promise<void> {
       const pending: Promise<unknown>[] = [];
       if (document.fonts?.ready) pending.push(document.fonts.ready);
 
-      document.querySelectorAll<HTMLImageElement>('img').forEach((image) => {
+      root?.querySelectorAll<HTMLImageElement>('img').forEach((image) => {
         if (image.complete) return;
         pending.push(
           new Promise<void>((next) => {
@@ -66,6 +66,7 @@ export function StartupGreeting({
   const tryReadyRef = useRef<() => void>(() => undefined);
   const queuedContinueRef = useRef(false);
   const timerRefs = useRef<number[]>([]);
+  const rootRef = useRef<HTMLDivElement>(null);
   const now = useMemo(() => new Date(), []);
   /* Drawn once per launch, so the line holds still while the screen is up. */
   const copy = useMemo(() => resolveGreetingCopy(now), [now]);
@@ -97,7 +98,7 @@ export function StartupGreeting({
      * application is loaded behind it, so the screen only needs a brief hold.
      */
     const minimumVisibleMs = reducedMotion ? 800 : liteMode ? 1_250 : 1_600;
-    const resourceTimeoutMs = reducedMotion ? 2_200 : 8_000;
+    const resourceTimeoutMs = reducedMotion ? 1_200 : 2_500;
     let cancelled = false;
     let resourcesReady = false;
     let minimumReady = false;
@@ -111,7 +112,7 @@ export function StartupGreeting({
     };
     tryReadyRef.current = tryReady;
 
-    void waitForPageResources(resourceTimeoutMs).then(() => {
+    void waitForGreetingResources(rootRef.current, resourceTimeoutMs).then(() => {
       resourcesReady = true;
       tryReady();
     });
@@ -144,7 +145,7 @@ export function StartupGreeting({
 
   useEffect(() => {
     if (phase !== 'leaving') return;
-    const exitMs = reducedMotion ? 160 : liteMode ? 380 : 480;
+    const exitMs = reducedMotion ? 160 : 280;
     const timer = window.setTimeout(complete, exitMs);
     timerRefs.current.push(timer);
     return () => window.clearTimeout(timer);
@@ -167,7 +168,8 @@ export function StartupGreeting({
 
   return (
     <div
-      className={`startup-greeting sg is-${phase}`}
+      ref={rootRef}
+      className={`sg ${phase === 'loading' ? 'sg-pending' : `is-${phase}`}`}
       data-performance={liteMode ? 'lite' : 'full'}
       data-startup-phase={phase}
       role="status"

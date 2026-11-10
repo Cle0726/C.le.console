@@ -288,7 +288,7 @@ html[data-native-liquid-glass='true'] body #root :is(input, textarea, select, .s
 
 /* The welcome layer uses the same translucent graphite tint, so there is no
  * opaque black flash before the React page is ready. */
-html[data-native-liquid-glass='true'] .startup-greeting.sg {
+html[data-native-liquid-glass='true'] .sg {
   background:
     radial-gradient(58% 48% at 62% 32%, rgba(220, 224, 232, 0.12), transparent 68%),
     linear-gradient(156deg, rgba(52, 57, 64, 0.28), rgba(10, 12, 16, 0.34)) !important;

@@ -1145,7 +1145,7 @@ html[data-visual-theme] body #root :is(.main-content > *, .tab-content) {
 }
 
 /* Loading pulses opacity rather than sweeping a gradient across a box. */
-html[data-visual-theme] body :is([class*='skeleton'], [class*='-loading']:not(.spin)) {
+html[data-visual-theme] body :is([class*='skeleton'], [class*='-loading']:not(.spin)):not(.sg):not([role='status']) {
   animation: lg-pulse 1.4s ease-in-out infinite !important;
   background-image: none !important;
 }
