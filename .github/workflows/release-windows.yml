@@ -74,6 +74,8 @@ jobs:
           Copy-Item $source.FullName sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe -Force
 
       - run: npm run typecheck
+      # Release-mode Rust tests embed frontendDist; a clean runner has no dist yet.
+      - run: npm run build
       - name: Test subscription routing and update proxy
         shell: pwsh
         run: |
