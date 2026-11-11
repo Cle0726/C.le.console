@@ -58,6 +58,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          python scripts/prepare-mihomo.py
+          if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the pinned Mihomo sidecar' }
           New-Item -ItemType Directory -Force sidecars/cle-cliproxy/bin | Out-Null
           Push-Location sidecars/cle-cliproxy
           $env:GOOS = 'windows'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'
@@ -72,6 +74,14 @@ jobs:
           Copy-Item $source.FullName sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe -Force
 
       - run: npm run typecheck
+      - name: Test subscription routing and update proxy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo test --release -p cle-console --lib modules::subscription_proxy::tests -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Subscription routing tests failed' }
+          cargo test --release -p cle-console --lib app_updates::tests -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Update proxy tests failed' }
       - name: Build signed Windows updater
         run: npm run tauri -- build --config src-tauri/tauri.updater.conf.json --bundles nsis
 
@@ -234,18 +244,45 @@ jobs:
           sha256sum release-assets/* > release-assets/SHA256SUMS.txt
           cat release-assets/latest.json
 
+      - name: Verify updater signatures using the configured public key
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          python3 scripts/release/test_verify_updater_signature.py
+          python3 scripts/release/verify_updater_signature.py "release-assets/C.le.console_${VERSION}_x64_setup.exe" "release-assets/C.le.console_${VERSION}_x64_setup.exe.sig"
+          python3 scripts/release/verify_updater_signature.py "release-assets/C.le.console_${VERSION}_aarch64.app.tar.gz" "release-assets/C.le.console_${VERSION}_aarch64.app.tar.gz.sig"
+
       - name: Create GitHub Release and upload all assets
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --title "C.le.控制台 $GITHUB_REF_NAME" --notes-file release-notes.md
-          else
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = 'true' || {
+              echo 'Refusing to overwrite an already published release.' >&2
+              exit 1
+            }
             gh release edit "$GITHUB_REF_NAME" --title "C.le.控制台 $GITHUB_REF_NAME" --notes-file release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "C.le.控制台 $GITHUB_REF_NAME" --notes-file release-notes.md
           fi
           gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          gh release view "$GITHUB_REF_NAME" --json isDraft,assets > uploaded-release.json
+          python3 - <<'PY'
+          import json, pathlib
+          release = json.loads(pathlib.Path('uploaded-release.json').read_text())
+          uploaded = {asset['name']: asset['size'] for asset in release['assets']}
+          expected = {path.name: path.stat().st_size for path in pathlib.Path('release-assets').iterdir() if path.is_file()}
+          assert release['isDraft'] and expected, 'release is not an unpublished draft'
+          assert all(uploaded.get(name) == size and size > 0 for name, size in expected.items()), 'uploaded assets are incomplete'
+          print('Verified uploaded draft assets:', ', '.join(sorted(expected)))
+          PY
+          mkdir verified-upload
+          gh release download "$GITHUB_REF_NAME" --dir verified-upload
+          for asset in release-assets/*; do cmp "$asset" "verified-upload/$(basename "$asset")"; done
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
 
       - name: Verify published updater manifest
         shell: bash

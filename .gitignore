@@ -15,6 +15,7 @@ sidecars/cle-cliproxy/bin/
 sidecars/cockpit-cliproxy/bin/
 sidecars/jimeng-api/bin/
 sidecars/agent2api/bin/
+sidecars/mihomo/bin/
 
 # Local build, review, and visual verification output
 artifacts/
@@ -71,6 +72,10 @@ Thumbs.db
 src-tauri/native/macos-native-menu/.build/
 src-tauri/resources/electron/*
 !src-tauri/resources/electron/.gitkeep
+
+# Python release-helper cache
+__pycache__/
+*.py[cod]
 
 # Installer formats not committed unless copied deliberately to release/
 *.dmg

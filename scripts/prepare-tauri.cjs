@@ -1,11 +1,17 @@
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const fs = require('node:fs');
 
 if (process.platform !== 'win32') {
   process.exit(0);
 }
 
 const repoRoot = path.resolve(__dirname, '..');
+const mihomo = path.join(repoRoot, 'sidecars', 'mihomo', 'bin', 'mihomo-x86_64-pc-windows-msvc.exe');
+if (!fs.existsSync(mihomo)) {
+  console.error('Missing bundled Mihomo. Run: python scripts/prepare-mihomo.py');
+  process.exit(1);
+}
 const targetExe = path.join(repoRoot, 'target', 'debug', 'cle_console.exe');
 const escapedTarget = targetExe.replace(/'/g, "''").toLowerCase();
 

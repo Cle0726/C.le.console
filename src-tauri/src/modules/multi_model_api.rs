@@ -1153,7 +1153,10 @@ fn claude_web_runtime_account(
         })
         .collect::<Vec<_>>()
         .join("; ");
-    let proxy_url = if account.proxy_url.trim().is_empty() {
+    let subscription = crate::modules::subscription_proxy::enabled_local_proxy();
+    let proxy_url = if let Some(proxy) = subscription.as_deref() {
+        proxy
+    } else if account.proxy_url.trim().is_empty() {
         fallback_proxy_url.trim()
     } else {
         account.proxy_url.trim()
@@ -1249,6 +1252,10 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
     let mut claude_cli_helpers = Vec::new();
 
     for account in config.accounts.iter().filter(|item| item.enabled && !(item.provider == "claude-cli" && CLAUDE_CLI_SUPPRESSED.load(Ordering::Relaxed))) {
+        // A selected workbench subscription is authoritative even for older
+        // accounts carrying a stale per-account proxy from another computer.
+        let account_proxy = crate::modules::subscription_proxy::enabled_local_proxy()
+            .unwrap_or_else(|| account.proxy_url.clone());
         let models: Vec<_> = account.models.iter().filter(|item| item.enabled).collect();
         for model in &models {
             model_ids.insert(model.id.clone());
@@ -1282,7 +1289,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "priority": account.priority,
             "prefix": account.prefix,
             "base-url": account.base_url,
-            "proxy-url": account.proxy_url,
+            "proxy-url": account_proxy,
             "headers": account.headers,
             "models": models.iter().map(|item| model_json(item, false)).collect::<Vec<_>>()
         });
@@ -1319,7 +1326,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                     entries
                 }).collect::<Vec<_>>();
                 compat.push(json!({"name":provider,"priority":account.priority,"base-url":"https://api.githubcopilot.com",
-                    "api-key-entries":[{"api-key":key,"proxy-url":if account.proxy_url.trim().is_empty() {effective_upstream_proxy.as_str()} else {account.proxy_url.as_str()}}],
+                    "api-key-entries":[{"api-key":key,"proxy-url":if account_proxy.trim().is_empty() {effective_upstream_proxy.as_str()} else {account_proxy.as_str()}}],
                     "headers":{"X-Cle-Managed-Credential-URL":bridge.as_ref().unwrap().url(bridge_id)},"models":mapped_models}));
             }
             "workbuddy" => {
@@ -1335,7 +1342,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                 compat.push(json!({
                     "name": "workbuddy", "priority": account.priority,
                     "base-url": format!("{}/v2", workbuddy_api::chat_base(&managed)),
-                    "api-key-entries": [{"api-key": key, "proxy-url": if account.proxy_url.trim().is_empty() { effective_upstream_proxy.as_str() } else { account.proxy_url.as_str() }}],
+                    "api-key-entries": [{"api-key": key, "proxy-url": if account_proxy.trim().is_empty() { effective_upstream_proxy.as_str() } else { account_proxy.as_str() }}],
                     "headers": {"X-Cle-Workbuddy-Credential-URL": bridge.as_ref().unwrap().url(managed_id)},
                     "models": mapped_models,
                 }));
@@ -1376,7 +1383,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                     "priority": account.priority,
                     "prefix": account.prefix,
                     "base-url": if account.base_url.trim().is_empty() { "https://api.x.ai/v1" } else { &account.base_url },
-                    "api-key-entries": [{"api-key": key, "proxy-url": account.proxy_url}],
+                    "api-key-entries": [{"api-key": key, "proxy-url": account_proxy}],
                     "models": models.iter().map(|item| model_json(item, true)).collect::<Vec<_>>(),
                     "headers": account.headers
                 }));
@@ -1397,7 +1404,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                     "prefix": account.prefix,
 
                     "base-url": if account.base_url.trim().is_empty() { "https://api.openai.com/v1" } else { &account.base_url },
-                    "api-key-entries": [{"api-key": key, "proxy-url": account.proxy_url}],
+                    "api-key-entries": [{"api-key": key, "proxy-url": account_proxy}],
                     "models": models.iter().map(|item| model_json(item, true)).collect::<Vec<_>>(),
                     "headers": account.headers,
                     "disable-cooling": true
@@ -1437,7 +1444,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                     "priority": account.priority,
                     "prefix": account.prefix,
                     "base-url": account.base_url,
-                    "api-key-entries": [{"api-key": key, "proxy-url": if account.source.starts_with("agent2api:") { "direct" } else { &account.proxy_url }}],
+                    "api-key-entries": [{"api-key": key, "proxy-url": if account.source.starts_with("agent2api:") { "direct" } else { &account_proxy }}],
                     "models": compat_models,
                     "headers": account.headers,
                     "disable-cooling": true
@@ -1481,7 +1488,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "cliProfile": if provider == "doubao-work" { account.cli_profile.as_str() } else { "" },
             "provider": manifest_provider,
             "baseUrl": account.base_url,
-            "proxyUrl": if account.proxy_url.trim().is_empty() { effective_upstream_proxy.as_str() } else { account.proxy_url.as_str() },
+            "proxyUrl": if account_proxy.trim().is_empty() { effective_upstream_proxy.as_str() } else { account_proxy.as_str() },
             "headers": account.headers,
             "priority": account.priority,
             "modelQuotas": model_quotas,
@@ -2043,13 +2050,14 @@ async fn refresh_xai_credentials(config: &mut MultiModelApiConfig, force: bool) 
             .to_string();
 
         let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(20));
-        let proxy_url = account
+        let subscription = crate::modules::subscription_proxy::enabled_local_proxy();
+        let proxy_url = subscription.as_deref().unwrap_or_else(|| account
             .proxy_url
             .trim()
             .is_empty()
             .then(|| system_proxy.as_deref())
             .flatten()
-            .unwrap_or_else(|| account.proxy_url.trim());
+            .unwrap_or_else(|| account.proxy_url.trim()));
         if !proxy_url.is_empty() {
             match reqwest::Proxy::all(proxy_url) {
                 Ok(proxy) => builder = builder.proxy(proxy),
@@ -4379,7 +4387,9 @@ async fn refresh_xai_accounts_selected(force_credentials: bool, ids: Option<&BTr
             });
             continue;
         }
-        let proxy = if !account.proxy_url.trim().is_empty() && account.proxy_url != "direct" {
+        let proxy = if let Some(subscription) = crate::modules::subscription_proxy::enabled_local_proxy() {
+            Some(subscription)
+        } else if !account.proxy_url.trim().is_empty() && account.proxy_url != "direct" {
             Some(account.proxy_url.clone())
         } else if account.proxy_url == "direct" {
             None

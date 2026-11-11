@@ -451,6 +451,12 @@ pub fn run() {
         }))
         .setup(|app| {
             info!("C.le.控制台 启动...");
+            // Do this after single-instance setup so a second launcher does not
+            // contend with or disturb the already-running proxy engine.
+            if let Err(error) = modules::subscription_proxy::restore_on_startup() {
+                logger::log_warn(&format!("[SubscriptionProxy] 启动恢复失败: {error}"));
+            }
+            modules::config::sync_global_proxy_env(&modules::config::get_user_config());
             let current_exe = std::env::current_exe()
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|err| format!("unknown: {}", err));
@@ -792,6 +798,7 @@ pub fn run() {
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
+            app_updates::get_latest_app_release,
             app_updates::install_app_update,
             // Account Commands
             commands::account::list_accounts,
@@ -896,6 +903,9 @@ pub fn run() {
             commands::system::get_network_config,
             crate::modules::subscription_proxy::subscription_proxy_get,
             crate::modules::subscription_proxy::subscription_proxy_refresh,
+            crate::modules::subscription_proxy::subscription_proxy_import,
+            crate::modules::subscription_proxy::subscription_proxy_probe,
+            crate::modules::oauth_browser::subscription_proxy_open_auth_url,
             crate::modules::subscription_proxy::subscription_proxy_apply,
             commands::system::get_network_egress_snapshot,
             commands::system::save_network_config,

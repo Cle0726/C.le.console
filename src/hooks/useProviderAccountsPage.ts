@@ -20,7 +20,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openOAuthUrl } from '../utils/openOAuthUrl';
 import {
   isPrivacyModeEnabledByDefault,
   maskSensitiveValue,
@@ -2000,7 +2000,7 @@ export function useProviderAccountsPage<TAccount extends ProviderAccountBase>(
 
         oauthLog('授权信息已就绪并展示在弹框', {
           loginId: resp.loginId,
-          url,
+          hasUrl: Boolean(url),
           expiresIn: resp.expiresIn,
           intervalSeconds: resp.intervalSeconds,
           attemptSeq,
@@ -2246,19 +2246,17 @@ export function useProviderAccountsPage<TAccount extends ProviderAccountBase>(
     if (!oauthUrl) return;
     oauthLog('用户点击打开授权链接', {
       loginId: oauthLoginIdRef.current,
-      authUrl: oauthUrl,
+      hasAuthUrl: true,
     });
     try {
       if (oauthService?.openAuthUrl) {
         await oauthService.openAuthUrl(oauthUrl);
       } else {
-        await openUrl(oauthUrl);
+        await openOAuthUrl(oauthUrl);
       }
     } catch (e) {
       console.error('打开授权链接失败:', e);
-      await navigator.clipboard.writeText(oauthUrl).catch(() => {});
-      setOauthUrlCopied(true);
-      setTimeout(() => setOauthUrlCopied(false), 1200);
+      setOauthCompleteError(`打开授权浏览器失败：${String(e).replace(/^Error:\s*/, '')}`);
     }
   }, [oauthUrl, oauthLog, oauthService]);
 

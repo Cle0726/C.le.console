@@ -116,6 +116,7 @@ import {
   open as openFileDialog,
 } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { openOAuthUrl } from "../utils/openOAuthUrl";
 import {
   CodexOverviewTabsHeader,
   CodexTab,
@@ -4456,11 +4457,10 @@ export function CodexAccountsPage() {
   const handleOpenOauthUrl = async () => {
     if (!oauthUrl) return;
     try {
-      await openUrl(oauthUrl);
-    } catch {
-      await navigator.clipboard.writeText(oauthUrl).catch(() => {});
-      setOauthUrlCopied(true);
-      setTimeout(() => setOauthUrlCopied(false), 1200);
+      setOauthCallbackError(null);
+      await openOAuthUrl(oauthUrl);
+    } catch (error) {
+      setOauthCallbackError(`打开授权浏览器失败：${String(error).replace(/^Error:\s*/, "")}`);
     }
   };
 

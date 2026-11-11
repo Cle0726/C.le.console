@@ -1143,11 +1143,16 @@ fn inherited_proxy_env() -> &'static Vec<(&'static str, Option<String>)> {
 }
 
 fn managed_proxy_env_pairs(config: &UserConfig) -> Vec<(&'static str, String)> {
-    if !config.global_proxy_enabled {
-        return Vec::new();
-    }
+    // The selected subscription is scoped to this application and its child
+    // processes; it does not alter the operating system's proxy settings.
+    let subscription = crate::modules::subscription_proxy::enabled_local_proxy();
+    managed_proxy_env_pairs_for(config, subscription.as_deref())
+}
 
-    let proxy_url = config.global_proxy_url.trim();
+fn managed_proxy_env_pairs_for(config: &UserConfig, subscription: Option<&str>) -> Vec<(&'static str, String)> {
+    let proxy_url = subscription.unwrap_or_else(|| {
+        if config.global_proxy_enabled { config.global_proxy_url.trim() } else { "" }
+    });
     if proxy_url.is_empty() {
         return Vec::new();
     }
@@ -1157,8 +1162,8 @@ fn managed_proxy_env_pairs(config: &UserConfig) -> Vec<(&'static str, String)> {
         pairs.push((key, proxy_url.to_string()));
     }
 
-    let no_proxy =
-        crate::modules::codex_protocol::merge_local_no_proxy(config.global_proxy_no_proxy.trim());
+    let bypass = if subscription.is_some() { "" } else { config.global_proxy_no_proxy.trim() };
+    let no_proxy = crate::modules::codex_protocol::merge_local_no_proxy(bypass);
     if !no_proxy.is_empty() {
         for key in MANAGED_PROXY_NO_PROXY_KEYS {
             pairs.push((key, no_proxy.clone()));
@@ -1166,6 +1171,23 @@ fn managed_proxy_env_pairs(config: &UserConfig) -> Vec<(&'static str, String)> {
     }
 
     pairs
+}
+
+#[cfg(test)]
+mod subscription_proxy_tests {
+    use super::*;
+    #[test]
+    fn subscription_overrides_manual_proxy_but_bypasses_only_loopback() {
+        let mut config = UserConfig::default();
+        config.global_proxy_enabled = true;
+        config.global_proxy_url = "http://127.0.0.1:9999".into();
+        config.global_proxy_no_proxy = "google.com,localhost".into();
+        let pairs = managed_proxy_env_pairs_for(&config, Some("http://127.0.0.1:17890"));
+        assert!(pairs.contains(&("HTTPS_PROXY", "http://127.0.0.1:17890".into())));
+        let bypass = &pairs.iter().find(|(key, _)| *key == "NO_PROXY").unwrap().1;
+        assert!(bypass.contains("127.0.0.1"));
+        assert!(!bypass.contains("google.com"));
+    }
 }
 
 fn clear_managed_proxy_env() {
@@ -1202,6 +1224,8 @@ fn restore_inherited_proxy_env() {
 }
 
 pub fn sync_global_proxy_env(config: &UserConfig) {
+    // Capture inherited values before either clearing or overwriting them.
+    let _ = inherited_proxy_env();
     let pairs = managed_proxy_env_pairs(config);
     if pairs.is_empty() {
         restore_inherited_proxy_env();

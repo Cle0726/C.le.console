@@ -67,6 +67,7 @@ pub mod multi_model_api_window;
 pub mod multi_model_xai;
 pub mod network_egress;
 pub mod oauth;
+pub mod oauth_browser;
 pub mod oauth_pending_state;
 pub mod oauth_server;
 pub mod openclaw_auth;

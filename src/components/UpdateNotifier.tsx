@@ -33,7 +33,6 @@ type UpdateDownloadEvent =
       data?: null;
     };
 
-const LATEST_RELEASE_API = 'https://api.github.com/repos/Cle0726/C.le.console/releases/latest';
 const RELEASES_PAGE = 'https://github.com/Cle0726/C.le.console/releases';
 const REMIND_AFTER_MS = 24 * 60 * 60 * 1000;
 const CHECK_DELAY_MS = 3200;
@@ -134,18 +133,7 @@ export function UpdateNotifier() {
       setChecking(true);
       void Promise.all([
         getVersion(),
-        fetch(LATEST_RELEASE_API, {
-          method: 'GET',
-          headers: {
-            Accept: 'application/vnd.github+json',
-          },
-          cache: 'no-store',
-        }).then(async (response) => {
-          if (!response.ok) {
-            throw new Error(`GitHub release check failed: HTTP ${response.status}`);
-          }
-          return response.json() as Promise<GitHubRelease>;
-        }),
+        invoke<GitHubRelease>('get_latest_app_release'),
       ])
         .then(([installedVersion, latestRelease]) => {
           if (cancelled) return;

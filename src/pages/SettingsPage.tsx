@@ -95,7 +95,6 @@ type GitHubReleaseSummary = {
   prerelease?: boolean;
 };
 
-const LATEST_RELEASE_API = 'https://api.github.com/repos/Cle0726/C.le.console/releases/latest';
 
 const normalizeVersion = (version: string) => version.trim().replace(/^v/i, '').split('+', 1)[0];
 
@@ -2623,15 +2622,10 @@ export function SettingsPage() {
     setManualUpdateMessage('正在检查最新版本…');
     setManualUpdateError('');
     try {
-      const [installedVersion, response] = await Promise.all([
+      const [installedVersion, release] = await Promise.all([
         getVersion(),
-        fetch(LATEST_RELEASE_API, {
-          headers: { Accept: 'application/vnd.github+json' },
-          cache: 'no-store',
-        }),
+        invoke<GitHubReleaseSummary>('get_latest_app_release'),
       ]);
-      if (!response.ok) throw new Error(`更新服务器返回 HTTP ${response.status}`);
-      const release = (await response.json()) as GitHubReleaseSummary;
       const candidate = release.tag_name || '';
       if (
         !candidate

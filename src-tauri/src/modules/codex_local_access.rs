@@ -365,6 +365,7 @@ struct UpstreamHttpClientSignature {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpstreamProxySource {
+    Subscription,
     ApiService,
     Global,
     SystemEnv,
@@ -770,6 +771,13 @@ fn current_upstream_http_client_signature(
     connect_timeout: Duration,
 ) -> UpstreamHttpClientSignature {
     let connect_timeout_ms = duration_to_millis(connect_timeout);
+    if let Some(proxy_url) = crate::modules::subscription_proxy::enabled_local_proxy() {
+        return UpstreamHttpClientSignature {
+            proxy_source: UpstreamProxySource::Subscription,
+            proxy_url: Some(proxy_url),
+            connect_timeout_ms,
+        };
+    }
     if let Some(proxy_url) = upstream_proxy_url
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -862,6 +870,9 @@ fn build_localhost_http_client(request_timeout: Duration, label: &str) -> Result
 
 fn log_upstream_http_client_signature(signature: &UpstreamHttpClientSignature) {
     match (signature.proxy_source, signature.proxy_url.as_deref()) {
+        (UpstreamProxySource::Subscription, Some(proxy_url)) => logger::log_info(&format!(
+            "[CodexLocalAccess][legacy] 上游使用工作台订阅代理 proxy_url={}", redact_proxy_url_for_log(proxy_url)
+        )),
         (UpstreamProxySource::ApiService, Some(proxy_url)) => logger::log_info(&format!(
             "[CodexLocalAccess][legacy] 上游 HTTP 客户端已应用 API 服务代理 proxy_url={}",
             redact_proxy_url_for_log(proxy_url)
@@ -883,6 +894,9 @@ fn log_upstream_http_client_signature(signature: &UpstreamHttpClientSignature) {
 
 fn log_sidecar_proxy_signature(signature: &UpstreamHttpClientSignature) {
     match (signature.proxy_source, signature.proxy_url.as_deref()) {
+        (UpstreamProxySource::Subscription, Some(proxy_url)) => logger::log_info(&format!(
+            "[CodexLocalAccess][sidecar] 上游使用工作台订阅代理 proxy_url={}", redact_proxy_url_for_log(proxy_url)
+        )),
         (UpstreamProxySource::ApiService, Some(proxy_url)) => logger::log_info(&format!(
             "[CodexLocalAccess][sidecar] 上游代理已按旧网关规则应用 API 服务代理 proxy_url={}",
             redact_proxy_url_for_log(proxy_url)
@@ -7487,6 +7501,7 @@ fn sidecar_effective_proxy_signature(
     }
     if let Some(proxy_url) = signature.proxy_url.as_deref() {
         Proxy::all(proxy_url).map_err(|e| match signature.proxy_source {
+            UpstreamProxySource::Subscription => format!("订阅代理地址无效: {}", e),
             UpstreamProxySource::ApiService => format!("API 代理地址无效: {}", e),
             UpstreamProxySource::Global => format!("全局代理地址无效: {}", e),
             UpstreamProxySource::SystemEnv => format!("环境代理地址无效: {}", e),
@@ -15771,6 +15786,7 @@ fn gateway_error_code(status: u16) -> &'static str {
 
 fn gateway_proxy_diagnostics_message(diagnostics: &UpstreamProxyDiagnostics) -> String {
     match diagnostics.proxy_source {
+        UpstreamProxySource::Subscription => "当前使用工作台订阅节点。".to_string(),
         UpstreamProxySource::ApiService => match diagnostics.proxy_url.as_deref() {
             Some(proxy_url) => format!("当前使用 API 代理地址：{}。", proxy_url),
             None => "当前 API 代理地址为空。".to_string(),
@@ -15798,6 +15814,7 @@ fn gateway_proxy_diagnostics_message(diagnostics: &UpstreamProxyDiagnostics) -> 
 
 fn upstream_proxy_source_code(source: UpstreamProxySource) -> &'static str {
     match source {
+        UpstreamProxySource::Subscription => "subscription",
         UpstreamProxySource::ApiService => "api_service",
         UpstreamProxySource::Global => "global",
         UpstreamProxySource::SystemEnv => "system_env",

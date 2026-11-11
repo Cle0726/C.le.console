@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { confirm, open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile } from '@tauri-apps/plugin-fs';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openOAuthUrl } from '../utils/openOAuthUrl';
 import {
   Bot, Boxes, CalendarCheck, Check, ChevronDown, CircleAlert, Copy, Database, Download, Eye, EyeOff, FileText,
   FileUp, Film, Globe, Image, KeyRound, MoreHorizontal, Network, Plus, Power, RefreshCw, Route,
@@ -42,6 +42,7 @@ type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
 
 const PROVIDERS = [
   { id: 'xai', label: 'Grok / xAI', short: 'Grok', baseUrl: 'https://api.x.ai/v1' },
+  { id: 'codex', label: 'Codex / ChatGPT（独立服务）', short: 'Codex', baseUrl: '' },
   { id: 'claude', label: 'Claude', short: 'Claude', baseUrl: 'https://api.anthropic.com' },
   { id: 'claude-cli', label: 'Claude CLI（订阅）', short: 'Claude CLI', baseUrl: '' },
   { id: 'gemini', label: 'Gemini', short: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com' },
@@ -1357,6 +1358,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
   const [genericDraft, setGenericDraft] = useState<GenericOAuthDraft>(() => defaultGenericOAuthDraft(account.provider));
   const oauthLoginIdRef = useRef<string | null>(null);
   const oauthProviderRef = useRef<string | null>(null);
+  const oauthAutoStartRef = useRef('');
   const isCodex = account.provider === 'codex';
   const isGemini = account.provider === 'gemini';
   const isClaude = account.provider === 'claude';
@@ -1410,17 +1412,17 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
 
   const finishManagedImport = useCallback(async (successText: string) => {
     setLocalBusy(true);
-    setModalStatus({ tone: 'loading', text: '正在同步到多模型 API 账号池...' });
+    setModalStatus({ tone: 'loading', text: isCodex ? '正在保存 Codex 账号...' : '正在同步到多模型 API 账号池...' });
     try {
-      await onSyncManaged();
-      setModalStatus({ tone: 'success', text: successText });
-      window.setTimeout(onClose, 850);
+      if (!isCodex) await onSyncManaged();
+      setModalStatus({ tone: 'success', text: isCodex ? 'Codex 账号已导入。它使用独立的 Codex API 服务，请在 Codex 服务中选择该账号。' : successText });
+      if (!isCodex) window.setTimeout(onClose, 850);
     } catch (error) {
       setModalStatus({ tone: 'error', text: `同步失败：${String(error).replace(/^Error:\s*/, '')}` });
     } finally {
       setLocalBusy(false);
     }
-  }, [onClose, onSyncManaged]);
+  }, [isCodex, onClose, onSyncManaged]);
 
   const startNativeOauth = useCallback(async (force = false) => {
     if (!hasNativeOAuth || addMode !== 'oauth') return;
@@ -1486,9 +1488,12 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
   }, [account.provider, addMode, cancelActiveOAuth, finishManagedImport, hasNativeOAuth, isAntigravity, isClaude, isCodex, isGemini, isXai, oauthUrl]);
 
   useEffect(() => {
-    if (!hasNativeOAuth || addMode !== 'oauth') return;
-    if (!oauthUrl && !localBusy) void startNativeOauth();
-  }, [addMode, hasNativeOAuth, localBusy, oauthUrl, startNativeOauth]);
+    if (!hasNativeOAuth || addMode !== 'oauth') { oauthAutoStartRef.current = ''; return; }
+    if (!oauthUrl && !localBusy && oauthAutoStartRef.current !== account.provider) {
+      oauthAutoStartRef.current = account.provider;
+      void startNativeOauth();
+    }
+  }, [account.provider, addMode, hasNativeOAuth, localBusy, oauthUrl, startNativeOauth]);
 
   useEffect(() => {
     if (addMode === 'oauth') return;
@@ -1545,9 +1550,9 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
   const handleOpenOauthUrl = async () => {
     if (!oauthUrl) return;
     try {
-      await openUrl(oauthUrl);
-    } catch {
-      await handleCopyOauthUrl();
+      await openOAuthUrl(oauthUrl);
+    } catch (error) {
+      setModalStatus({ tone: 'error', text: `打开授权浏览器失败：${String(error).replace(/^Error:\s*/, '')}` });
     }
   };
 
@@ -1569,10 +1574,9 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
       if (provider === 'gemini') {
         if (!loginId) throw new Error('Gemini OAuth 会话不存在，请重新生成授权链接');
         if (callbackUrl) await geminiService.submitGeminiOAuthCallbackUrl(loginId, callbackUrl);
-        await geminiService.completeGeminiOAuthLogin(loginId);
-        oauthLoginIdRef.current = null;
-        oauthProviderRef.current = null;
-        await finishManagedImport('Gemini OAuth 账号已导入 API 代理账号池');
+        // The existing completion task is already waiting for this callback.
+        // Starting a second completion races its listener and token exchange.
+        setModalStatus({ tone: 'info', text: '已收到回调，正在等待授权完成并保存账号…' });
         return;
       }
       if (provider === 'claude') {
@@ -1936,6 +1940,7 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
         <button type="button" className={addMode === 'import' ? 'active' : ''} onClick={() => setAddMode('import')} disabled={disabled || isSeedance}><Database size={14} /><span>{isDoubaoWork ? '当前豆包账号' : '导入'}</span></button>
       </div>
       <div className="mm-modal-form mm-modal-form-codex-like">
+        {isCodex && <p className="section-desc wide">Codex / ChatGPT 账号保存在独立的 Codex 服务，不会显示在多模型账号池；订阅节点启用后，授权和该服务共用工作台节点。</p>}
         <label><span>账号名称</span><input autoFocus value={account.name} onChange={(event) => setAccount({ ...account, name: event.target.value })} placeholder={`例如 ${providerLabel(account.provider)} 主账号`} /></label>
         <label><span>优先级</span><input type="number" value={account.priority} onChange={(event) => setAccount({ ...account, priority: Number(event.target.value) })} /></label>
         <label><span>模型前缀</span><input value={account.prefix} onChange={(event) => setAccount({ ...account, prefix: event.target.value })} placeholder="可选" /></label>
@@ -1959,15 +1964,15 @@ function AccountModal({ account, isNew, setAccount, modelText, setModelText, cre
                   <button type="button" className="btn btn-secondary" onClick={() => void startNativeOauth(true)} disabled={disabled}><Globe size={16} />重新生成链接</button>
                 </>}
               </div>
-              <p className="section-desc">{providerLabel(account.provider)} 已接入真实 OAuth 流程。打开授权链接完成登录，随后自动或手动提交回调并同步到多模型 API 代理账号池。</p>
+              <p className="section-desc">{isCodex ? '打开授权链接完成登录，账号将保存到独立的 Codex 服务。' : `${providerLabel(account.provider)} 已接入 OAuth 流程。打开授权链接完成登录，随后自动或手动提交回调并同步到多模型 API 代理账号池。`}</p>
               {oauthUrl ? <div className="mm-oauth-url-section">
                 <label><span>授权链接</span><div className="mm-oauth-url-box"><input value={oauthUrl} readOnly /><button type="button" onClick={() => void handleCopyOauthUrl()}>{oauthUrlCopied ? <Check size={16} /> : <Copy size={16} />}</button></div></label>
                 {isXai && xaiUserCode && <div className="mm-xai-device-code"><span>设备验证码</span><strong>{xaiUserCode}</strong><button type="button" onClick={() => void copyText(xaiUserCode)}><Copy size={15} />复制</button></div>}
                 <button type="button" className="btn btn-primary btn-full" onClick={() => void handleOpenOauthUrl()} disabled={disabled}><Globe size={16} />在浏览器中打开</button>
                 {!isXai && <label><span>手动输入回调地址 / code</span><div className="mm-oauth-url-box mm-oauth-callback-box"><input value={oauthCallbackInput} onChange={(event) => setOauthCallbackInput(event.target.value)} placeholder="粘贴完整回调地址或授权页面返回的 code" /><button type="button" onClick={() => void handleSubmitOauthCallback()} disabled={disabled || (!oauthCallbackInput.trim() && oauthProviderRef.current !== 'antigravity')}><Check size={16} /><span>我已授权，继续</span></button></div></label>}
                 {isXai && <button type="button" className="btn btn-primary btn-full" onClick={() => void handleSubmitOauthCallback()} disabled={disabled || !oauthLoginIdRef.current}><Check size={16} />我已授权，继续并检测额度</button>}
-                <p className="oauth-hint">{isXai ? '使用 xAI 官方 OIDC Device Flow，不需要粘贴回调地址；完成授权后程序会轮询 token、保存 refresh token 并检测套餐额度。' : 'Codex/Gemini 支持回调自动更新；Claude 通常需要粘贴 code 或完整回调地址；Antigravity 可直接点继续或粘贴回调地址。'}</p>
-              </div> : <div className="mm-oauth-loading"><RefreshCw className="spin" />正在准备授权链接...</div>}
+                <p className="oauth-hint">{isXai ? '使用 xAI 官方 OIDC Device Flow，不需要粘贴回调地址；完成授权后程序会轮询 token、保存 refresh token 并检测套餐额度。' : 'Codex/Gemini 支持回调自动更新；Claude 通常需要粘贴 code 或完整回调地址；Antigravity 可直接点继续或粘贴回调地址。'} 启用订阅节点后，请使用上方“在浏览器中打开”，不要复制到普通浏览器。</p>
+              </div> : localBusy ? <div className="mm-oauth-loading"><RefreshCw className="spin" />正在准备授权链接...</div> : <button type="button" className="btn btn-secondary btn-full" onClick={() => void startNativeOauth(true)} disabled={disabled}><RefreshCw size={16} />重新生成授权链接</button>}
             </> : <>
               <p className="section-desc">当前供应商使用通用 OAuth2 Authorization Code + PKCE。填写供应商提供的 Authorization URL、Token URL、Client ID 等参数后生成授权链接，回调交换出来的 credential 会直接写入当前上游账号。</p>
               <div className="mm-generic-oauth-grid">

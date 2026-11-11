@@ -1598,8 +1598,11 @@ fn managed_proxy_env_pairs() -> Vec<(&'static str, String)> {
     let config = config::get_user_config();
     let mut pairs = Vec::new();
 
-    let proxy_url = config.global_proxy_url.trim();
-    if config.global_proxy_enabled && !proxy_url.is_empty() {
+    let subscription = crate::modules::subscription_proxy::enabled_local_proxy();
+    let proxy_url = subscription.as_deref().unwrap_or_else(|| {
+        if config.global_proxy_enabled { config.global_proxy_url.trim() } else { "" }
+    });
+    if !proxy_url.is_empty() {
         pairs.extend([
             ("http_proxy", proxy_url.to_string()),
             ("https_proxy", proxy_url.to_string()),
@@ -1612,15 +1615,12 @@ fn managed_proxy_env_pairs() -> Vec<(&'static str, String)> {
         crate::modules::logger::log_warn("[Proxy] 全局代理已启用，但代理地址为空，跳过注入");
     }
 
-    let no_proxy_seed = [
-        std::env::var("no_proxy").unwrap_or_default(),
-        std::env::var("NO_PROXY").unwrap_or_default(),
-        config.global_proxy_no_proxy,
-    ]
-    .into_iter()
-    .filter(|value| !value.trim().is_empty())
-    .collect::<Vec<_>>()
-    .join(",");
+    let no_proxy_seed = if subscription.is_some() {
+        String::new()
+    } else {
+        [std::env::var("no_proxy").unwrap_or_default(), std::env::var("NO_PROXY").unwrap_or_default(), config.global_proxy_no_proxy]
+            .into_iter().filter(|value| !value.trim().is_empty()).collect::<Vec<_>>().join(",")
+    };
     let no_proxy = crate::modules::codex_protocol::merge_local_no_proxy(&no_proxy_seed);
     if !no_proxy.is_empty() {
         pairs.push(("no_proxy", no_proxy.clone()));

@@ -1,0 +1,15 @@
+{
+  "bundle": {
+    "externalBin": [
+      "../sidecars/cle-cliproxy/bin/cle-cliproxy",
+      "../sidecars/cockpit-cliproxy/bin/cockpit-cliproxy",
+      "../sidecars/jimeng-api/bin/jimeng-api",
+      "../sidecars/mihomo/bin/mihomo"
+    ],
+    "resources": {
+      "../sidecars/mihomo/LICENSE": "licenses/mihomo-LICENSE",
+      "../sidecars/mihomo/NOTICE.md": "licenses/mihomo-NOTICE.md",
+      "../sidecars/mihomo/mihomo-v1.19.33-source.zip": "licenses/mihomo-v1.19.33-source.zip"
+    }
+  }
+}
