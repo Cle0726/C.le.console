@@ -252,3 +252,97 @@ func TestWorkbuddyRuntimeRotatesSeparateManagedCredentials(t *testing.T) {
 		t.Fatalf("accounts did not rotate independently: %v", selected)
 	}
 }
+
+func workbuddyTestRoundTrip(t *testing.T, status int, contentType, body string) *http.Response {
+	t.Helper()
+	bridge := workbuddyTestBridge(t)
+	t.Cleanup(bridge.Close)
+	transport := &workbuddyRoundTripper{base: workbuddyTestTransport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	request, _ := http.NewRequest("POST", "https://copilot.tencent.com/v2/chat/completions", strings.NewReader(`{"model":"workbuddy/hy4free","stream":true,"messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set(workbuddyCredentialHeader, bridge.URL+"/credentials/account")
+	request.Header.Set("Authorization", "Bearer internal-key")
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = response.Body.Close() })
+	return response
+}
+
+const workbuddyRoleOnlyChunk = `data: {"id":"x","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"","function_call":null,"tool_calls":null}}]}` + "\n\n"
+
+func TestWorkbuddyCutBeforeAnyOutputIsAnUpstreamErrorNotAStream(t *testing.T) {
+	// The real WorkBuddy stream opens with an empty role delta. A cut right after
+	// it used to reach the client as an EOF that was never retried elsewhere.
+	for name, body := range map[string]string{
+		"role chunk then EOF":    workbuddyRoleOnlyChunk,
+		"heartbeat then EOF":     ": heartbeat\n\n",
+		"empty choices then EOF": "data: {\"choices\":[]}\n\n" + workbuddyRoleOnlyChunk,
+		"nothing at all":         "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := workbuddyTestRoundTrip(t, 200, "text/event-stream", body)
+			if response.StatusCode != http.StatusBadGateway {
+				t.Fatalf("status %d, want 502 so the manager tries the next account", response.StatusCode)
+			}
+			raw, _ := io.ReadAll(response.Body)
+			if !strings.Contains(string(raw), "出字前中断") {
+				t.Fatalf("unexpected body %s", raw)
+			}
+		})
+	}
+}
+
+func TestWorkbuddyStreamIsHandedOverOnceOutputStarts(t *testing.T) {
+	for name, first := range map[string]string{
+		"reasoning": `{"choices":[{"delta":{"content":"","reasoning_content":"嗯"}}]}`,
+		"text":      `{"choices":[{"delta":{"content":"好"}}]}`,
+		"tool call": `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"f","arguments":""}}]}}]}`,
+		"finish":    `{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := workbuddyRoleOnlyChunk + "data: " + first + "\n\n" + `data: {"choices":[{"delta":{"content":"!"},"finish_reason":"stop"}]}` + "\n\ndata: [DONE]\n\n"
+			response := workbuddyTestRoundTrip(t, 200, "text/event-stream", body)
+			if response.StatusCode != 200 {
+				t.Fatalf("status %d", response.StatusCode)
+			}
+			raw, err := io.ReadAll(response.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Nothing held back is lost: the role chunk and the first output chunk come through in order.
+			text := string(raw)
+			if !strings.Contains(text, `"role":"assistant"`) || strings.Index(text, `"role":"assistant"`) > strings.Index(text, first[:20]) {
+				t.Fatalf("held-back prefix not replayed in order: %s", text)
+			}
+		})
+	}
+	// A cut after output has started is still reported, never turned into success.
+	response := workbuddyTestRoundTrip(t, 200, "text/event-stream", workbuddyRoleOnlyChunk+`data: {"choices":[{"delta":{"content":"半"}}]}`+"\n\n")
+	if response.StatusCode != 200 {
+		t.Fatalf("status %d", response.StatusCode)
+	}
+	if _, err := io.ReadAll(response.Body); err == nil {
+		t.Fatal("truncated stream read as success")
+	}
+}
+
+func TestWorkbuddySpentQuotaIs402AndRealRateLimitStays429(t *testing.T) {
+	spent := `{"error":{"code":"rate_limited","message":"{\"error\":{\"data\":{\"code\":14018,\"msg\":\"额度已用完，请购买加量包\"}}}"}}`
+	if got := workbuddyTestRoundTrip(t, 429, "application/json", spent).StatusCode; got != http.StatusPaymentRequired {
+		t.Fatalf("spent quota: status %d, want 402", got)
+	}
+	limited := `{"error":{"message":"too many requests, slow down"}}`
+	response := workbuddyTestRoundTrip(t, 429, "application/json", limited)
+	if response.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("rate limit: status %d, want 429", response.StatusCode)
+	}
+	if raw, _ := io.ReadAll(response.Body); string(raw) != limited {
+		t.Fatalf("rate-limit body not passed through: %s", raw)
+	}
+	if status, _ := workbuddyBusinessError([]byte(`{"code":14018,"msg":"额度已用完"}`)); status != http.StatusPaymentRequired {
+		t.Fatalf("business 14018: status %d", status)
+	}
+}

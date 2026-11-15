@@ -144,7 +144,7 @@ attempts:
 			continue
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			return response, nil
+			return workbuddyClassifyHTTPError(original, response), nil
 		}
 		if !strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 			payload, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
@@ -161,13 +161,22 @@ attempts:
 			}
 			return workbuddyErrorResponse(original, status, message), nil
 		}
+		// Hold the stream back until the first chunk that carries output (text,
+		// reasoning, a tool call or a finish reason). WorkBuddy opens every stream
+		// with an empty role delta; handing that over counts as "payload sent", so a
+		// cut right after it reached the client as an EOF with nothing produced and
+		// was never retried on another account. Failing here instead returns a
+		// normal upstream error, and the manager moves on to the next account.
 		reader := bufio.NewReader(response.Body)
 		var prefix bytes.Buffer
 		for prefix.Len() < 1<<20 {
 			line, readErr := reader.ReadString('\n')
 			prefix.WriteString(line)
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if strings.HasPrefix(line, "data:") && data != "[DONE]" {
+			data := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "data:"))
+			if strings.HasPrefix(strings.TrimSpace(line), "data:") {
+				if data == "[DONE]" {
+					break
+				}
 				if status, message := workbuddyBusinessError([]byte(data)); status != 0 {
 					_ = response.Body.Close()
 					if status == 401 && attempt == 0 {
@@ -175,10 +184,17 @@ attempts:
 					}
 					return workbuddyErrorResponse(original, status, message), nil
 				}
-				break
+				if workbuddyChunkHasOutput([]byte(data)) {
+					break
+				}
 			}
 			if readErr != nil {
-				break
+				_ = response.Body.Close()
+				reason := "WorkBuddy 对话流在出字前中断"
+				if readErr != io.EOF {
+					reason += "：" + readErr.Error()
+				}
+				return workbuddyErrorResponse(original, http.StatusBadGateway, reason), nil
 			}
 		}
 		// A stream may begin with heartbeats or fail after its first valid chunk.
@@ -336,7 +352,7 @@ func workbuddyBusinessError(raw []byte) (int, string) {
 	}
 	lower := strings.ToLower(message)
 	status := http.StatusBadGateway
-	if strings.Contains(lower, "credit") || strings.Contains(message, "积分不足") || strings.Contains(message, "额度不足") || strings.Contains(lower, "quota") {
+	if workbuddyQuotaExhausted(message) || fmt.Sprint(code) == workbuddyQuotaExhaustedCode {
 		status = http.StatusPaymentRequired
 	} else if strings.Contains(lower, "session") || strings.Contains(lower, "token") || fmt.Sprint(code) == "12153" {
 		status = http.StatusUnauthorized
@@ -346,6 +362,68 @@ func workbuddyBusinessError(raw []byte) (int, string) {
 		status = http.StatusForbidden
 	}
 	return status, message
+}
+
+// workbuddyQuotaExhaustedCode is WorkBuddy's "额度已用完" business code.
+const workbuddyQuotaExhaustedCode = "14018"
+
+func workbuddyQuotaExhausted(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "credit") || strings.Contains(lower, "quota") ||
+		strings.Contains(text, "积分不足") || strings.Contains(text, "额度不足") ||
+		strings.Contains(text, "额度已用完") || strings.Contains(text, "额度已用尽")
+}
+
+// workbuddyClassifyHTTPError keeps upstream error responses as they are, except
+// that a 429 which is really "this account's quota is used up" becomes 402.
+// The manager backs a 429 off from one second upward and keeps re-probing the
+// spent account; 402 parks that account × model for 30 minutes, and leaves 429
+// for genuine short rate limits.
+func workbuddyClassifyHTTPError(req *http.Request, response *http.Response) *http.Response {
+	if response.StatusCode != http.StatusTooManyRequests {
+		return response
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	_ = response.Body.Close()
+	text := string(payload)
+	if err == nil && (strings.Contains(text, workbuddyQuotaExhaustedCode) || strings.Contains(text, "额度已用完") || strings.Contains(text, "额度已用尽")) {
+		message := "WorkBuddy 这个账号的额度已用完"
+		return workbuddyErrorResponse(req, http.StatusPaymentRequired, message)
+	}
+	response.Body = io.NopCloser(bytes.NewReader(payload))
+	response.ContentLength = int64(len(payload))
+	return response
+}
+
+// workbuddyChunkHasOutput reports whether a stream chunk carries anything a
+// client would show or act on.
+func workbuddyChunkHasOutput(data []byte) bool {
+	var chunk struct {
+		Choices []struct {
+			Delta        map[string]any `json:"delta"`
+			FinishReason string         `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(data, &chunk) != nil {
+		return true // not ours to judge; let the validated reader see it
+	}
+	for _, choice := range chunk.Choices {
+		if choice.FinishReason != "" {
+			return true
+		}
+		for _, key := range []string{"content", "reasoning_content", "reasoning"} {
+			if text, ok := choice.Delta[key].(string); ok && text != "" {
+				return true
+			}
+		}
+		if calls, ok := choice.Delta["tool_calls"].([]any); ok && len(calls) > 0 {
+			return true
+		}
+		if call, ok := choice.Delta["function_call"].(map[string]any); ok && len(call) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func workbuddyErrorResponse(req *http.Request, status int, message string) *http.Response {
