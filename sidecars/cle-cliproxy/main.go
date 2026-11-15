@@ -1589,10 +1589,14 @@ func authAvailable(auth *coreauth.Auth, model string, now time.Time) bool {
 			if state.Status == coreauth.StatusDisabled {
 				return false
 			}
-			if state.Unavailable && !state.NextRetryAfter.IsZero() && state.NextRetryAfter.After(now) {
-				return false
-			}
+			return !(state.Unavailable && !state.NextRetryAfter.IsZero() && state.NextRetryAfter.After(now))
 		}
+		// The account-level Unavailable below is aggregated from the models this
+		// account has been asked for: when every recorded model is cooling down
+		// it marks the whole account. A model never tried here has its own quota
+		// (a spent kimi says nothing about hy4free), so it stays usable — the same
+		// rule as CLIProxyAPI's isAuthBlockedForModel.
+		return true
 	}
 	if auth.Unavailable && !auth.NextRetryAfter.IsZero() && auth.NextRetryAfter.After(now) {
 		return false

@@ -2304,3 +2304,32 @@ func TestBuildImagesAPIResponseFromNativeChat(t *testing.T) {
 		t.Fatalf("unexpected converted image: %#v", item)
 	}
 }
+
+func TestAuthAvailableJudgesTheRequestedModelOnly(t *testing.T) {
+	now := time.Now()
+	later := now.Add(30 * time.Minute)
+	// Only a spent paid model was ever tried on this account, so the aggregated
+	// account state says "unavailable" — hy4free must still be usable here.
+	spent := &coreauth.Auth{
+		ID:             "wb-1",
+		Unavailable:    true,
+		NextRetryAfter: later,
+		ModelStates: map[string]*coreauth.ModelState{
+			"workbuddy/kimi-k3.1-pro": {Unavailable: true, NextRetryAfter: later},
+		},
+	}
+	if !authAvailable(spent, "workbuddy/hy4free", now) {
+		t.Fatal("a model never tried on the account was blocked by another model's cooldown")
+	}
+	if authAvailable(spent, "workbuddy/kimi-k3.1-pro", now) {
+		t.Fatal("the cooling model itself must stay blocked")
+	}
+	// An account-wide failure with no model states (e.g. a broken credential) still blocks.
+	broken := &coreauth.Auth{ID: "wb-2", Unavailable: true, NextRetryAfter: later}
+	if authAvailable(broken, "workbuddy/hy4free", now) {
+		t.Fatal("account-wide cooldown ignored")
+	}
+	if authAvailable(&coreauth.Auth{ID: "wb-3", Disabled: true}, "workbuddy/hy4free", now) {
+		t.Fatal("disabled account picked")
+	}
+}
