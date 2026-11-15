@@ -1348,6 +1348,11 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                     "models": mapped_models,
                 }));
             }
+            "doubao-web" => {
+                // Doubao web chat is served by cle-cliproxy itself; the cookie
+                // is fetched per request over the credential bridge.
+                native_bridge_id.as_ref().ok_or("豆包对话通道必须关联 C.le 已登录的豆包账号")?;
+            }
             "doubao-work" if account.auth_mode == "local_cli" => {
                 // Doubao Work authenticates through its own signed-in desktop
                 // renderer; its routes are intercepted by cle-cliproxy instead
@@ -1479,6 +1484,12 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             .cloned()
             .unwrap_or_default();
         account_auth_ids.insert(account.id.clone(), manifest_auth_id.clone());
+        let mut manifest_headers = account.headers.clone();
+        if provider == "doubao-web" {
+            if let (Some(bridge), Some(bridge_id)) = (bridge.as_ref(), native_bridge_id.as_ref()) {
+                manifest_headers.insert("X-Cle-Doubao-Credential-URL".into(), bridge.url(bridge_id));
+            }
+        }
         manifest_accounts.push(json!({
             "id": account.id,
             "email": account.name,
@@ -1490,7 +1501,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             "provider": manifest_provider,
             "baseUrl": account.base_url,
             "proxyUrl": if account_proxy.trim().is_empty() { effective_upstream_proxy.as_str() } else { account_proxy.as_str() },
-            "headers": account.headers,
+            "headers": manifest_headers,
             "priority": account.priority,
             "modelQuotas": model_quotas,
             "modelLimits": models.iter().flat_map(|model| {
@@ -5143,7 +5154,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         .collect::<BTreeMap<_, _>>();
     config
         .accounts
-        .retain(|account| !account.source.starts_with("cle:") || account.source.starts_with("cle:workbuddy:") || account.source.starts_with("cle:claude-cli:") || managed_provider_api::supported(&account.provider));
+        .retain(|account| !account.source.starts_with("cle:") || account.source.starts_with("cle:workbuddy:") || account.source.starts_with("cle:claude-cli:") || account.source.starts_with("cle:doubao-web:") || managed_provider_api::supported(&account.provider));
 
     if let Ok(accounts) = account::list_accounts() {
         for managed in accounts.into_iter().filter(|item| {
@@ -5371,6 +5382,9 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         logger::log_warn(&format!("[MultiModelAPI] WorkBuddy 账号同步: {error}"));
     }
     ensure_claude_cli_routes(&mut config);
+    if let Err(error) = import_doubao_web_routes(&mut config) {
+        logger::log_warn(&format!("[MultiModelAPI] 豆包对话账号同步: {error}"));
+    }
     import_native_routes(&mut config).await?;
     if config.accounts.iter().any(|route| route.source.starts_with("agent2api:")) {
         import_extension_routes(&mut config, false).await?;
@@ -5440,6 +5454,34 @@ async fn import_native_routes(config: &mut MultiModelApiConfig) -> Result<(),Str
         config.accounts.push(MultiModelAccount {id:format!("cle-{provider}-{id}"),name:format!("{provider} · {name}"),provider:provider.into(),
             auth_mode:"oauth_json".into(),base_url:String::new(),api_key:String::new(),cli_path:String::new(),cli_app:String::new(),cli_profile:String::new(),
             credential_json:None,proxy_url:String::new(),prefix:String::new(),priority:0,headers:BTreeMap::new(),models,enabled:true,source});
+    }
+    Ok(())
+}
+
+// Doubao web chat accounts signed in through C.le's own browser window. The
+// gateway emulates tool calls on top of the plain chat, so one model is enough;
+// Doubao picks its default chat model.
+fn import_doubao_web_routes(config: &mut MultiModelApiConfig) -> Result<(), String> {
+    let managed = crate::modules::doubao_web::pool_accounts()?;
+    let sources = managed.iter().map(|(id, _)| format!("cle:doubao-web:{id}")).collect::<BTreeSet<_>>();
+    config.accounts.retain(|route| !route.source.starts_with("cle:doubao-web:") || sources.contains(&route.source));
+    for (id, name) in managed {
+        let source = format!("cle:doubao-web:{id}");
+        let label = format!("豆包对话 · {name}");
+        if let Some(route) = config.accounts.iter_mut().find(|route| route.source == source) {
+            route.name = label;
+            continue;
+        }
+        config.accounts.push(MultiModelAccount {
+            id: format!("cle-doubao-web-{id}"), name: label, provider: "doubao-web".into(),
+            auth_mode: "oauth_json".into(), base_url: String::new(), api_key: String::new(),
+            cli_path: String::new(), cli_app: String::new(), cli_profile: String::new(),
+            credential_json: None, proxy_url: String::new(), prefix: String::new(), priority: 0,
+            headers: BTreeMap::new(),
+            models: vec![MultiModelDefinition { id: "doubao-web/auto".into(), alias: String::new(),
+                capabilities: vec!["text".into()], max_input_tokens: None, max_output_tokens: None, enabled: true }],
+            enabled: true, source,
+        });
     }
     Ok(())
 }

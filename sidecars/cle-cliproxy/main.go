@@ -2837,6 +2837,9 @@ func (s *relayServer) handleResponsesCompact(c *gin.Context) {
 }
 
 func (s *relayServer) handleChatCompletions(c *gin.Context) {
+	if s.handleDoubaoWebIfRequested(c) {
+		return
+	}
 	if s.handleDoubaoWorkIfRequested(c, false) {
 		return
 	}

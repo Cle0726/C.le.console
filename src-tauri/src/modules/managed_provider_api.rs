@@ -7,9 +7,13 @@ use std::sync::OnceLock;
 use tokio::sync::Mutex;
 
 pub fn supported(provider: &str) -> bool { matches!(provider, "kiro" | "github-copilot") }
-pub fn credential_supported(provider: &str) -> bool { supported(provider) || provider == "claude" }
+pub fn credential_supported(provider: &str) -> bool { supported(provider) || provider == "claude" || provider == "doubao-web" }
 
 pub async fn credential_payload(provider: &str, id: &str, force: bool) -> Result<Value, String> {
+    if provider == "doubao-web" {
+        // Cookies come from the account's browser login; nothing to refresh here.
+        return Ok(json!({"cookie": crate::modules::doubao_web::pool_cookie_header(id).await?}));
+    }
     if provider == "claude" {
         let account = claude_account::current_api_account(id, force).await?;
         let oauth = account.claude_credentials_raw.as_ref().and_then(|raw| raw.get("claudeAiOauth"))

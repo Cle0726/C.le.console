@@ -2556,6 +2556,54 @@ pub async fn export_credentials(
     })
 }
 
+/// Doubao accounts the API pool can use for chat: enabled, on the doubao
+/// platform, and last confirmed as signed in by the Doubao server.
+pub(crate) fn pool_accounts() -> Result<Vec<(String, String)>, String> {
+    let app = crate::get_app_handle().ok_or("C.le 尚未启动完成")?;
+    Ok(load_store(app)?
+        .accounts
+        .into_iter()
+        .filter(|account| account.platform_id == "doubao" && account.enabled && account.last_known_logged_in)
+        .map(|account| (account.id, account.name))
+        .collect())
+}
+
+/// Cookie header for the API pool's Doubao chat, read from the account's
+/// browser login (live window, its browser profile, or the saved credential).
+/// Served only over the local credential bridge; never written into gateway files.
+pub(crate) async fn pool_cookie_header(account_id: &str) -> Result<String, String> {
+    let app = crate::get_app_handle().ok_or("C.le 尚未启动完成")?;
+    let account = load_store(app)?
+        .accounts
+        .into_iter()
+        .find(|account| account.id == account_id && account.platform_id == "doubao")
+        .ok_or("豆包账号已删除")?;
+    if !account.enabled {
+        return Err("豆包账号已停用".into());
+    }
+    let now = unix_timestamp() as i64;
+    let mut seen = HashSet::new();
+    let pairs = export_account_cookies(app, &account)
+        .await?
+        .into_iter()
+        .filter(|cookie| {
+            let host = cookie.domain.trim().trim_start_matches('.').to_ascii_lowercase();
+            (host == "doubao.com" || host == "www.doubao.com")
+                && !cookie.value.is_empty()
+                && cookie.expires_unix.map_or(true, |expires| expires > now)
+                && seen.insert(cookie.name.clone())
+        })
+        .map(|cookie| format!("{}={}", cookie.name, cookie.value))
+        .collect::<Vec<_>>();
+    if !pairs.iter().any(|pair| {
+        let name = pair.split('=').next().unwrap_or_default();
+        matches!(name, "sessionid" | "sessionid_ss" | "sid_tt")
+    }) {
+        return Err("豆包登录已失效，请在 C.le 的豆包账号页重新登录".into());
+    }
+    Ok(pairs.join("; "))
+}
+
 pub async fn import_credentials(
     app: AppHandle,
     json: String,
