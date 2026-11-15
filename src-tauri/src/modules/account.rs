@@ -443,6 +443,21 @@ pub fn load_account(account_id: &str) -> Result<Account, String> {
         .map_err(|e| format!("解析账号数据失败: {}", e))
 }
 
+/// Keep a discovered Google project id. Later credential rewrites must not
+/// erase it with an empty value and pin every request onto one account.
+pub fn remember_project_id(account_id: &str, project_id: &str) -> Result<(), String> {
+    let project_id = project_id.trim();
+    if project_id.is_empty() {
+        return Ok(());
+    }
+    let mut account = load_account(account_id)?;
+    if non_empty(account.token.project_id.as_deref()).is_some() {
+        return Ok(());
+    }
+    account.token.project_id = Some(project_id.to_string());
+    save_account(&account)
+}
+
 /// 保存账号数据
 pub fn save_account(account: &Account) -> Result<(), String> {
     let accounts_dir = get_accounts_dir()?;
@@ -648,6 +663,10 @@ pub fn upsert_account(
     if let Some(account_id) = existing_account_id {
         match load_account(&account_id) {
             Ok(mut account) => {
+                let mut token = token;
+                if non_empty(token.project_id.as_deref()).is_none() {
+                    token.project_id = account.token.project_id.clone();
+                }
                 account.token = token;
                 account.name = name.clone();
                 if account.disabled {

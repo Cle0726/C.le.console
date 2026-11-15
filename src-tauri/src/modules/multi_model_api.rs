@@ -37,6 +37,7 @@ static ACCOUNT_USAGE_REFRESHING: AtomicBool = AtomicBool::new(false);
 static CLAUDE_CLI_SUPPRESSED: AtomicBool = AtomicBool::new(false);
 static ACCOUNT_USAGE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static QUOTA_REFRESH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static ANTIGRAVITY_PROJECT_FETCH_AT: OnceLock<StdMutex<BTreeMap<String, Instant>>> = OnceLock::new();
 static ROUTE_DISPATCHES: OnceLock<StdMutex<BTreeMap<String, MultiModelRouteDispatch>>> =
     OnceLock::new();
 static ACCOUNT_USAGE_CACHE: OnceLock<StdMutex<Vec<MultiModelAccountUsage>>> = OnceLock::new();
@@ -1671,9 +1672,20 @@ fn write_auth_file(
 ) -> Result<(), String> {
     let file = format!("{}.json", safe_file_name(id));
     expected.insert(file.clone());
-    let raw = serde_json::to_string_pretty(credential)
+    let path = dir.join(&file);
+    let existing = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+    let mut credential = credential.clone();
+    preserve_project_id(&mut credential, existing.as_ref());
+    if let Some(project_id) = project_id_from_credential(&credential) {
+        if let Some(account_id) = id.strip_prefix("cle-antigravity-") {
+            let _ = account::remember_project_id(account_id, &project_id);
+        }
+    }
+    let raw = serde_json::to_string_pretty(&credential)
         .map_err(|error| format!("序列化账号 credential 失败: {error}"))?;
-    write_string_atomic(&dir.join(file), &raw)
+    write_string_atomic(&path, &raw)
 }
 
 fn cleanup_auth_files(dir: &Path, expected: &BTreeSet<String>) -> Result<(), String> {
@@ -2539,6 +2551,142 @@ fn normalize_oauth_credential(provider: &str, mut credential: Value) -> Value {
     credential
 }
 
+fn trimmed_project_id(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+}
+
+fn project_id_value(value: Option<&Value>) -> Option<String> {
+    let value = value?;
+    if let Some(text) = value.as_str() {
+        return trimmed_project_id(Some(text));
+    }
+    trimmed_project_id(value.get("id").and_then(Value::as_str))
+}
+
+fn project_id_from_credential(value: &Value) -> Option<String> {
+    for key in [
+        "project_id",
+        "projectId",
+        "cloudaicompanionProject",
+        "project",
+    ] {
+        if let Some(project_id) = project_id_value(value.get(key)) {
+            return Some(project_id);
+        }
+    }
+    None
+}
+
+fn apply_credential_patch(credential: &mut Value, patch: &Value) -> bool {
+    let preserved = project_id_from_credential(credential);
+    let Some(destination) = credential.as_object_mut() else {
+        return false;
+    };
+    let Some(patch) = patch.as_object() else {
+        return false;
+    };
+    destination.extend(patch.clone());
+    if project_id_from_credential(credential).is_none() {
+        if let Some(project_id) = preserved {
+            credential
+                .as_object_mut()
+                .expect("credential stayed an object")
+                .insert("project_id".to_string(), Value::String(project_id));
+        }
+    }
+    true
+}
+
+fn project_id_or_previous(stored: Option<&str>, previous: Option<&str>) -> Option<String> {
+    trimmed_project_id(stored).or_else(|| trimmed_project_id(previous))
+}
+
+fn antigravity_project_fetch_due(account_id: &str) -> bool {
+    let slots = ANTIGRAVITY_PROJECT_FETCH_AT.get_or_init(|| StdMutex::new(BTreeMap::new()));
+    let Ok(mut slots) = slots.lock() else {
+        return false;
+    };
+    let now = Instant::now();
+    if slots
+        .get(account_id)
+        .is_some_and(|last| now.duration_since(*last) < Duration::from_secs(60 * 60))
+    {
+        return false;
+    }
+    slots.insert(account_id.to_string(), now);
+    true
+}
+
+/// Accounts whose stored project id is empty fail at Google and the relay
+/// silently moves on to the one account that still has an id. Ask once an
+/// hour, then keep the answer on the account itself.
+async fn fill_missing_antigravity_project_ids() {
+    let Ok(accounts) = account::list_accounts() else {
+        return;
+    };
+    for managed in accounts {
+        if trimmed_project_id(managed.token.project_id.as_deref()).is_some()
+            || managed.token.access_token.trim().is_empty()
+            || !antigravity_project_fetch_due(&managed.id)
+        {
+            continue;
+        }
+        let token = match super::oauth::ensure_fresh_token(&managed.token).await {
+            Ok(token) => token,
+            Err(error) => {
+                logger::log_warn(&format!(
+                    "[MultiModelAPI] Antigravity 账号 {} 刷新令牌失败，无法查询 project_id: {error}",
+                    managed.email
+                ));
+                continue;
+            }
+        };
+        if token.access_token != managed.token.access_token {
+            let mut updated = managed.clone();
+            updated.token = token.clone();
+            if let Err(error) = account::save_account(&updated) {
+                logger::log_warn(&format!(
+                    "[MultiModelAPI] 保存 Antigravity 刷新令牌失败: email={}, error={error}",
+                    managed.email
+                ));
+            }
+        }
+        let (fetched, _, _) =
+            super::quota::fetch_project_id_for_token(&token, &managed.email).await;
+        let Some(project_id) = trimmed_project_id(fetched.as_deref()) else {
+            logger::log_warn(&format!(
+                "[MultiModelAPI] Antigravity 账号 {} 没有取到 project_id，本小时不再重试",
+                managed.email
+            ));
+            continue;
+        };
+        if let Err(error) = account::remember_project_id(&managed.id, &project_id) {
+            logger::log_warn(&format!(
+                "[MultiModelAPI] 保存 Antigravity project_id 失败: email={}, error={error}",
+                managed.email
+            ));
+        }
+    }
+}
+
+/// An empty project id must not replace one already written to the relay
+/// login file. Google rejects the request with no usable error, and the
+/// relay then sends all traffic through the one account that still has an id.
+fn preserve_project_id(credential: &mut Value, existing: Option<&Value>) {
+    if project_id_from_credential(credential).is_some() {
+        return;
+    }
+    let Some(previous) = existing.and_then(project_id_from_credential) else {
+        return;
+    };
+    if let Some(object) = credential.as_object_mut() {
+        object.insert("project_id".to_string(), Value::String(previous));
+    }
+}
+
 /// Refresh the gateway snapshot from the authoritative account-manager store.
 /// Antigravity access tokens are short lived and may be rotated by quota refresh
 /// after the multi-model service was configured. Without this hydration the
@@ -2562,6 +2710,19 @@ fn hydrate_managed_antigravity_credentials(
         let Some(current) = by_id.get(managed_id) else {
             continue;
         };
+        let project_id = project_id_or_previous(
+            current.token.project_id.as_deref(),
+            upstream
+                .credential_json
+                .as_ref()
+                .and_then(project_id_from_credential)
+                .as_deref(),
+        );
+        if trimmed_project_id(current.token.project_id.as_deref()).is_none() {
+            if let Some(project_id) = project_id.as_deref() {
+                let _ = account::remember_project_id(managed_id, project_id);
+            }
+        }
         let fresh = json!({
             "type": "antigravity",
             "access_token": current.token.access_token,
@@ -2570,7 +2731,7 @@ fn hydrate_managed_antigravity_credentials(
             "expired": chrono::DateTime::from_timestamp(current.token.expiry_timestamp, 0)
                 .map(|item| item.to_rfc3339()),
             "email": current.email,
-            "project_id": current.token.project_id
+            "project_id": project_id
         });
         if upstream.credential_json.as_ref() != Some(&fresh) {
             upstream.credential_json = Some(fresh);
@@ -2593,7 +2754,17 @@ fn write_managed_antigravity_auth_files(config: &MultiModelApiConfig) -> Result<
             continue;
         };
         let path = auth_dir.join(format!("{}.json", safe_file_name(&account.id)));
-        let raw = serde_json::to_string_pretty(credential)
+        let existing = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+        let mut credential = credential.clone();
+        preserve_project_id(&mut credential, existing.as_ref());
+        if let Some(project_id) = project_id_from_credential(&credential) {
+            if let Some(account_id) = account.source.strip_prefix("cle:antigravity:") {
+                let _ = account::remember_project_id(account_id, &project_id);
+            }
+        }
+        let raw = serde_json::to_string_pretty(&credential)
             .map_err(|error| format!("序列化 Antigravity API 凭据失败: {error}"))?;
         write_string_atomic(&path, &raw)?;
     }
@@ -3339,7 +3510,9 @@ fn refreshed_managed_credential(route: &MultiModelAccount) -> Option<Value> {
         let oauth = item.claude_credentials_raw.as_ref()?.get("claudeAiOauth")?;
         json!({"access_token": oauth.get("accessToken"), "refresh_token": oauth.get("refreshToken"), "expired": oauth.get("expiresAt")})
     } else { return None; };
-    credential.as_object_mut()?.extend(patch.as_object()?.clone());
+    if !apply_credential_patch(&mut credential, &patch) {
+        return None;
+    }
     Some(credential)
 }
 
@@ -4934,6 +5107,7 @@ pub async fn sync_upstream_models() -> Result<MultiModelApiState, String> {
 }
 
 pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
+    fill_missing_antigravity_project_ids().await;
     let mut config = load_config()?;
     // A provider account can be healthy enough for quota reads while its model
     // endpoint still requires an extra verification step. If the user disables
@@ -4954,6 +5128,18 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         .iter()
         .filter(|account| account.source.starts_with("cle:"))
         .map(|account| (account.source.clone(), account.models.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let previous_project_ids = config
+        .accounts
+        .iter()
+        .filter(|account| account.source.starts_with("cle:antigravity:"))
+        .filter_map(|account| {
+            account
+                .credential_json
+                .as_ref()
+                .and_then(project_id_from_credential)
+                .map(|project_id| (account.source.clone(), project_id))
+        })
         .collect::<BTreeMap<_, _>>();
     config
         .accounts
@@ -4988,6 +5174,15 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                 })
                 .unwrap_or_default();
             let source = format!("cle:antigravity:{}", managed.id);
+            let project_id = project_id_or_previous(
+                managed.token.project_id.as_deref(),
+                previous_project_ids.get(&source).map(String::as_str),
+            );
+            if trimmed_project_id(managed.token.project_id.as_deref()).is_none() {
+                if let Some(project_id) = project_id.as_deref() {
+                    let _ = account::remember_project_id(&managed.id, project_id);
+                }
+            }
             let models = managed_models_or_previous_selection(
                 discovered_models,
                 DEFAULT_ANTIGRAVITY_MODELS,
@@ -5010,7 +5205,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
                     "expires_in": managed.token.expires_in,
                     "expired": chrono::DateTime::from_timestamp(managed.token.expiry_timestamp, 0).map(|item| item.to_rfc3339()),
                     "email": managed.email,
-                    "project_id": managed.token.project_id
+                    "project_id": project_id
                 })),
                 proxy_url: String::new(),
                 prefix: String::new(),
@@ -5559,6 +5754,7 @@ pub fn start_runtime_watchdog() {
                     continue;
                 }
             };
+            fill_missing_antigravity_project_ids().await;
             match hydrate_managed_antigravity_credentials(&mut config) {
                 Ok(true) => {
                     if let Err(error) = save_config_file(&config)
@@ -5659,6 +5855,82 @@ pub async fn shutdown() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn blank_antigravity_project_id_keeps_the_previous_value() {
+        let mut credential = serde_json::json!({
+            "type": "antigravity",
+            "project_id": ""
+        });
+        let existing = serde_json::json!({"project_id": "  projects/abc  "});
+        super::preserve_project_id(&mut credential, Some(&existing));
+        assert_eq!(credential["project_id"], "projects/abc");
+
+        let mut explicit = serde_json::json!({"project_id": "projects/new"});
+        super::preserve_project_id(&mut explicit, Some(&existing));
+        assert_eq!(explicit["project_id"], "projects/new");
+        assert_eq!(
+            super::project_id_or_previous(Some("   "), Some("projects/kept")),
+            Some("projects/kept".to_string())
+        );
+
+        let mut missing = serde_json::json!({"type": "antigravity", "project_id": null});
+        let alternate = serde_json::json!({"cloudaicompanionProject": {"id": "projects/from-google"}});
+        super::preserve_project_id(&mut missing, Some(&alternate));
+        assert_eq!(missing["project_id"], "projects/from-google");
+    }
+
+    #[test]
+    fn credential_refresh_does_not_erase_project_id_with_null() {
+        let mut credential = serde_json::json!({
+            "type": "antigravity",
+            "access_token": "old",
+            "project_id": "projects/kept"
+        });
+        let patch = serde_json::json!({
+            "access_token": "new",
+            "project_id": null
+        });
+        assert!(super::apply_credential_patch(&mut credential, &patch));
+        assert_eq!(credential["access_token"], "new");
+        assert_eq!(credential["project_id"], "projects/kept");
+    }
+
+    #[test]
+    fn auth_file_rewrite_keeps_project_id_already_on_disk() {
+        let dir = std::env::temp_dir().join(format!(
+            "cle-auth-project-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp auth dir");
+        let id = "cle-antigravity-missing-account";
+        let mut expected = std::collections::BTreeSet::new();
+        super::write_auth_file(
+            &dir,
+            id,
+            &serde_json::json!({"type":"antigravity","project_id":"projects/kept","access_token":"old"}),
+            &mut expected,
+        )
+        .expect("seed auth file");
+        super::write_auth_file(
+            &dir,
+            id,
+            &serde_json::json!({"type":"antigravity","project_id":null,"access_token":"new"}),
+            &mut expected,
+        )
+        .expect("rewrite auth file");
+        let saved: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join(format!("{id}.json"))).expect("read auth file"),
+        )
+        .expect("parse auth file");
+        assert_eq!(saved["project_id"], "projects/kept");
+        assert_eq!(saved["access_token"], "new");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn extension_models_preserve_real_capacity_and_isolate_names() {
         let model = super::extension_model("trae", &serde_json::json!({"id":"current","capabilities":{"maxInputTokens":960000,"maxOutputTokens":128000,"supportsImages":true}})).unwrap();
