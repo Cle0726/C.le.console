@@ -43,6 +43,7 @@ pub mod cursor_oauth;
 pub mod db;
 pub mod diagnostics;
 pub mod doubao_web;
+pub mod doubao_chat_api;
 pub mod external_import;
 pub mod floating_card_window;
 pub mod gemini_account;

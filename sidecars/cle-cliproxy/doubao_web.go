@@ -20,6 +20,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,6 +38,7 @@ const (
 var (
 	errDoubaoWebLoginRequired = errors.New("豆包登录已失效，请在 C.le 的豆包账号页重新登录")
 	errDoubaoWebQuotaExceeded = errors.New("豆包账号额度已用完")
+	errDoubaoWebRateLimited   = errors.New("豆包账号访问过于频繁")
 )
 
 func isDoubaoWebModel(model string) bool {
@@ -46,6 +48,7 @@ func isDoubaoWebModel(model string) bool {
 type doubaoWebClient struct {
 	http     *http.Client
 	cookie   string
+	model    string // Doubao model_item_key; empty lets Doubao pick (auto)
 	webID    string
 	deviceID string
 }
@@ -102,7 +105,25 @@ func doubaoWebCookieValue(header, name string) string {
 }
 
 // doubaoWebChatBody builds a new single-turn chat conversation (agent_mode 2).
-func doubaoWebChatBody(message string) map[string]any {
+// doubaoWebModelKey maps a pool model ID (doubao-web/<model_item_key>) to Doubao's key; auto is empty.
+func doubaoWebModelKey(model string) string {
+	key := strings.TrimSpace(model)
+	if len(key) >= len(doubaoWebModelPrefix) && strings.EqualFold(key[:len(doubaoWebModelPrefix)], doubaoWebModelPrefix) {
+		key = key[len(doubaoWebModelPrefix):]
+	}
+	if strings.EqualFold(key, "auto") {
+		return ""
+	}
+	return key
+}
+
+// withModel returns the client set to answer with one Doubao model (empty: auto).
+func (c *doubaoWebClient) withModel(key string) *doubaoWebClient {
+	c.model = key
+	return c
+}
+
+func doubaoWebChatBody(message, model string) map[string]any {
 	localMessageID := doubaoWebUUID()
 	generalTask := map[string]any{
 		"action": 0, "thread_local_message_id": []string{localMessageID}, "runtime_type": 1,
@@ -115,7 +136,9 @@ func doubaoWebChatBody(message string) map[string]any {
 	initOption := map[string]any{"need_ack_conversation": true}
 	initJSON, _ := json.Marshal(initOption)
 	now := time.Now()
-	return map[string]any{
+	deepThink := 0
+	initExt := map[string]any{"mode_id": "1"}
+	body := map[string]any{
 		"client_meta": map[string]any{
 			"local_conversation_id": fmt.Sprintf("local_%d_%s", now.UnixMilli(), doubaoWebUUID()),
 			"conversation_id":       "", "bot_id": doubaoWebBotID, "last_section_id": "", "last_message_index": nil,
@@ -134,7 +157,7 @@ func doubaoWebChatBody(message string) map[string]any {
 			"sse_recv_event_options":   map[string]any{"support_chunk_delta": true},
 			"general_task_param":       generalTask,
 			"conversation_init_option": initOption,
-			"conversation_init_ext":    map[string]any{"mode_id": "1"},
+			"conversation_init_ext":    initExt,
 		},
 		"ext": map[string]any{
 			"general_task_param": string(generalTaskJSON), "use_deep_think": "0", "agent_mode": "2",
@@ -143,6 +166,20 @@ func doubaoWebChatBody(message string) map[string]any {
 		},
 		"user_context": []any{},
 	}
+	if model != "" {
+		// Same rule as the Doubao web client: numeric keys are their own deep-think mode, named models use 10001.
+		deepThink = 10001
+		if n, err := strconv.Atoi(model); err == nil {
+			deepThink = n
+		}
+		option := body["option"].(map[string]any)
+		initExt["model_item_key"] = model
+		option["model_config"] = map[string]any{"model_item_key": model}
+		option["aggregate_params"] = map[string]any{"provider_id": ""}
+	}
+	body["option"].(map[string]any)["need_deep_think"] = deepThink
+	body["ext"].(map[string]any)["use_deep_think"] = strconv.Itoa(deepThink)
+	return body
 }
 
 type doubaoWebReply struct {
@@ -174,7 +211,7 @@ func (c *doubaoWebClient) Complete(ctx context.Context, message string) (*doubao
 	if c.cookie == "" || (doubaoWebCookieValue(c.cookie, "sessionid") == "" && doubaoWebCookieValue(c.cookie, "sessionid_ss") == "" && doubaoWebCookieValue(c.cookie, "sid_tt") == "") {
 		return nil, errDoubaoWebLoginRequired
 	}
-	payload, err := json.Marshal(doubaoWebChatBody(message))
+	payload, err := json.Marshal(doubaoWebChatBody(message, c.model))
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +244,7 @@ func (c *doubaoWebClient) Complete(ctx context.Context, message string) (*doubao
 	}
 	reply := &doubaoWebReply{}
 	accepted, completed := false, false
+	var streamErr error
 	err = doubaoWebReadSSE(resp.Body, func(event string, data map[string]any) bool {
 		switch event {
 		case "SSE_ACK":
@@ -241,11 +279,21 @@ func (c *doubaoWebClient) Complete(ctx context.Context, message string) (*doubao
 				return false
 			}
 		case "STREAM_ERROR", "gateway-error":
-			err = fmt.Errorf("豆包对话出错：%s %s", fmt.Sprint(data["error_code"]), stringFieldFromAny(data["error_msg"]))
+			code := fmt.Sprint(data["error_code"])
+			if n, ok := data["error_code"].(float64); ok {
+				code = strconv.FormatInt(int64(n), 10)
+			}
+			streamErr = fmt.Errorf("豆包对话出错：%s %s", code, stringFieldFromAny(data["error_msg"]))
+			if code == "710022002" { // 当前服务访问频繁: per-account rate limit, another account may answer
+				streamErr = fmt.Errorf("%w：%s", errDoubaoWebRateLimited, stringFieldFromAny(data["error_msg"]))
+			}
 			return false
 		}
 		return true
 	})
+	if err == nil {
+		err = streamErr
+	}
 	if err != nil {
 		return nil, err
 	}

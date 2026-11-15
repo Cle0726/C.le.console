@@ -337,14 +337,14 @@ func (s *relayServer) handleDoubaoWebChat(c *gin.Context, spec *apiKeySpec, rawJ
 		account := accounts[(first+i)%len(accounts)]
 		cookie, err := doubaoWebCredential(ctx, account.Headers[doubaoWebCredentialHdr], account.UpstreamAPIKey)
 		if err == nil {
-			reply, err = newDoubaoWebClient(cookie, s.doubaoWebTransport(account)).Complete(ctx, prompt)
+			reply, err = newDoubaoWebClient(cookie, s.doubaoWebTransport(account)).withModel(doubaoWebModelKey(model)).Complete(ctx, prompt)
 		}
 		if err == nil {
 			used = account
 			break
 		}
 		lastErr = err
-		if ctx.Err() != nil || !(errors.Is(err, errDoubaoWebLoginRequired) || errors.Is(err, errDoubaoWebQuotaExceeded)) {
+		if ctx.Err() != nil || !(errors.Is(err, errDoubaoWebLoginRequired) || errors.Is(err, errDoubaoWebQuotaExceeded) || errors.Is(err, errDoubaoWebRateLimited)) {
 			break // a failed answer may already have been produced; only account problems move to the next one
 		}
 	}
@@ -355,7 +355,7 @@ func (s *relayServer) handleDoubaoWebChat(c *gin.Context, spec *apiKeySpec, rawJ
 			status, code = http.StatusGatewayTimeout, "doubao_web_timeout"
 		case errors.Is(lastErr, errDoubaoWebLoginRequired):
 			status, code = http.StatusUnauthorized, "doubao_login_required"
-		case errors.Is(lastErr, errDoubaoWebQuotaExceeded):
+		case errors.Is(lastErr, errDoubaoWebQuotaExceeded), errors.Is(lastErr, errDoubaoWebRateLimited):
 			status, code = http.StatusTooManyRequests, "quota_exhausted"
 		}
 		writeAPIError(c, status, fmt.Sprint(lastErr), code)

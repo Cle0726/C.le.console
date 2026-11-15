@@ -89,3 +89,31 @@ func TestDoubaoWebLiveToolCalls(t *testing.T) {
 		t.Logf("%s %.1fs calls=%v text=%q raw=%q", name, time.Since(started).Seconds(), got, string([]rune(text)[:min(len([]rune(text)), 60)]), string([]rune(reply.Answer)[:min(len([]rune(reply.Answer)), 160)]))
 	}
 }
+
+// DOUBAO_WEB_LIVE_MODELS: comma-separated model_item_keys ("auto" for the default).
+func TestDoubaoWebLiveModels(t *testing.T) {
+	path, list := os.Getenv("DOUBAO_WEB_LIVE_COOKIE_FILE"), os.Getenv("DOUBAO_WEB_LIVE_MODELS")
+	if path == "" || list == "" {
+		t.Skip("set DOUBAO_WEB_LIVE_COOKIE_FILE and DOUBAO_WEB_LIVE_MODELS")
+	}
+	raw, _ := os.ReadFile(path)
+	var file struct {
+		Cookies []struct{ Name, Value string } `json:"cookies"`
+	}
+	_ = json.Unmarshal(raw, &file)
+	pairs := []string{}
+	for _, c := range file.Cookies {
+		pairs = append(pairs, c.Name+"="+c.Value)
+	}
+	for _, model := range strings.Split(list, ",") {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		started := time.Now()
+		reply, err := newDoubaoWebClient(strings.Join(pairs, "; "), nil).withModel(doubaoWebModelKey(model)).Complete(ctx, "你是哪家公司开发的什么模型？只用一句话回答。")
+		cancel()
+		if err != nil {
+			t.Errorf("%s: %v", model, err)
+			continue
+		}
+		t.Logf("%s %.1fs %s", model, time.Since(started).Seconds(), reply.Answer)
+	}
+}

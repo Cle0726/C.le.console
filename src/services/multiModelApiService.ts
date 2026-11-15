@@ -51,6 +51,8 @@ export const multiModelApiService = {
     invoke<MultiModelApiState>('multi_model_api_set_enabled', { enabled }),
   syncManagedAccounts: () =>
     invoke<MultiModelApiState>('multi_model_api_sync_managed_accounts'),
+  syncDoubaoWebAccounts: () =>
+    invoke<MultiModelApiState>('multi_model_api_sync_doubao_web_accounts'),
   syncWorkbuddyAccounts: () =>
     invoke<MultiModelApiState>('multi_model_api_sync_workbuddy_accounts'),
   syncUpstreamModels: () =>

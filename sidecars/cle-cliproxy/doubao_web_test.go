@@ -75,6 +75,39 @@ func TestDoubaoWebCompleteKeepsFirstChunkAndIgnoresBrief(t *testing.T) {
 	}
 }
 
+// As seen live: a throttled account gets STREAM_ERROR before any ACK.
+func TestDoubaoWebCompleteReportsStreamError(t *testing.T) {
+	body := "event: STREAM_ERROR\ndata: {\"error_code\":710022002,\"error_msg\":\"当前服务访问频繁，请稍后重试\"}\n\nevent: SSE_REPLY_END\ndata: {\"end_type\":3}\n\n"
+	_, err := newDoubaoWebClient(doubaoWebTestCookie, doubaoWebSSE(200, body)).Complete(context.Background(), "hi")
+	if !errors.Is(err, errDoubaoWebRateLimited) || !strings.Contains(err.Error(), "访问频繁") {
+		t.Fatalf("err %v", err)
+	}
+	body = "event: STREAM_ERROR\ndata: {\"error_code\":123,\"error_msg\":\"坏了\"}\n\n"
+	if _, err = newDoubaoWebClient(doubaoWebTestCookie, doubaoWebSSE(200, body)).Complete(context.Background(), "hi"); err == nil || !strings.Contains(err.Error(), "123 坏了") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestDoubaoWebModelKeyAndBody(t *testing.T) {
+	for in, want := range map[string]string{"doubao-web/auto": "", "Doubao-Web/seed-lite-7b": "seed-lite-7b", "doubao-web/5": "5"} {
+		if got := doubaoWebModelKey(in); got != want {
+			t.Fatalf("%s -> %q", in, got)
+		}
+	}
+	body := doubaoWebChatBody("hi", "")
+	if body["option"].(map[string]any)["need_deep_think"] != 0 || body["option"].(map[string]any)["model_config"] != nil {
+		t.Fatal("auto must not pin a model")
+	}
+	body = doubaoWebChatBody("hi", "person-kimi")
+	option := body["option"].(map[string]any)
+	if option["need_deep_think"] != 10001 || option["model_config"].(map[string]any)["model_item_key"] != "person-kimi" || body["ext"].(map[string]any)["use_deep_think"] != "10001" {
+		t.Fatalf("named model body %v", option)
+	}
+	if doubaoWebChatBody("hi", "5")["option"].(map[string]any)["need_deep_think"] != 5 {
+		t.Fatal("numeric model keys are their own deep-think mode")
+	}
+}
+
 func TestDoubaoWebCompleteFailures(t *testing.T) {
 	cases := map[string]struct {
 		cookie string

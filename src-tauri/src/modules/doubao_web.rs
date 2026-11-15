@@ -2557,15 +2557,40 @@ pub async fn export_credentials(
 }
 
 /// Doubao accounts the API pool can use for chat: enabled, on the doubao
-/// platform, and last confirmed as signed in by the Doubao server.
-pub(crate) fn pool_accounts() -> Result<Vec<(String, String)>, String> {
+/// platform, and signed in. Each account's current browser-login cookies are
+/// checked with the Doubao server first (no window needed); when the server
+/// can't be reached, the last known login state is used.
+pub(crate) async fn pool_accounts() -> Result<Vec<(String, String)>, String> {
     let app = crate::get_app_handle().ok_or("C.le 尚未启动完成")?;
-    Ok(load_store(app)?
+    let candidates = load_store(app)?
         .accounts
         .into_iter()
-        .filter(|account| account.platform_id == "doubao" && account.enabled && account.last_known_logged_in)
-        .map(|account| (account.id, account.name))
-        .collect())
+        .filter(|account| account.platform_id == "doubao" && account.enabled)
+        .collect::<Vec<_>>();
+    let mut out = Vec::new();
+    for account in candidates {
+        let logged_in = match pool_cookie_header(&account.id).await {
+            Ok(header) => {
+                let check = validate_doubao_cookie_header(header).await;
+                if check.verified {
+                    let _ = update_session_check(app, &account.id, &check);
+                    check.logged_in
+                } else {
+                    account.last_known_logged_in
+                }
+            }
+            Err(_) => {
+                if account.last_known_logged_in {
+                    let _ = update_last_known_login(app, &account.id, false);
+                }
+                false
+            }
+        };
+        if logged_in {
+            out.push((account.id, account.name));
+        }
+    }
+    Ok(out)
 }
 
 /// Cookie header for the API pool's Doubao chat, read from the account's

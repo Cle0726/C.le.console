@@ -3253,6 +3253,9 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
                     return managed_provider_api::usage(&route.provider,id,&route.id);
                 }
             }
+            if let Some(id) = route.source.strip_prefix("cle:doubao-web:") {
+                return crate::modules::doubao_chat_api::usage(id, &route.id);
+            }
             if let Some(id) = route.source.strip_prefix("cle:workbuddy:") {
                 let item = workbuddy.get(id)?;
                 return Some(MultiModelAccountUsage {
@@ -3388,6 +3391,7 @@ fn quota_refresh_supported(route: &MultiModelAccount) -> bool {
     (route.provider == "xai" && route.auth_mode == "oauth_json")
         || route.source.starts_with("agent2api:")
         || route.source.starts_with("cle:workbuddy:")
+        || route.source.starts_with("cle:doubao-web:")
         || route.source.starts_with("cle:antigravity:")
         || route.source.starts_with("cle:gemini:")
         || route.source.starts_with("cle:claude-cli:")
@@ -3484,6 +3488,9 @@ async fn refresh_managed_quota(route: &MultiModelAccount) -> Result<(), String> 
         if let Some(id) = route.source.strip_prefix(&format!("cle:{}:",route.provider)) {
             return managed_provider_api::refresh_quota(&route.provider,id).await;
         }
+    }
+    if let Some(id) = route.source.strip_prefix("cle:doubao-web:") {
+        return crate::modules::doubao_chat_api::refresh_quota(id, &route.proxy_url).await;
     }
     if let Some(id) = route.source.strip_prefix("cle:workbuddy:") {
         let (_, diagnostics) = workbuddy_account::refresh_account_detailed(id).await?;
@@ -5382,7 +5389,7 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         logger::log_warn(&format!("[MultiModelAPI] WorkBuddy 账号同步: {error}"));
     }
     ensure_claude_cli_routes(&mut config);
-    if let Err(error) = import_doubao_web_routes(&mut config) {
+    if let Err(error) = import_doubao_web_routes(&mut config).await {
         logger::log_warn(&format!("[MultiModelAPI] 豆包对话账号同步: {error}"));
     }
     import_native_routes(&mut config).await?;
@@ -5461,15 +5468,23 @@ async fn import_native_routes(config: &mut MultiModelApiConfig) -> Result<(),Str
 // Doubao web chat accounts signed in through C.le's own browser window. The
 // gateway emulates tool calls on top of the plain chat, so one model is enough;
 // Doubao picks its default chat model.
-fn import_doubao_web_routes(config: &mut MultiModelApiConfig) -> Result<(), String> {
-    let managed = crate::modules::doubao_web::pool_accounts()?;
+async fn import_doubao_web_routes(config: &mut MultiModelApiConfig) -> Result<(), String> {
+    let managed = crate::modules::doubao_web::pool_accounts().await?;
     let sources = managed.iter().map(|(id, _)| format!("cle:doubao-web:{id}")).collect::<BTreeSet<_>>();
     config.accounts.retain(|route| !route.source.starts_with("cle:doubao-web:") || sources.contains(&route.source));
+    let default_proxy = subscription_or_explicit(&config.upstream_proxy);
     for (id, name) in managed {
         let source = format!("cle:doubao-web:{id}");
         let label = format!("豆包对话 · {name}");
+        let proxy = config.accounts.iter().find(|route| route.source == source)
+            .map(|route| route.proxy_url.trim().to_string()).filter(|url| !url.is_empty()).unwrap_or_else(|| default_proxy.clone());
+        let discovered = match crate::modules::doubao_chat_api::fetch_models(&id, &proxy).await {
+            Ok(models) => Some(models),
+            Err(error) => { logger::log_warn(&format!("[MultiModelAPI] 豆包对话模型目录 {name}: {error}")); None }
+        };
         if let Some(route) = config.accounts.iter_mut().find(|route| route.source == source) {
             route.name = label;
+            if let Some(models) = discovered { merge_workbuddy_models(&mut route.models, models); }
             continue;
         }
         config.accounts.push(MultiModelAccount {
@@ -5478,8 +5493,8 @@ fn import_doubao_web_routes(config: &mut MultiModelApiConfig) -> Result<(), Stri
             cli_path: String::new(), cli_app: String::new(), cli_profile: String::new(),
             credential_json: None, proxy_url: String::new(), prefix: String::new(), priority: 0,
             headers: BTreeMap::new(),
-            models: vec![MultiModelDefinition { id: "doubao-web/auto".into(), alias: String::new(),
-                capabilities: vec!["text".into()], max_input_tokens: None, max_output_tokens: None, enabled: true }],
+            models: discovered.unwrap_or_else(|| vec![MultiModelDefinition { id: crate::modules::doubao_chat_api::AUTO_MODEL.into(), alias: String::new(),
+                capabilities: vec!["text".into()], max_input_tokens: None, max_output_tokens: None, enabled: true }]),
             enabled: true, source,
         });
     }
@@ -5537,6 +5552,12 @@ fn merge_workbuddy_models(existing: &mut Vec<MultiModelDefinition>, discovered: 
         model
     }).collect();
     added
+}
+
+pub async fn sync_doubao_web_accounts() -> Result<MultiModelApiState, String> {
+    let mut config = load_config()?;
+    import_doubao_web_routes(&mut config).await?;
+    save_config(config).await
 }
 
 pub async fn sync_workbuddy_accounts() -> Result<MultiModelApiState, String> {

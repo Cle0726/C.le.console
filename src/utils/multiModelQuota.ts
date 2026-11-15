@@ -3,7 +3,7 @@ import type { MultiModelAccount, MultiModelAccountUsage, MultiModelDefinition, X
 export function canRefreshQuota(account: MultiModelAccount): boolean {
   return (account.provider === 'xai' && account.authMode === 'oauth_json')
     || account.source.startsWith('agent2api:')
-    || ['cle:workbuddy:', 'cle:antigravity:', 'cle:gemini:', 'cle:kiro:', 'cle:github-copilot:'].some((source) => account.source.startsWith(source))
+    || ['cle:workbuddy:', 'cle:doubao-web:', 'cle:antigravity:', 'cle:gemini:', 'cle:kiro:', 'cle:github-copilot:'].some((source) => account.source.startsWith(source))
     || account.source.startsWith('cle:claude-cli:')
     || (account.authMode === 'oauth_json' && ['cle:claude:', 'cle:claude-web:'].some((source) => account.source.startsWith(source)));
 }

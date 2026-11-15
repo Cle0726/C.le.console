@@ -28,6 +28,7 @@ import * as geminiService from '../services/geminiService';
 import { multiModelApiService } from '../services/multiModelApiService';
 import { canRefreshQuota, preserveModelMetadata, quotaStatusLabel } from '../utils/multiModelQuota';
 import { WorkbuddyAccountsPage } from './WorkbuddyAccountsPage';
+import { DoubaoWebPoolPanel } from './DoubaoWebPoolPanel';
 import type {
   ModelCapability, MultiModelAccount, MultiModelApiConfig, MultiModelApiState,
   MultiModelDefinition, MultiModelApiTestResult, MultiModelRepairReport,
@@ -35,7 +36,7 @@ import type {
 } from '../types/multiModelApi';
 import './MultiModelApiServicePage.css';
 
-type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'subscription' | 'doubao-work' | 'workbuddy' | 'native' | 'extensions';
+type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'subscription' | 'doubao-work' | 'doubao-web' | 'workbuddy' | 'native' | 'extensions';
 type MenuId = 'connect' | 'maintain' | 'accounts' | 'providers' | null;
 type AccountAddMode = 'oauth' | 'token' | 'api_key' | 'import';
 type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
@@ -51,6 +52,7 @@ const PROVIDERS = [
   { id: 'kiro', label: 'Kiro', short: 'Kiro', baseUrl: '' },
   { id: 'github-copilot', label: 'GitHub Copilot', short: 'Copilot', baseUrl: '' },
   ...EXTENSION_PROVIDERS.map(provider => ({ ...provider, short: provider.label, baseUrl: '' })),
+  { id: 'doubao-web', label: '豆包对话（网页登录）', short: '豆包对话', baseUrl: '' },
   { id: 'doubao-work', label: '豆包工作 Agent', short: '豆包工作', baseUrl: '' },
   { id: 'doubao-seedance', label: 'Doubao Seedance', short: 'Seedance', baseUrl: 'https://doubao.happieapi.top' },
   { id: 'custom', label: '兼容 API', short: '自定义', baseUrl: '' },
@@ -90,6 +92,7 @@ const PROVIDER_MODELS: Record<string, MultiModelDefinition[]> = {
     ['doubao-seedance-1.0-pro-fast', ['video']],
   ].map(([id, capabilities]) => ({ id: id as string, alias: '', capabilities: capabilities as ModelCapability[], enabled: true })),
   'doubao-work': [],
+  'doubao-web': [],
   custom: [],
 };
 
@@ -419,6 +422,26 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     }
   };
 
+  // Returns how many Doubao accounts are linked after the sync (used by the account panel).
+  const syncDoubaoWebAccounts = async (): Promise<number> => {
+    setOperation('doubao-web-sync');
+    try {
+      const next = await multiModelApiService.syncDoubaoWebAccounts();
+      setState(next);
+      setDraft(structuredClone(next.config));
+      const linked = next.config.accounts.filter((account) => account.provider === 'doubao-web').length;
+      setNotice({ tone: linked ? 'success' : 'info', text: linked
+        ? `已接入 ${linked} 个在线豆包账号。调用模型 doubao-web/auto，支持工具调用。`
+        : '没有在线的豆包账号，请先在下方添加账号并用浏览器登录。' });
+      return linked;
+    } catch (error) {
+      setNotice({ tone: 'error', text: `豆包接入失败：${String(error)}` });
+      throw error;
+    } finally {
+      setOperation(null);
+    }
+  };
+
   const syncWorkbuddyAccounts = async () => {
     setOperation('workbuddy-sync');
     setNotice({ tone: 'info', text: '正在读取 WorkBuddy 登录账号与真实模型目录…' });
@@ -490,6 +513,10 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     }
     if ((account?.provider ?? provider) === 'workbuddy') {
       setTab('workbuddy');
+      return;
+    }
+    if (selected === 'doubao-web') {
+      setTab('doubao-web');
       return;
     }
     const value = structuredClone(account ?? blankAccount(provider));
@@ -677,6 +704,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   const connectTabs = [
     { id: 'workbuddy' as const, label: 'WorkBuddy', detail: '多账号登录后同步', Icon: WorkbuddyIcon },
     { id: 'native' as const, label: 'Kiro / Copilot', detail: '官方登录态接入', Icon: Users },
+    { id: 'doubao-web' as const, label: '豆包对话', detail: '网页登录 · 工具调用', Icon: Bot },
     { id: 'doubao-work' as const, label: '豆包工作', detail: '本机已登录账号', Icon: Bot },
     { id: 'extensions' as const, label: '扩展账号 / 签到', detail: 'Qoder、Trae 等', Icon: CalendarCheck },
   ];
@@ -766,6 +794,23 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             {notice && <div className={`mm-api-message ${notice.tone}`}><CircleAlert /><span>{notice.text}</span></div>}
             <div className="mm-api-message info"><Network /><span>已接入 {accounts.filter((account) => account.provider === 'workbuddy').length} 个账号 · Base URL：<code>{baseUrl}/v1</code> · 自动同步上游模型，登录凭证由 C.le 托管。</span></div>
             <WorkbuddyAccountsPage embedded />
+          </section>
+        ) : tab === 'doubao-web' ? (
+          <section className="mm-workbuddy-host" aria-label="豆包对话多账号">
+            <header className="mm-api-panel-head mm-workbuddy-heading">
+              <div>
+                <h1>豆包对话 API（网页登录）</h1>
+                <p>用浏览器登录豆包账号后接入 API 账号池，调用 doubao-web/auto。豆包网页版没有原生工具调用，网关会把工具清单写进提示词再把回复转成标准 tool_calls；多个账号轮流使用，某个账号限流或额度用完时自动换下一个。</p>
+              </div>
+              <div className="mm-inline-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => void refreshQuotas('doubao-web')} disabled={busy || !accounts.some((account) => account.provider === 'doubao-web' && account.enabled)}><RefreshCw className={operation === 'quota' ? 'spin' : ''} />刷新额度</button>
+                <button type="button" className="btn btn-primary" onClick={() => void syncDoubaoWebAccounts().catch(() => undefined)} disabled={busy}><RefreshCw className={operation === 'doubao-web-sync' ? 'spin' : ''} />接入 API / 同步账号和模型</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { setProviderFilter('doubao-web'); setTab('accounts'); }}><Users />查看 API 账号池</button>
+              </div>
+            </header>
+            {notice && <div className={`mm-api-message ${notice.tone}`}><CircleAlert /><span>{notice.text}</span></div>}
+            <div className="mm-api-message info"><Network /><span>已接入 {accounts.filter((account) => account.provider === 'doubao-web').length} 个账号 · Base URL：<code>{baseUrl}/v1</code> · 豆包没有签到；C.le 每 2 小时自动保活一次登录状态，失效的账号会在同步时移出账号池。</span></div>
+            <DoubaoWebPoolPanel onChanged={syncDoubaoWebAccounts} onNotice={setNotice} />
           </section>
         ) : tab === 'doubao-work' ? (
           <DoubaoWorkPage
@@ -1004,7 +1049,7 @@ function ProviderIcon({ provider }: { provider: string }) {
   if (provider === 'kiro') return <KiroIcon style={{width:18,height:18}} />;
   if (provider === 'github-copilot') return <img src={copilotIcon} width={18} height={18} alt="" />;
   if (provider === 'openai') return <Sparkles />;
-  if (provider === 'doubao-work') return <Bot />;
+  if (provider === 'doubao-work' || provider === 'doubao-web') return <Bot />;
   if (provider === 'doubao-seedance') return <Film />;
   return <Boxes />;
 }

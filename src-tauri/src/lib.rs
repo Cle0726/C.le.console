@@ -1098,6 +1098,7 @@ pub fn run() {
             commands::multi_model_api::multi_model_api_set_enabled,
             commands::multi_model_api::multi_model_api_sync_managed_accounts,
             commands::multi_model_api::multi_model_api_sync_workbuddy_accounts,
+            commands::multi_model_api::multi_model_api_sync_doubao_web_accounts,
             commands::multi_model_api::multi_model_api_sync_upstream_models,
             commands::multi_model_api::multi_model_api_doubao_work_models,
             commands::multi_model_api::multi_model_api_test_chat,

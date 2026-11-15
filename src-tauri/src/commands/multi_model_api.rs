@@ -104,6 +104,11 @@ pub async fn multi_model_api_sync_managed_accounts() -> Result<MultiModelApiStat
 }
 
 #[tauri::command]
+pub async fn multi_model_api_sync_doubao_web_accounts() -> Result<MultiModelApiState, String> {
+    multi_model_api::sync_doubao_web_accounts().await
+}
+
+#[tauri::command]
 pub async fn multi_model_api_sync_workbuddy_accounts() -> Result<MultiModelApiState, String> {
     multi_model_api::sync_workbuddy_accounts().await
 }
