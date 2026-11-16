@@ -54,8 +54,9 @@ export async function refreshAllWorkbuddyTokens(): Promise<number> {
   return result.success_count;
 }
 
-export async function startWorkbuddyOAuthLogin(): Promise<WorkbuddyOAuthLoginStartResponse> {
-  return await invoke('workbuddy_oauth_login_start');
+/** 授权登录；tab 为 'oauth-intl' 时走 WorkBuddy 国际版（www.workbuddy.ai）。 */
+export async function startWorkbuddyOAuthLogin(tab?: string): Promise<WorkbuddyOAuthLoginStartResponse> {
+  return await invoke(tab === 'oauth-intl' ? 'workbuddy_oauth_login_start_intl' : 'workbuddy_oauth_login_start');
 }
 
 export async function completeWorkbuddyOAuthLogin(loginId: string): Promise<WorkbuddyAccount> {

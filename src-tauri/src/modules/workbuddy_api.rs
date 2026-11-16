@@ -241,12 +241,7 @@ pub fn credit_bucket(account: &WorkbuddyAccount) -> Option<MultiModelUsageBucket
 }
 
 pub fn chat_base(account: &WorkbuddyAccount) -> &'static str {
-    if account
-        .domain
-        .as_deref()
-        .unwrap_or_default()
-        .ends_with("workbuddy.ai")
-    {
+    if crate::modules::workbuddy_oauth::is_intl_domain(account.domain.as_deref()) {
         "https://www.workbuddy.ai"
     } else {
         "https://copilot.tencent.com"
@@ -276,8 +271,14 @@ fn app_version() -> &'static str {
         .as_str()
 }
 
+/// 国际版客户端身份（与 agent2api 的 EDITION_INTL 一致）。
+const INTL_PRODUCT: &str = "WorkBuddy AI";
+const INTL_CLIENT_VERSION: &str = "5.5.2";
+
 pub fn headers(account: &WorkbuddyAccount) -> BTreeMap<String, String> {
-    let version = app_version();
+    let intl = crate::modules::workbuddy_oauth::is_intl_domain(account.domain.as_deref());
+    let version = if intl { INTL_CLIENT_VERSION } else { app_version() };
+    let product = if intl { INTL_PRODUCT } else { "WorkBuddy" };
     let base = chat_base(account);
     let mut headers = BTreeMap::from([
         (
@@ -286,12 +287,12 @@ pub fn headers(account: &WorkbuddyAccount) -> BTreeMap<String, String> {
         ),
         (
             "User-Agent".into(),
-            format!("WorkBuddy/{version} WorkBuddy/{version} CLI/2.137.1"),
+            format!("WorkBuddy/{version} {product}/{version} CLI/2.137.1"),
         ),
-        ("X-IDE-Name".into(), "WorkBuddy".into()),
+        ("X-IDE-Name".into(), product.into()),
         ("X-IDE-Type".into(), "WorkBuddy".into()),
         ("X-IDE-Version".into(), version.into()),
-        ("X-Product".into(), "WorkBuddy".into()),
+        ("X-Product".into(), product.into()),
         ("X-Agent-Purpose".into(), "conversation".into()),
         (
             "X-Domain".into(),
@@ -317,6 +318,61 @@ pub fn headers(account: &WorkbuddyAccount) -> BTreeMap<String, String> {
     headers
 }
 
+/// 国际版不消耗积分的免费模型（agent2api `DEFAULT_FREE_MODELS`），按顺序试到一个成功为止。
+const INTL_KEEPALIVE_MODELS: &[&str] = &["deepseek-v4.1-flash", "hy3", "hy4-preview", "hy4-preview-f"];
+
+/// 国际版的每日积分挂在「每日活跃」上：用免费模型发一次最小对话，让账号当天算活跃。
+/// 返回成功的模型名；国内版账号直接返回 None。
+pub async fn keep_intl_account_active(account: &WorkbuddyAccount, proxy: &str) -> Result<Option<String>, String> {
+    if !crate::modules::workbuddy_oauth::is_intl_domain(account.domain.as_deref()) {
+        return Ok(None);
+    }
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(20));
+    if !proxy.trim().is_empty() {
+        builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|e| e.to_string())?);
+    }
+    let client = builder.build().map_err(|e| e.to_string())?;
+    let mut last_error = String::from("没有可用的免费模型");
+    for model in INTL_KEEPALIVE_MODELS {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let mut request = client
+            .post(format!("{}/v2/chat/completions", chat_base(account)))
+            .json(&serde_json::json!({
+                "model": model, "stream": true, "max_tokens": 16,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": "hi"},
+                ],
+            }));
+        for (name, value) in headers(account) {
+            request = request.header(name, value);
+        }
+        request = request
+            .header("Accept", "text/event-stream")
+            .header("X-Request-ID", &request_id)
+            .header("X-Conversation-ID", &request_id)
+            .header("X-Conversation-Request-ID", &request_id)
+            .header("X-Conversation-Message-ID", &request_id)
+            .header("X-Root-Request-ID", &request_id)
+            .header("X-Session-ID", &request_id)
+            .header("Referer", "https://www.workbuddy.ai/");
+        match request.send().await {
+            Ok(response) if response.status().is_success() => {
+                // 读完流：不读的请求上游可能不记活跃。
+                if response.bytes().await.is_ok() {
+                    return Ok(Some((*model).to_string()));
+                }
+                last_error = format!("{model} 响应读取失败");
+            }
+            Ok(response) => last_error = format!("{model} 返回 HTTP {}", response.status().as_u16()),
+            Err(error) => last_error = format!("{model} 请求失败：{error}"),
+        }
+    }
+    Err(format!("WorkBuddy 国际版活跃保活失败：{last_error}"))
+}
+
 fn credential_payload(account: &WorkbuddyAccount) -> Value {
     json!({"headers": headers(account), "baseUrl": chat_base(account)})
 }
@@ -336,7 +392,12 @@ pub async fn fetch_models(id: &str, proxy: &str) -> Result<Vec<MultiModelDefinit
         .as_deref()
         .filter(|s| !s.is_empty())
         .unwrap_or("personal");
-    let url = format!("{}/v2/enterprises/{enterprise}/models", chat_base(&account));
+    // 国际版没有 /v2/enterprises/…/models（实测 404），模型目录在 /v3/config，结构相同（agents[cli].models + models）。
+    let url = if crate::modules::workbuddy_oauth::is_intl_domain(account.domain.as_deref()) {
+        format!("{}/v3/config", chat_base(&account))
+    } else {
+        format!("{}/v2/enterprises/{enterprise}/models", chat_base(&account))
+    };
     let mut request = client.get(url);
     for (name, value) in headers(&account) {
         request = request.header(name, value);
@@ -384,6 +445,20 @@ fn parse_models(body: &Value) -> Result<Vec<MultiModelDefinition>, String> {
                 .filter_map(Value::as_str)
                 .collect::<BTreeSet<_>>()
         });
+    // 收费墙分组（国际版「Pro Only」）里的模型对免费号直接 400（11158 not allowed for user type），
+    // 号池不列它们，免得请求落上去失败且不换号。
+    let paywalled = data
+        .get("modelTiers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|tier| {
+            tier.get("enabled").and_then(Value::as_bool) != Some(false)
+                && tier.get("accessMode").and_then(Value::as_str) == Some("paywall")
+        })
+        .flat_map(|tier| tier.get("modelIds").and_then(Value::as_array).cloned().unwrap_or_default())
+        .filter_map(|id| id.as_str().map(str::to_string))
+        .collect::<BTreeSet<_>>();
     let mut models = BTreeMap::new();
     for model in data
         .get("models")
@@ -398,7 +473,7 @@ fn parse_models(body: &Value) -> Result<Vec<MultiModelDefinition>, String> {
         else {
             continue;
         };
-        if id.is_empty() || allowed.as_ref().is_some_and(|set| !set.contains(id)) {
+        if id.is_empty() || paywalled.contains(id) || allowed.as_ref().is_some_and(|set| !set.contains(id)) {
             continue;
         }
         let mut capabilities = vec!["text".into()];
@@ -442,6 +517,21 @@ fn max_input_tokens(model: &Value) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn intl_config_catalog_skips_paywalled_and_media_models() {
+        let body = json!({"code": 0, "data": {
+            "agents": [{"name": "cli", "models": ["hy4flash-free", "gpt-6-luna"]}],
+            "models": [
+                {"id": "hy4flash-free", "supportsImages": true, "supportsReasoning": true, "maxInputTokens": 960000},
+                {"id": "gpt-6-luna", "supportsImages": true},
+                {"id": "hy-image-3.5", "tags": ["text-to-image"]}
+            ],
+            "modelTiers": [{"id": "gpt-pro-only", "accessMode": "paywall", "enabled": true, "modelIds": ["gpt-6-luna"]}]
+        }});
+        let ids = parse_models(&body).unwrap().into_iter().map(|m| m.id).collect::<Vec<_>>();
+        assert_eq!(ids, vec!["workbuddy/hy4flash-free"]);
+    }
 
     #[test]
     fn catalog_only_exposes_authorized_models_and_declared_capabilities() {

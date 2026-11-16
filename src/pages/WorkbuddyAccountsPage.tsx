@@ -41,6 +41,8 @@ const workbuddyPlatformConfig: CodebuddySuiteAccountsPlatformConfig<WorkbuddyAcc
   addAccountTitleDefault: '添加 WorkBuddy 账号',
   oauthDescKey: 'workbuddy.oauthDesc',
   oauthDescDefault: '点击下方按钮将在浏览器中打开 WorkBuddy 授权页面。',
+  intlOauthTabLabel: '国际版授权',
+  intlOauthDesc: '点击下方按钮在浏览器中打开 WorkBuddy 国际版（www.workbuddy.ai）授权页面；登录后账号会自动进入号池，并参与每日签到（国际版按每日活跃领取积分）。',
   oauthFeatureCardClassName: 'workbuddy-oauth-feature-card',
   oauthFeatureTitleKey: 'workbuddy.oauthFeature.oauth.title',
   oauthFeatureTitleDefault: '仅授权 IDE 登录信息',
@@ -85,7 +87,7 @@ export function WorkbuddyAccountsPage({ embedded = false }: { embedded?: boolean
     flowNoticeCollapsedKey: WORKBUDDY_FLOW_NOTICE_COLLAPSED_KEY,
     currentAccountIdKey: WORKBUDDY_CURRENT_ACCOUNT_ID_KEY,
     exportFilePrefix: 'workbuddy_accounts',
-    oauthTabKeys: ['oauth'],
+    oauthTabKeys: ['oauth', 'oauth-intl'],
     store: {
       accounts: store.accounts,
       currentAccountId: store.currentAccountId,

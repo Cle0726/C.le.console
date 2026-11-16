@@ -346,3 +346,23 @@ func TestWorkbuddySpentQuotaIs402AndRealRateLimitStays429(t *testing.T) {
 		t.Fatalf("business 14018: status %d", status)
 	}
 }
+
+func TestWorkbuddyIntlGetsConversationHeadersCnUnchanged(t *testing.T) {
+	intl := http.Header{}
+	intl.Set("X-Request-ID", "rid-1")
+	setWorkbuddyRegionHeaders(intl, "www.workbuddy.ai")
+	for _, name := range []string{"X-Conversation-ID", "X-Conversation-Request-ID", "X-Conversation-Message-ID", "X-Root-Request-ID", "X-Session-ID"} {
+		if intl.Get(name) != "rid-1" {
+			t.Fatalf("%s = %q", name, intl.Get(name))
+		}
+	}
+	if intl.Get("Referer") != "https://www.workbuddy.ai/" {
+		t.Fatalf("referer %q", intl.Get("Referer"))
+	}
+	cn := http.Header{}
+	cn.Set("X-Request-ID", "rid-2")
+	setWorkbuddyRegionHeaders(cn, "copilot.tencent.com")
+	if len(cn) != 1 {
+		t.Fatalf("cn headers changed: %v", cn)
+	}
+}

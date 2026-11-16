@@ -7,6 +7,27 @@ use crate::modules::logger;
 const WORKBUDDY_API_ENDPOINT: &str = "https://www.codebuddy.cn";
 const WORKBUDDY_API_PREFIX: &str = "/v2/plugin";
 const WORKBUDDY_PLATFORM: &str = "workbuddy";
+/// WorkBuddy 国际版（WorkBuddy AI）：同一套协议，站点换成 www.workbuddy.ai。
+pub const WORKBUDDY_INTL_ENDPOINT: &str = "https://www.workbuddy.ai";
+pub const WORKBUDDY_INTL_DOMAIN: &str = "www.workbuddy.ai";
+
+/// 账号归属地区只看 domain：国内版登录回 www.codebuddy.cn，国际版是 www.workbuddy.ai。
+pub fn is_intl_domain(domain: Option<&str>) -> bool {
+    domain
+        .map(|d| d.trim().trim_start_matches("https://").trim_end_matches('/').to_ascii_lowercase())
+        .is_some_and(|d| d == "workbuddy.ai" || d.ends_with(".workbuddy.ai"))
+}
+
+/// 登录、刷新、计费、签到接口所在站点。
+pub fn api_endpoint(domain: Option<&str>) -> &'static str {
+    if is_intl_domain(domain) { WORKBUDDY_INTL_ENDPOINT } else { WORKBUDDY_API_ENDPOINT }
+}
+
+/// 两版都用 platform=workbuddy。实测（2026-11-16）：国际版用 workbuddy-ai 时网页登录后会去唤起
+/// 本机 WorkBuddy AI 桌面端，没装就停在原地、auth/token 一直 11217；workbuddy 则直接完成授权。
+fn auth_platform(_domain: Option<&str>) -> &'static str {
+    WORKBUDDY_PLATFORM
+}
 const OAUTH_TIMEOUT_SECONDS: u64 = 600;
 const OAUTH_POLL_INTERVAL_MS: u64 = 1500;
 
@@ -16,6 +37,7 @@ struct PendingOAuthState {
     expires_at: i64,
     state: String,
     cancelled: bool,
+    intl: bool,
 }
 
 lazy_static::lazy_static! {
@@ -212,11 +234,14 @@ pub fn clear_pending_oauth_login(login_id: &str) -> Result<(), String> {
     clear_pending_login(login_id)
 }
 
-async fn start_login_with_platform(platform: &str) -> Result<WorkbuddyOAuthStartResponse, String> {
+async fn start_login_with_platform(intl: bool) -> Result<WorkbuddyOAuthStartResponse, String> {
     let client = build_client()?;
+    let domain = intl.then_some(WORKBUDDY_INTL_DOMAIN);
+    let endpoint = api_endpoint(domain);
+    let platform = auth_platform(domain);
     let url = format!(
         "{}{}/auth/state?platform={}",
-        WORKBUDDY_API_ENDPOINT, WORKBUDDY_API_PREFIX, platform
+        endpoint, WORKBUDDY_API_PREFIX, platform
     );
 
     logger::log_info(&format!("[WorkBuddy OAuth] 请求 auth/state: {}", url));
@@ -259,7 +284,11 @@ async fn start_login_with_platform(platform: &str) -> Result<WorkbuddyOAuthStart
     let login_id = generate_login_id();
 
     let verification_uri = if auth_url.is_empty() {
-        format!("{}/login?state={}", WORKBUDDY_API_ENDPOINT, state)
+        if intl {
+            format!("{}/login?platform={}&state={}", endpoint, platform, state)
+        } else {
+            format!("{}/login?state={}", endpoint, state)
+        }
     } else {
         auth_url.clone()
     };
@@ -273,6 +302,7 @@ async fn start_login_with_platform(platform: &str) -> Result<WorkbuddyOAuthStart
             expires_at: now_timestamp() + OAUTH_TIMEOUT_SECONDS as i64,
             state: state.clone(),
             cancelled: false,
+            intl,
         });
     }
 
@@ -291,7 +321,12 @@ async fn start_login_with_platform(platform: &str) -> Result<WorkbuddyOAuthStart
 }
 
 pub async fn start_login() -> Result<WorkbuddyOAuthStartResponse, String> {
-    start_login_with_platform(WORKBUDDY_PLATFORM).await
+    start_login_with_platform(false).await
+}
+
+/// 国际版（WorkBuddy AI）授权登录。
+pub async fn start_login_intl() -> Result<WorkbuddyOAuthStartResponse, String> {
+    start_login_with_platform(true).await
 }
 
 pub async fn complete_login(login_id: &str) -> Result<WorkbuddyOAuthCompletePayload, String> {
@@ -322,7 +357,9 @@ pub async fn complete_login(login_id: &str) -> Result<WorkbuddyOAuthCompletePayl
 
         let url = format!(
             "{}{}/auth/token?state={}",
-            WORKBUDDY_API_ENDPOINT, WORKBUDDY_API_PREFIX, state_info.state
+            api_endpoint(state_info.intl.then_some(WORKBUDDY_INTL_DOMAIN)),
+            WORKBUDDY_API_PREFIX,
+            state_info.state
         );
 
         match client.get(&url).send().await {
@@ -351,10 +388,10 @@ pub async fn complete_login(login_id: &str) -> Result<WorkbuddyOAuthCompletePayl
                                 let expires_at =
                                     token_expires_at(data, &access_token, now_timestamp());
 
-                                let domain = data
-                                    .get("domain")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
+                                let domain = login_domain(
+                                    data.get("domain").and_then(|v| v.as_str()),
+                                    state_info.intl,
+                                );
 
                                 let token_type = data
                                     .get("tokenType")
@@ -435,6 +472,15 @@ pub async fn complete_login(login_id: &str) -> Result<WorkbuddyOAuthCompletePayl
     }
 }
 
+/// 国际版登录的 token 响应若没带 domain，就补上国际版站点，免得账号被当成国内版。
+fn login_domain(reported: Option<&str>, intl: bool) -> Option<String> {
+    let reported = normalize_non_empty(reported);
+    if intl && !is_intl_domain(reported.as_deref()) {
+        return Some(WORKBUDDY_INTL_DOMAIN.to_string());
+    }
+    reported
+}
+
 pub fn cancel_login(login_id: Option<&str>) -> Result<(), String> {
     let mut pending = PENDING_OAUTH_STATE
         .lock()
@@ -466,7 +512,7 @@ async fn fetch_account_info(
 > {
     let url = format!(
         "{}{}/login/account?state={}",
-        WORKBUDDY_API_ENDPOINT, WORKBUDDY_API_PREFIX, state
+        api_endpoint(domain), WORKBUDDY_API_PREFIX, state
     );
 
     let mut req = client
@@ -538,14 +584,14 @@ pub async fn refresh_token(
     let client = build_client()?;
     let url = format!(
         "{}{}/auth/token/refresh",
-        WORKBUDDY_API_ENDPOINT, WORKBUDDY_API_PREFIX
+        api_endpoint(domain), WORKBUDDY_API_PREFIX
     );
 
     let mut req = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("X-Refresh-Token", refresh_token)
-        .header("X-Auth-Refresh-Source", WORKBUDDY_PLATFORM)
+        .header("X-Auth-Refresh-Source", auth_platform(domain))
         .json(&json!({}));
 
     if let Some(d) = domain {
@@ -594,7 +640,7 @@ pub async fn fetch_dosage_notify(
     let client = build_client()?;
     let url = format!(
         "{}/v2/billing/meter/get-dosage-notify",
-        WORKBUDDY_API_ENDPOINT
+        api_endpoint(domain)
     );
 
     let mut req = client
@@ -630,7 +676,7 @@ pub async fn fetch_payment_type(
     let client = build_client()?;
     let url = format!(
         "{}/v2/billing/meter/get-payment-type",
-        WORKBUDDY_API_ENDPOINT
+        api_endpoint(domain)
     );
 
     let mut req = client
@@ -672,7 +718,7 @@ pub async fn fetch_user_resource_with_access_token(
     let client = build_client()?;
     let url = format!(
         "{}/v2/billing/meter/get-user-resource",
-        WORKBUDDY_API_ENDPOINT
+        api_endpoint(domain)
     );
 
     let body = json!({
@@ -1144,6 +1190,27 @@ pub async fn build_payload_from_token(
 #[cfg(test)]
 mod management_tests {
     use super::*;
+
+    #[test]
+    fn region_follows_account_domain() {
+        assert!(is_intl_domain(Some("www.workbuddy.ai")));
+        assert!(is_intl_domain(Some("https://www.workbuddy.ai/")));
+        assert!(!is_intl_domain(Some("www.codebuddy.cn")));
+        assert!(!is_intl_domain(Some("notworkbuddy.ai.example.com")));
+        assert!(!is_intl_domain(None));
+        assert_eq!(api_endpoint(Some("www.workbuddy.ai")), "https://www.workbuddy.ai");
+        assert_eq!(api_endpoint(Some("www.codebuddy.cn")), "https://www.codebuddy.cn");
+        assert_eq!(auth_platform(Some("www.workbuddy.ai")), "workbuddy");
+        assert_eq!(auth_platform(None), "workbuddy");
+    }
+
+    #[test]
+    fn intl_login_keeps_account_on_intl_site_even_without_domain() {
+        assert_eq!(login_domain(None, true).as_deref(), Some("www.workbuddy.ai"));
+        assert_eq!(login_domain(Some("www.codebuddy.cn"), true).as_deref(), Some("www.workbuddy.ai"));
+        assert_eq!(login_domain(Some("www.codebuddy.cn"), false).as_deref(), Some("www.codebuddy.cn"));
+        assert_eq!(login_domain(Some(""), false), None);
+    }
 
     #[test]
     fn expiry_accepts_seconds_milliseconds_and_expires_in() {

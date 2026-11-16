@@ -91,7 +91,7 @@ export type SortDirection = 'asc' | 'desc';
 
 /** 各平台需要提供的 OAuth 服务函数 */
 export interface OAuthService {
-  startLogin: () => Promise<OAuthStartResponse>;
+  startLogin: (tab?: string) => Promise<OAuthStartResponse>;
   completeLogin: (loginId: string) => Promise<unknown>;
   cancelLogin: (loginId?: string) => Promise<void>;
   submitCallbackUrl?: (loginId: string, callbackUrl: string) => Promise<void>;
@@ -1975,7 +1975,7 @@ export function useProviderAccountsPage<TAccount extends ProviderAccountBase>(
 
     void (async () => {
       try {
-        const resp = await oauthService.startLogin();
+        const resp = await oauthService.startLogin(addTabRef.current);
         started = true;
 
         if (attemptSeq !== oauthAttemptSeqRef.current) {

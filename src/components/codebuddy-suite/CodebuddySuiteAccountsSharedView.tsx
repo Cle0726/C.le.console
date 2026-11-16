@@ -61,6 +61,9 @@ export interface CodebuddySuiteAccountsPlatformConfig<TAccount extends Codebuddy
   addAccountTitleKey: string;
   addAccountTitleDefault: string;
   oauthDescKey: string;
+  /** 额外的「国际版授权」标签页（WorkBuddy 国际版）；不填则不显示。 */
+  intlOauthTabLabel?: string;
+  intlOauthDesc?: string;
   oauthDescDefault: string;
   oauthFeatureCardClassName: string;
   oauthFeatureTitleKey: string;
@@ -676,15 +679,20 @@ export function CodebuddySuiteAccountsSharedView<TAccount extends CodebuddySuite
             </div>
             <div className="modal-tabs">
               <button className={`modal-tab ${addTab === 'oauth' ? 'active' : ''}`} onClick={() => openAddModal('oauth')}><Globe size={14} /> {t('common.shared.addModal.oauth', '授权登录')}</button>
+              {platformConfig.intlOauthTabLabel && (
+                <button className={`modal-tab ${addTab === 'oauth-intl' ? 'active' : ''}`} onClick={() => openAddModal('oauth-intl')}><Globe size={14} /> {platformConfig.intlOauthTabLabel}</button>
+              )}
               <button className={`modal-tab ${addTab === 'token' ? 'active' : ''}`} onClick={() => openAddModal('token')}><KeyRound size={14} />{t('common.shared.addModal.token', 'Token / JSON')}</button>
               <button className={`modal-tab ${addTab === 'json' ? 'active' : ''}`} onClick={() => openAddModal('json')}><Database size={14} />{t('common.shared.addModal.import', '本地导入')}</button>
             </div>
             <div className="modal-body">
               <MfaQuickCodeSelect />
-              {addTab === 'oauth' && (
+              {(addTab === 'oauth' || (addTab === 'oauth-intl' && platformConfig.intlOauthTabLabel)) && (
                 <div className="add-section oauth-section">
                   <p className="section-desc">
-                    {t(platformConfig.oauthDescKey, platformConfig.oauthDescDefault)}
+                    {addTab === 'oauth-intl' && platformConfig.intlOauthDesc
+                      ? platformConfig.intlOauthDesc
+                      : t(platformConfig.oauthDescKey, platformConfig.oauthDescDefault)}
                   </p>
                   <div className={`${platformConfig.oauthFeatureCardClassName} oauth`}>
                     <p className="feature-title">{t(platformConfig.oauthFeatureTitleKey, platformConfig.oauthFeatureTitleDefault)}</p>

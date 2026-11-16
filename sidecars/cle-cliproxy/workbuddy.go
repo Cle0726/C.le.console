@@ -135,6 +135,7 @@ attempts:
 			return nil, fmt.Errorf("invalid WorkBuddy upstream")
 		}
 		request.URL.Scheme, request.URL.Host, request.Host = base.Scheme, base.Host, base.Host
+		setWorkbuddyRegionHeaders(request.Header, base.Host)
 		response, err := t.base.RoundTrip(request)
 		if err != nil {
 			return nil, err
@@ -275,6 +276,25 @@ func (r *workbuddyValidatedReader) Read(dst []byte) (int, error) {
 		return n, r.err
 	}
 	return n, nil
+}
+
+// setWorkbuddyRegionHeaders adds what the WorkBuddy 国际版 (www.workbuddy.ai) gateway checks on top of
+// the shared credential headers. Measured 2026-11-16: without the full conversation-ID set it answers
+// 400 code 11128 "request illegal" (channel verification); any one of them alone is not enough.
+// 国内版 (copilot.tencent.com) requests are left exactly as before.
+func setWorkbuddyRegionHeaders(header http.Header, host string) {
+	if host != "www.workbuddy.ai" {
+		return
+	}
+	id := header.Get("X-Request-ID")
+	for _, name := range []string{"X-Conversation-ID", "X-Conversation-Request-ID", "X-Conversation-Message-ID", "X-Root-Request-ID", "X-Session-ID"} {
+		if header.Get(name) == "" {
+			header.Set(name, id)
+		}
+	}
+	if header.Get("Referer") == "" {
+		header.Set("Referer", "https://www.workbuddy.ai/")
+	}
 }
 
 func prepareWorkbuddyBody(raw []byte) ([]byte, bool, error) {

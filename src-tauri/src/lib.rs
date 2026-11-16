@@ -1258,6 +1258,7 @@ pub fn run() {
             commands::workbuddy::refresh_workbuddy_token,
             commands::workbuddy::refresh_all_workbuddy_tokens,
             commands::workbuddy::workbuddy_oauth_login_start,
+            commands::workbuddy::workbuddy_oauth_login_start_intl,
             commands::workbuddy::workbuddy_oauth_login_complete,
             commands::workbuddy::workbuddy_oauth_login_cancel,
             commands::workbuddy::add_workbuddy_account_with_token,

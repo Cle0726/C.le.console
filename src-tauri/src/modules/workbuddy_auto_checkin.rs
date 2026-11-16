@@ -512,6 +512,7 @@ pub async fn run_workbuddy_auto_checkin_cycle_if_needed(
             account.id.clone()
         };
         let account_checkin_time = format_time_only();
+        keep_intl_active(&account, &email_display).await;
 
         match codebuddy_cn_oauth::get_checkin_status(
             &account.access_token,
@@ -710,6 +711,15 @@ pub async fn run_workbuddy_auto_checkin_cycle_if_needed(
         Ok("retry".to_string())
     } else {
         Ok("completed".to_string())
+    }
+}
+
+/// 国际版的每日积分看「当天是否活跃」，领取前先用免费模型保活一次；失败只记日志，照常查状态。
+pub(crate) async fn keep_intl_active(account: &crate::models::workbuddy::WorkbuddyAccount, label: &str) {
+    match crate::modules::workbuddy_api::keep_intl_account_active(account, "").await {
+        Ok(Some(model)) => logger::log_info(&format!("[WorkbuddyAutoCheckin] {label} 国际版活跃保活完成（{model}）")),
+        Ok(None) => {}
+        Err(error) => logger::log_warn(&format!("[WorkbuddyAutoCheckin] {label} {error}")),
     }
 }
 

@@ -3,7 +3,7 @@ use crate::modules::atomic_write::{parse_json_with_auto_restore, write_string_at
 use crate::modules::multi_model_xai::{self, XaiAccountUsage, XaiOAuthStartResponse};
 use crate::modules::{
     account, claude_account, codex_local_access, gemini_account, logger, process,
-    workbuddy_account, workbuddy_api, managed_provider_api, kiro_account, github_copilot_account, agent_provider_bridge,
+    workbuddy_account, workbuddy_api, workbuddy_oauth, managed_provider_api, kiro_account, github_copilot_account, agent_provider_bridge,
 };
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
@@ -5526,7 +5526,9 @@ async fn import_workbuddy_routes(config: &mut MultiModelApiConfig) -> Result<(),
         }
         config.accounts.push(MultiModelAccount {
             id: format!("cle-workbuddy-{}", account.id),
-            name: format!("WorkBuddy · {}", account.nickname.as_deref().filter(|s| !s.is_empty()).unwrap_or(&account.email)),
+            name: format!("WorkBuddy{} · {}",
+                if workbuddy_oauth::is_intl_domain(account.domain.as_deref()) { " 国际版" } else { "" },
+                account.nickname.as_deref().filter(|s| !s.is_empty()).unwrap_or(&account.email)),
             provider: "workbuddy".into(), auth_mode: "oauth_json".into(),
             base_url: String::new(), api_key: String::new(), cli_path: String::new(),
             cli_app: String::new(), cli_profile: String::new(), credential_json: None,

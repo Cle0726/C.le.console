@@ -232,6 +232,12 @@ pub async fn workbuddy_oauth_login_start() -> Result<WorkbuddyOAuthStartResponse
 }
 
 #[tauri::command]
+pub async fn workbuddy_oauth_login_start_intl() -> Result<WorkbuddyOAuthStartResponse, String> {
+    logger::log_info("WorkBuddy 国际版 OAuth start 命令触发");
+    workbuddy_oauth::start_login_intl().await
+}
+
+#[tauri::command]
 pub async fn workbuddy_oauth_login_complete(
     app: AppHandle,
     login_id: String,
@@ -433,6 +439,7 @@ pub async fn checkin_workbuddy(
 
     let account = workbuddy_account::load_account(&account_id)
         .ok_or_else(|| format!("账号不存在: {}", account_id))?;
+    crate::modules::workbuddy_auto_checkin::keep_intl_active(&account, &account.email).await;
 
     let response = codebuddy_cn_oauth::perform_checkin(
         &account.access_token,

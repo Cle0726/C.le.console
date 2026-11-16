@@ -1100,6 +1100,37 @@ pub struct CheckinStatusResponse {
 }
 
 const CHECKIN_ACTIVITY_STATUS_PATH: &str = "/v2/billing/meter/checkin-activity-status";
+/// WorkBuddy 国际版客户端读的是不带 /v2 的活动状态；领取仍是 /v2/billing/meter/daily-checkin。
+const INTL_CHECKIN_ACTIVITY_STATUS_PATH: &str = "/billing/meter/checkin-activity-status";
+
+fn checkin_status_url(domain: Option<&str>) -> String {
+    if crate::modules::workbuddy_oauth::is_intl_domain(domain) {
+        format!("{}{}", crate::modules::workbuddy_oauth::WORKBUDDY_INTL_ENDPOINT, INTL_CHECKIN_ACTIVITY_STATUS_PATH)
+    } else {
+        format!("{}{}", CODEBUDDY_API_ENDPOINT, CHECKIN_ACTIVITY_STATUS_PATH)
+    }
+}
+
+fn daily_checkin_url(domain: Option<&str>) -> String {
+    let base = if crate::modules::workbuddy_oauth::is_intl_domain(domain) {
+        crate::modules::workbuddy_oauth::WORKBUDDY_INTL_ENDPOINT
+    } else {
+        CODEBUDDY_API_ENDPOINT
+    };
+    format!("{}/v2/billing/meter/daily-checkin", base)
+}
+
+/// 国际版的活动状态可能只给 active（活动没开或今天还没领时不带今日标识），按「未领」处理。
+fn parse_intl_checkin_status_data(data: &Value) -> Result<CheckinStatusResponse, String> {
+    let mut data = if data.is_object() { data.clone() } else { serde_json::json!({}) };
+    if data.get("today_checked_in").is_none() && data.get("todayCheckedIn").is_none() {
+        data["today_checked_in"] = Value::Bool(false);
+    }
+    if data.get("active").is_none() && data.get("Active").is_none() {
+        data["active"] = Value::Bool(false);
+    }
+    parse_checkin_status_data(&data)
+}
 
 fn default_checkin_active() -> bool {
     true
@@ -1165,10 +1196,25 @@ pub async fn get_checkin_status(
     enterprise_id: Option<&str>,
     domain: Option<&str>,
 ) -> Result<CheckinStatusResponse, String> {
+    let primary = checkin_status_at(checkin_status_url(domain), access_token, uid, enterprise_id, domain).await;
+    if primary.is_ok() || !crate::modules::workbuddy_oauth::is_intl_domain(domain) {
+        return primary;
+    }
+    // 参考实现对国际版路径有分歧（agent2api 用不带 /v2 的，另一家用 /v2），主路径失败时试另一条。
+    let fallback = format!("{}{}", crate::modules::workbuddy_oauth::WORKBUDDY_INTL_ENDPOINT, CHECKIN_ACTIVITY_STATUS_PATH);
+    checkin_status_at(fallback, access_token, uid, enterprise_id, domain).await.map_err(|_| primary.unwrap_err())
+}
+
+async fn checkin_status_at(
+    url: String,
+    access_token: &str,
+    uid: Option<&str>,
+    enterprise_id: Option<&str>,
+    domain: Option<&str>,
+) -> Result<CheckinStatusResponse, String> {
     let client = build_client()?;
     // WorkBuddy's current daily reward is exposed by the activity endpoint.
     // The legacy checkin-status endpoint can return inactive while daily rewards are available.
-    let url = format!("{}{}", CODEBUDDY_API_ENDPOINT, CHECKIN_ACTIVITY_STATUS_PATH);
 
     let mut req = client
         .post(&url)
@@ -1229,7 +1275,11 @@ pub async fn get_checkin_status(
         .get("data")
         .ok_or_else(|| "checkin-status 响应缺少 data 字段".to_string())?;
 
-    let status = parse_checkin_status_data(data)?;
+    let status = if crate::modules::workbuddy_oauth::is_intl_domain(domain) {
+        parse_intl_checkin_status_data(data)?
+    } else {
+        parse_checkin_status_data(data)?
+    };
 
     Ok(status)
 }
@@ -1252,8 +1302,19 @@ pub async fn perform_checkin(
             next_checkin_in: None,
         });
     }
+    if crate::modules::workbuddy_oauth::is_intl_domain(domain) && !before.active {
+        return Ok(CheckinResponse {
+            success: false,
+            message: Some("WorkBuddy 国际版今日活动未开启，没有可领的积分".to_string()),
+            reward: None,
+            credit: None,
+            streak_days: Some(before.streak_days),
+            is_streak_day: before.is_streak_day,
+            next_checkin_in: None,
+        });
+    }
     let client = build_client()?;
-    let url = format!("{}/v2/billing/meter/daily-checkin", CODEBUDDY_API_ENDPOINT);
+    let url = daily_checkin_url(domain);
 
     let mut req = client
         .post(&url)
@@ -1375,6 +1436,23 @@ pub async fn perform_checkin(
 #[cfg(test)]
 mod workbuddy_checkin_tests {
     use super::*;
+
+    #[test]
+    fn intl_accounts_use_workbuddy_ai_activity_endpoints() {
+        assert_eq!(checkin_status_url(Some("www.workbuddy.ai")), "https://www.workbuddy.ai/billing/meter/checkin-activity-status");
+        assert_eq!(daily_checkin_url(Some("www.workbuddy.ai")), "https://www.workbuddy.ai/v2/billing/meter/daily-checkin");
+        assert_eq!(checkin_status_url(Some("www.codebuddy.cn")), "https://www.codebuddy.cn/v2/billing/meter/checkin-activity-status");
+        assert_eq!(daily_checkin_url(None), "https://www.codebuddy.cn/v2/billing/meter/daily-checkin");
+    }
+
+    #[test]
+    fn intl_status_without_today_flag_means_not_claimed() {
+        let status = parse_intl_checkin_status_data(&serde_json::json!({"active": true})).unwrap();
+        assert!(status.active && !status.today_checked_in);
+        let closed = parse_intl_checkin_status_data(&serde_json::json!({})).unwrap();
+        assert!(!closed.active && !closed.today_checked_in);
+        assert!(parse_checkin_status_data(&serde_json::json!({"active": true})).is_err());
+    }
 
     #[test]
     fn status_queries_current_activity_not_retired_checkin() {
