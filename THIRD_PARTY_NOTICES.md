@@ -17,6 +17,15 @@ Copyright 2026 carzygod/doubao2api contributors.
 The full Apache License 2.0 text is available at
 <https://www.apache.org/licenses/LICENSE-2.0>.
 
+## WorkBuddy-Daily (WorkBuddy 国际版 daily activity)
+
+The WorkBuddy 国际版 daily-activity chain (the `/v2/report` `chat_request_send`
+event that lights the growth-center streak, the `/activity/growth/streak`
+read-back, and the `/console/as/conversations/` web session) follows
+[`L0NE-6/WorkBuddy-Daily`](https://github.com/L0NE-6/WorkBuddy-Daily)
+(`workbuddy_intl_daily.py`), licensed under the MIT License.
+Copyright (c) the WorkBuddy-Daily contributors.
+
 ## Cockpit Tools WorkBuddy management reference
 
 The WorkBuddy multi-account daily-credit status flow, automatic check-in

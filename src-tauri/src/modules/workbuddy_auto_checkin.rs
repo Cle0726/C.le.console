@@ -512,7 +512,7 @@ pub async fn run_workbuddy_auto_checkin_cycle_if_needed(
             account.id.clone()
         };
         let account_checkin_time = format_time_only();
-        keep_intl_active(&account, &email_display).await;
+        let intl_activity = keep_intl_active(&account, &email_display).await;
 
         match codebuddy_cn_oauth::get_checkin_status(
             &account.access_token,
@@ -531,6 +531,31 @@ pub async fn run_workbuddy_auto_checkin_cycle_if_needed(
                     time: Some(account_checkin_time),
                     message: Some("今日已完成签到".to_string()),
                     credit: Some(serde_json::json!(status.daily_credit)),
+                });
+                mark_schedule_checked(&mut new_schedules, &account.id, &today_str, current_minute);
+            }
+            Ok(status) if !status.active && intl_activity.as_ref().is_some_and(|a| a.day_completed()) => {
+                // 国际版：签到活动关着的日子，每日积分看「当日活跃」，活跃链完成就算今天签过。
+                let activity = intl_activity.clone().unwrap_or_default();
+                success_count += 1;
+                did_checkin_any = true;
+                let streak = activity
+                    .streak_days
+                    .and_then(|v| i32::try_from(v).ok())
+                    .unwrap_or_else(|| account.checkin_streak.unwrap_or(0).saturating_add(1));
+                let _ = workbuddy_account::update_checkin_info(
+                    &account.id,
+                    Some(beijing_now().timestamp()),
+                    streak,
+                    Some(serde_json::json!({ "intlActivity": activity.summary() })),
+                );
+                details.push(WorkbuddyAutoCheckinAccountDetail {
+                    account_id: account.id.clone(),
+                    email: email_display,
+                    status: "success".to_string(),
+                    time: Some(account_checkin_time),
+                    message: Some(activity.summary()),
+                    credit: None,
                 });
                 mark_schedule_checked(&mut new_schedules, &account.id, &today_str, current_minute);
             }
@@ -714,12 +739,21 @@ pub async fn run_workbuddy_auto_checkin_cycle_if_needed(
     }
 }
 
-/// 国际版的每日积分看「当天是否活跃」，领取前先用免费模型保活一次；失败只记日志，照常查状态。
-pub(crate) async fn keep_intl_active(account: &crate::models::workbuddy::WorkbuddyAccount, label: &str) {
-    match crate::modules::workbuddy_api::keep_intl_account_active(account, "").await {
-        Ok(Some(model)) => logger::log_info(&format!("[WorkbuddyAutoCheckin] {label} 国际版活跃保活完成（{model}）")),
-        Ok(None) => {}
-        Err(error) => logger::log_warn(&format!("[WorkbuddyAutoCheckin] {label} {error}")),
+/// 国际版先跑「每日活跃」链（活跃上报 + 网页会话 + 保活对话），再照常查签到状态；国内版返回 None。
+pub(crate) async fn keep_intl_active(
+    account: &crate::models::workbuddy::WorkbuddyAccount,
+    label: &str,
+) -> Option<crate::modules::workbuddy_api::IntlDailyActivity> {
+    match crate::modules::workbuddy_api::run_intl_daily_activity(account, "").await {
+        Ok(Some(activity)) => {
+            logger::log_info(&format!("[WorkbuddyAutoCheckin] {label} {}", activity.summary()));
+            Some(activity)
+        }
+        Ok(None) => None,
+        Err(error) => {
+            logger::log_warn(&format!("[WorkbuddyAutoCheckin] {label} {error}"));
+            None
+        }
     }
 }
 

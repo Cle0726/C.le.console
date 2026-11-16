@@ -318,59 +318,167 @@ pub fn headers(account: &WorkbuddyAccount) -> BTreeMap<String, String> {
     headers
 }
 
-/// 国际版不消耗积分的免费模型（agent2api `DEFAULT_FREE_MODELS`），按顺序试到一个成功为止。
-const INTL_KEEPALIVE_MODELS: &[&str] = &["deepseek-v4.1-flash", "hy3", "hy4-preview", "hy4-preview-f"];
+/// 国际版不消耗积分的免费模型（agent2api / L0NE-6 WorkBuddy-Daily 的默认链），按顺序试到一个成功为止。
+const INTL_KEEPALIVE_MODELS: &[&str] = &["hy4flash-free", "deepseek-v4.1-flash-sg", "deepseek-v4.1-flash", "hy3"];
+const INTL_WEB_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36";
 
-/// 国际版的每日积分挂在「每日活跃」上：用免费模型发一次最小对话，让账号当天算活跃。
-/// 返回成功的模型名；国内版账号直接返回 None。
-pub async fn keep_intl_account_active(account: &WorkbuddyAccount, proxy: &str) -> Result<Option<String>, String> {
+/// 国际版一次「每日活跃」的结果。
+#[derive(Debug, Clone, Default)]
+pub struct IntlDailyActivity {
+    /// /v2/report 活跃上报被接受（点亮成长中心「连登」）
+    pub report_ok: bool,
+    /// 回读的连登天数
+    pub streak_days: Option<i64>,
+    /// 网页会话建成（上游「当日活跃」计数只认这一发）
+    pub web_ok: bool,
+    /// 保活对话用上的免费模型
+    pub chat_model: Option<String>,
+    pub notes: Vec<String>,
+}
+
+impl IntlDailyActivity {
+    /// 上报或网页会话任一成功即算当日活跃完成（积分由上游异步发放）。
+    pub fn day_completed(&self) -> bool {
+        self.report_ok || self.web_ok
+    }
+
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if self.report_ok {
+            parts.push(match self.streak_days {
+                Some(days) => format!("连登 {days} 天"),
+                None => "连登已点亮".to_string(),
+            });
+        }
+        if self.web_ok {
+            parts.push("网页会话已建".to_string());
+        }
+        if parts.is_empty() {
+            return format!("国际版今日活跃未完成：{}", self.notes.join("；"));
+        }
+        format!("国际版今日活跃已完成（{}；积分由官方异步发放）", parts.join("、"))
+    }
+}
+
+/// /v2/report 的 chat_request_send 事件，形状同官方客户端；userId 缺失会被上游静默丢弃。
+fn intl_report_event(uid: &str, now_ms: i64) -> Value {
+    let id = format!("cle-{}", uuid::Uuid::new_v4().simple());
+    json!({
+        "eventCode": "chat_request_send", "timestamp": now_ms, "reportDelay": 0, "mode": "craft",
+        "conversationId": id, "requestId": id, "inputLength": 12,
+        "requestModelId": "deepseek-v4.1-flash", "requestModelName": "DeepSeek V4.1 Flash",
+        "isPlan": false, "isAutoExecuteTerminal": false, "isAutoModify": false, "codebaseEnable": false,
+        "maxToken": 0, "maxSteps": 0, "temperature": 0, "maxRetries": 0,
+        "mentionContexts": [], "knowledgeId": [], "knowledgeName": [], "codebaseId": "", "mentionContextCount": 0,
+        "command": "", "expertId": "", "recommendId": "", "skillId": "", "skillCount": 0, "totalCount": 0,
+        "fileUri": "", "presentAt": now_ms, "traceId": "", "rootRequestId": id, "parentConversationId": id,
+        "agentName": "default", "agentType": "conversation", "userId": uid,
+    })
+}
+
+fn intl_ok(body: &Value) -> bool {
+    body.get("code").and_then(Value::as_i64) == Some(0)
+}
+
+/// 国际版每日积分不是普通签到（billing 签到活动多数日子是关的，领取会 10001）：
+/// 官方算「当日活跃」——活跃上报点亮连登 + 网页会话；再补一次免费模型对话维持「账号有调用」。
+/// 端点与形状取自 L0NE-6/WorkBuddy-Daily（MIT）的 workbuddy_intl_daily.py，2026-11-16 实测：
+/// 上报后连登 0→1 天，网页会话建成。国内版账号返回 None。
+pub async fn run_intl_daily_activity(account: &WorkbuddyAccount, proxy: &str) -> Result<Option<IntlDailyActivity>, String> {
     if !crate::modules::workbuddy_oauth::is_intl_domain(account.domain.as_deref()) {
         return Ok(None);
     }
+    let uid = account.uid.clone().filter(|uid| !uid.is_empty()).ok_or("WorkBuddy 国际版账号缺少 uid，无法上报活跃")?;
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(20));
+        .timeout(Duration::from_secs(40));
     if !proxy.trim().is_empty() {
         builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|e| e.to_string())?);
     }
     let client = builder.build().map_err(|e| e.to_string())?;
-    let mut last_error = String::from("没有可用的免费模型");
-    for model in INTL_KEEPALIVE_MODELS {
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let mut request = client
-            .post(format!("{}/v2/chat/completions", chat_base(account)))
-            .json(&serde_json::json!({
-                "model": model, "stream": true, "max_tokens": 16,
-                "messages": [
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": "hi"},
-                ],
-            }));
+    let base = chat_base(account);
+    let api = |request: reqwest::RequestBuilder| {
+        let mut request = request;
         for (name, value) in headers(account) {
             request = request.header(name, value);
         }
-        request = request
-            .header("Accept", "text/event-stream")
-            .header("X-Request-ID", &request_id)
-            .header("X-Conversation-ID", &request_id)
-            .header("X-Conversation-Request-ID", &request_id)
-            .header("X-Conversation-Message-ID", &request_id)
-            .header("X-Root-Request-ID", &request_id)
-            .header("X-Session-ID", &request_id)
-            .header("Referer", "https://www.workbuddy.ai/");
-        match request.send().await {
-            Ok(response) if response.status().is_success() => {
-                // 读完流：不读的请求上游可能不记活跃。
-                if response.bytes().await.is_ok() {
-                    return Ok(Some((*model).to_string()));
-                }
-                last_error = format!("{model} 响应读取失败");
+        request.header("Content-Type", "application/json")
+    };
+    let mut result = IntlDailyActivity::default();
+
+    // 1. 活跃上报 → 连登
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    match api(client.post(format!("{base}/v2/report"))).json(&json!([intl_report_event(&uid, now_ms)])).send().await {
+        Ok(response) => match response.json::<Value>().await {
+            Ok(body) if intl_ok(&body) => result.report_ok = true,
+            Ok(body) => result.notes.push(format!("活跃上报未确认：code {}", body.get("code").cloned().unwrap_or(Value::Null))),
+            Err(error) => result.notes.push(format!("活跃上报响应无法解析：{error}")),
+        },
+        Err(error) => result.notes.push(format!("活跃上报失败：{error}")),
+    }
+    if result.report_ok {
+        if let Ok(response) = api(client.get(format!("{base}/activity/growth/streak"))).send().await {
+            if let Ok(body) = response.json::<Value>().await {
+                result.streak_days = body.pointer("/data/streak/days").and_then(Value::as_i64);
             }
-            Ok(response) => last_error = format!("{model} 返回 HTTP {}", response.status().as_u16()),
-            Err(error) => last_error = format!("{model} 请求失败：{error}"),
         }
     }
-    Err(format!("WorkBuddy 国际版活跃保活失败：{last_error}"))
+
+    // 2. 网页会话（当日活跃计数只认它；会在账号里留下一个标题为 Hi 的会话）
+    for model in INTL_KEEPALIVE_MODELS {
+        let response = client
+            .post(format!("{base}/console/as/conversations/"))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/plain, */*")
+            .header("User-Agent", INTL_WEB_UA)
+            .header("Origin", base)
+            .header("Referer", format!("{base}/app"))
+            .header("Authorization", format!("Bearer {}", account.access_token))
+            .header("X-User-Id", &uid)
+            .json(&json!({"prompt": "Hi", "model": model, "conversationOrigin": "workbuddy-app",
+                "plugins": [{"name": "weixinpay", "marketplace": "codebuddy-builtin"}]}))
+            .send()
+            .await;
+        match response {
+            Ok(response) if response.status().is_success() => {
+                let body = response.json::<Value>().await.unwrap_or(Value::Null);
+                if body.pointer("/data/id").is_some_and(|id| !id.is_null() && id != "") {
+                    result.web_ok = true;
+                    break;
+                }
+                result.notes.push(format!("网页会话 {model} 未建成：code {}", body.get("code").cloned().unwrap_or(Value::Null)));
+            }
+            Ok(response) => result.notes.push(format!("网页会话 {model} 返回 HTTP {}", response.status().as_u16())),
+            Err(error) => result.notes.push(format!("网页会话 {model} 请求失败：{error}")),
+        }
+    }
+
+    // 3. 免费模型保活对话（需要整组会话 ID 头，否则 11128）
+    for model in INTL_KEEPALIVE_MODELS {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let mut request = api(client.post(format!("{base}/v2/chat/completions"))).json(&json!({
+            "model": model, "stream": true, "max_tokens": 16,
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "hi"},
+            ],
+        }));
+        for name in ["X-Request-ID", "X-Conversation-ID", "X-Conversation-Request-ID", "X-Conversation-Message-ID", "X-Root-Request-ID", "X-Session-ID"] {
+            request = request.header(name, &request_id);
+        }
+        request = request.header("Accept", "text/event-stream").header("Referer", format!("{base}/"));
+        match request.send().await {
+            Ok(response) if response.status().is_success() => {
+                if response.bytes().await.is_ok() {
+                    result.chat_model = Some((*model).to_string());
+                    break;
+                }
+            }
+            Ok(response) => result.notes.push(format!("保活 {model} 返回 HTTP {}", response.status().as_u16())),
+            Err(error) => result.notes.push(format!("保活 {model} 请求失败：{error}")),
+        }
+    }
+    Ok(Some(result))
 }
 
 fn credential_payload(account: &WorkbuddyAccount) -> Value {
@@ -517,6 +625,18 @@ fn max_input_tokens(model: &Value) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn intl_activity_counts_report_or_web_session_not_chat_alone() {
+        let chat_only = IntlDailyActivity { chat_model: Some("hy4flash-free".into()), ..Default::default() };
+        assert!(!chat_only.day_completed());
+        let lit = IntlDailyActivity { report_ok: true, streak_days: Some(3), ..Default::default() };
+        assert!(lit.day_completed());
+        assert!(lit.summary().contains("连登 3 天"));
+        let event = intl_report_event("uid-1", 1);
+        assert_eq!(event["userId"], "uid-1");
+        assert_eq!(event["eventCode"], "chat_request_send");
+    }
 
     #[test]
     fn intl_config_catalog_skips_paywalled_and_media_models() {

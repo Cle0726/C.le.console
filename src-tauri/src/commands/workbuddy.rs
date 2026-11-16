@@ -439,15 +439,23 @@ pub async fn checkin_workbuddy(
 
     let account = workbuddy_account::load_account(&account_id)
         .ok_or_else(|| format!("账号不存在: {}", account_id))?;
-    crate::modules::workbuddy_auto_checkin::keep_intl_active(&account, &account.email).await;
+    let intl_activity = crate::modules::workbuddy_auto_checkin::keep_intl_active(&account, &account.email).await;
 
-    let response = codebuddy_cn_oauth::perform_checkin(
+    let mut response = codebuddy_cn_oauth::perform_checkin(
         &account.access_token,
         account.uid.as_deref(),
         account.enterprise_id.as_deref(),
         account.domain.as_deref(),
     )
     .await?;
+    // 国际版：签到活动没开时领取不到，但当日活跃已完成就是今天的签到结果。
+    if let Some(activity) = intl_activity.filter(|a| a.day_completed()) {
+        if !response.success {
+            response.success = true;
+            response.message = Some(activity.summary());
+            response.streak_days = activity.streak_days.or(response.streak_days);
+        }
+    }
 
     if response.success {
         let now = chrono::Utc::now().timestamp();
