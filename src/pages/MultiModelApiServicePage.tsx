@@ -803,7 +803,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             <header className="mm-api-panel-head mm-workbuddy-heading">
               <div>
                 <h1>豆包对话 API（网页登录）</h1>
-                <p>用浏览器登录豆包账号后接入 API 账号池，调用 doubao-web/auto。豆包网页版没有原生工具调用，网关会把工具清单写进提示词再把回复转成标准 tool_calls；多个账号轮流使用，某个账号限流或额度用完时自动换下一个。</p>
+                <p>用浏览器登录豆包账号后接入 API 账号池，调用 doubao-web/auto（默认用最深的「专家」思考，思考额度用完时自动降到「思考」再到「快速」）。豆包网页版没有原生工具调用，网关会把工具清单写进提示词再把回复转成标准 tool_calls；多个账号轮流使用，某个账号限流或额度用完时自动换下一个。</p>
               </div>
               <div className="mm-inline-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => void refreshQuotas('doubao-web')} disabled={busy || !accounts.some((account) => account.provider === 'doubao-web' && account.enabled)}><RefreshCw className={operation === 'quota' ? 'spin' : ''} />刷新额度</button>
