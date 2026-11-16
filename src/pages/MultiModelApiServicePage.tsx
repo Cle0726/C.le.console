@@ -709,8 +709,11 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     { id: 'extensions' as const, label: '扩展账号 / 签到', detail: 'Qoder、Trae 等', Icon: CalendarCheck },
   ];
   const activeConnect = connectTabs.find((item) => item.id === tab);
-  const primaryProviders = PROVIDERS.filter((provider) => accounts.some((account) => account.provider === provider.id));
-  const extraProviders = PROVIDERS.filter((provider) => provider.id !== 'claude-cli' && !accounts.some((account) => account.provider === provider.id));
+  // Providers whose login lives on their own page stay in the strip even with no accounts, so the entry is never buried in 更多厂商.
+  const pinnedProviders: readonly string[] = ['doubao-web'];
+  const isListedProvider = (id: string) => pinnedProviders.includes(id) || accounts.some((account) => account.provider === id);
+  const primaryProviders = PROVIDERS.filter((provider) => isListedProvider(provider.id));
+  const extraProviders = PROVIDERS.filter((provider) => provider.id !== 'claude-cli' && !isListedProvider(provider.id));
   const activeExtraProvider = extraProviders.find((provider) => provider.id === providerFilter);
 
   return (
@@ -894,9 +897,9 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
           {primaryProviders.map((provider) => {
             const count = accounts.filter((item) => item.provider === provider.id).length;
             return (
-              <button key={provider.id} type="button" className={providerFilter === provider.id ? 'active' : ''} onClick={() => { setProviderFilter(provider.id); setOpenMenu(null); }}>
+              <button key={provider.id} type="button" className={providerFilter === provider.id ? 'active' : ''} onClick={() => { setOpenMenu(null); if (!count && pinnedProviders.includes(provider.id)) { openAccount(undefined, provider.id); return; } setProviderFilter(provider.id); }}>
                 <span className={`mm-provider-icon ${provider.id}`}><ProviderIcon provider={provider.id} /></span>
-                <b>{provider.short}</b><small>{count} 个账号</small>
+                <b>{provider.short}</b><small>{count ? `${count} 个账号` : '点此登录接入'}</small>
               </button>
             );
           })}
@@ -950,6 +953,9 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
                     <div className="mm-menu-panel mm-menu-panel-end" role="menu">
                       <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); void syncAccounts(); }} disabled={busy}>
                         <RefreshCw className={operation === 'sync' ? 'spin' : ''} /><span><b>同步 C.le 账号</b><small>从本机已登录账号导入</small></span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); openAccount(undefined, 'doubao-web'); }} disabled={busy}>
+                        <Bot /><span><b>添加豆包账号</b><small>浏览器登录 / 导入凭证 / 豆包桌面版</small></span>
                       </button>
                     </div>
                   )}
