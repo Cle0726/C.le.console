@@ -15,7 +15,9 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -337,7 +339,7 @@ func (s *relayServer) handleDoubaoWebChat(c *gin.Context, spec *apiKeySpec, rawJ
 		account := accounts[(first+i)%len(accounts)]
 		cookie, err := doubaoWebCredential(ctx, account.Headers[doubaoWebCredentialHdr], account.UpstreamAPIKey)
 		if err == nil {
-			reply, err = newDoubaoWebClient(cookie, s.doubaoWebTransport(account)).withModel(doubaoWebModelKey(model)).Complete(ctx, prompt)
+			reply, err = doubaoWebCompleteWithThinking(ctx, newDoubaoWebClient(cookie, s.doubaoWebTransport(account)).withModel(doubaoWebModelKey(model)), account.ID, doubaoWebRequestThink(payload), prompt)
 		}
 		if err == nil {
 			used = account
@@ -428,4 +430,64 @@ func writeDoubaoWebChatCompletion(c *gin.Context, model, text, thinking string, 
 	if flusher, ok := c.Writer.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+// Chat-mode thinking levels, deepest first: 专家 (3), 思考 (1), 快速 (0).
+var doubaoWebThinkLevels = []int{3, 1, 0}
+
+// doubaoWebThinkExhausted remembers account+level pairs whose thinking quota ran out,
+// so later requests start at a level that can still answer.
+var doubaoWebThinkExhausted sync.Map // "account|level" -> time.Time (retry after)
+
+const doubaoWebThinkRetryAfter = time.Hour
+
+// doubaoWebRequestThink maps the caller's reasoning_effort to the deepest level to try.
+// No effort given means the deepest one.
+func doubaoWebRequestThink(payload map[string]any) int {
+	effort := strings.ToLower(strings.TrimSpace(stringFieldFromAny(payload["reasoning_effort"])))
+	if reasoning, ok := payload["reasoning"].(map[string]any); ok && effort == "" {
+		effort = strings.ToLower(strings.TrimSpace(stringFieldFromAny(reasoning["effort"])))
+	}
+	switch effort {
+	case "none", "minimal":
+		return 0
+	case "low", "medium":
+		return 1
+	}
+	return doubaoWebThinkLevels[0]
+}
+
+// doubaoWebCompleteWithThinking answers with the deepest thinking level the account can still use.
+// When a thinking level hits its quota (Doubao's free thinking quota is a 7-day window, while 快速
+// keeps working), it steps down a level on the same account instead of failing the request.
+// Named models carry their own mode, so only auto steps through levels.
+func doubaoWebCompleteWithThinking(ctx context.Context, client *doubaoWebClient, accountID string, deepest int, prompt string) (*doubaoWebReply, error) {
+	if client.model != "" {
+		return client.Complete(ctx, prompt)
+	}
+	var lastErr error
+	for _, level := range doubaoWebThinkLevels {
+		if level > deepest {
+			continue
+		}
+		key := accountID + "|" + strconv.Itoa(level)
+		if level > 0 {
+			if until, ok := doubaoWebThinkExhausted.Load(key); ok && time.Now().Before(until.(time.Time)) {
+				continue
+			}
+		}
+		client.think = level
+		reply, err := client.Complete(ctx, prompt)
+		if err == nil {
+			return reply, nil
+		}
+		lastErr = err
+		if level == 0 || ctx.Err() != nil || errors.Is(err, errDoubaoWebLoginRequired) || errors.Is(err, errDoubaoWebRateLimited) {
+			return nil, err
+		}
+		if errors.Is(err, errDoubaoWebQuotaExceeded) {
+			doubaoWebThinkExhausted.Store(key, time.Now().Add(doubaoWebThinkRetryAfter))
+		}
+	}
+	return nil, lastErr
 }

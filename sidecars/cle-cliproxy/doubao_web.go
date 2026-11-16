@@ -33,6 +33,7 @@ const (
 	doubaoWebBotID           = "7338286299411103781"
 	doubaoWebCredentialHdr   = "X-Cle-Doubao-Credential-URL"
 	doubaoWebMaxFrame        = 4 << 20
+	doubaoWebDefaultThink    = 0
 )
 
 var (
@@ -49,6 +50,7 @@ type doubaoWebClient struct {
 	http     *http.Client
 	cookie   string
 	model    string // Doubao model_item_key; empty lets Doubao pick (auto)
+	think    int    // chat-mode thinking switch for auto: 0 快速, 1 思考, 3 专家
 	webID    string
 	deviceID string
 }
@@ -78,7 +80,7 @@ func newDoubaoWebClient(cookie string, transport http.RoundTripper) *doubaoWebCl
 	}
 	return &doubaoWebClient{http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
-	}}, cookie: strings.TrimSpace(cookie), webID: doubaoWebRandomID(), deviceID: doubaoWebRandomID()}
+	}}, cookie: strings.TrimSpace(cookie), webID: doubaoWebRandomID(), deviceID: doubaoWebRandomID(), think: doubaoWebDefaultThink}
 }
 
 func (c *doubaoWebClient) endpoint(path string) string {
@@ -123,7 +125,7 @@ func (c *doubaoWebClient) withModel(key string) *doubaoWebClient {
 	return c
 }
 
-func doubaoWebChatBody(message, model string) map[string]any {
+func doubaoWebChatBody(message, model string, think int) map[string]any {
 	localMessageID := doubaoWebUUID()
 	generalTask := map[string]any{
 		"action": 0, "thread_local_message_id": []string{localMessageID}, "runtime_type": 1,
@@ -136,7 +138,7 @@ func doubaoWebChatBody(message, model string) map[string]any {
 	initOption := map[string]any{"need_ack_conversation": true}
 	initJSON, _ := json.Marshal(initOption)
 	now := time.Now()
-	deepThink := 0
+	deepThink := think
 	initExt := map[string]any{"mode_id": "1"}
 	body := map[string]any{
 		"client_meta": map[string]any{
@@ -211,7 +213,7 @@ func (c *doubaoWebClient) Complete(ctx context.Context, message string) (*doubao
 	if c.cookie == "" || (doubaoWebCookieValue(c.cookie, "sessionid") == "" && doubaoWebCookieValue(c.cookie, "sessionid_ss") == "" && doubaoWebCookieValue(c.cookie, "sid_tt") == "") {
 		return nil, errDoubaoWebLoginRequired
 	}
-	payload, err := json.Marshal(doubaoWebChatBody(message, c.model))
+	payload, err := json.Marshal(doubaoWebChatBody(message, c.model, c.think))
 	if err != nil {
 		return nil, err
 	}

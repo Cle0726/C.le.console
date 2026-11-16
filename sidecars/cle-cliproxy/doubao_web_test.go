@@ -94,16 +94,16 @@ func TestDoubaoWebModelKeyAndBody(t *testing.T) {
 			t.Fatalf("%s -> %q", in, got)
 		}
 	}
-	body := doubaoWebChatBody("hi", "")
+	body := doubaoWebChatBody("hi", "", 0)
 	if body["option"].(map[string]any)["need_deep_think"] != 0 || body["option"].(map[string]any)["model_config"] != nil {
 		t.Fatal("auto must not pin a model")
 	}
-	body = doubaoWebChatBody("hi", "person-kimi")
+	body = doubaoWebChatBody("hi", "person-kimi", 0)
 	option := body["option"].(map[string]any)
 	if option["need_deep_think"] != 10001 || option["model_config"].(map[string]any)["model_item_key"] != "person-kimi" || body["ext"].(map[string]any)["use_deep_think"] != "10001" {
 		t.Fatalf("named model body %v", option)
 	}
-	if doubaoWebChatBody("hi", "5")["option"].(map[string]any)["need_deep_think"] != 5 {
+	if doubaoWebChatBody("hi", "5", 0)["option"].(map[string]any)["need_deep_think"] != 5 {
 		t.Fatal("numeric model keys are their own deep-think mode")
 	}
 }
@@ -232,5 +232,43 @@ func TestDoubaoWebPromptRendersHistoryAndTools(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"tool_choice":"none","tools":[{"type":"function","function":{"name":"read"}}]}`), &payload)
 	if tools, _ = doubaoWebTools(payload); len(tools) != 0 {
 		t.Fatal("tool_choice none must hide tools")
+	}
+}
+
+// Free accounts run out of thinking quota (7-day window) while 快速 keeps working:
+// auto starts at 专家 and steps down on the same account, remembering the exhausted levels.
+func TestDoubaoWebThinkingStepsDownOnQuota(t *testing.T) {
+	doubaoWebThinkExhausted.Range(func(k, _ any) bool { doubaoWebThinkExhausted.Delete(k); return true })
+	var levels []float64
+	rt := func(r *http.Request) (*http.Response, error) {
+		var sent map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&sent)
+		level := sent["option"].(map[string]any)["need_deep_think"].(float64)
+		levels = append(levels, level)
+		if level > 0 {
+			return doubaoWebSSE(200, doubaoWebAck+doubaoWebChunk("近 7 天免费额度已用完，预计11月22日恢复。开通订阅畅享更多额度。"))(r)
+		}
+		return doubaoWebSSE(200, doubaoWebAck+doubaoWebChunk("4"))(r)
+	}
+	client := newDoubaoWebClient(doubaoWebTestCookie, doubaoWebRT(rt))
+	reply, err := doubaoWebCompleteWithThinking(context.Background(), client, "acc", doubaoWebRequestThink(map[string]any{}), "q")
+	if err != nil || reply.Answer != "4" {
+		t.Fatalf("reply %+v err %v", reply, err)
+	}
+	if len(levels) != 3 || levels[0] != 3 || levels[1] != 1 || levels[2] != 0 {
+		t.Fatalf("levels tried %v", levels)
+	}
+	levels = nil
+	if _, err := doubaoWebCompleteWithThinking(context.Background(), client, "acc", 3, "q"); err != nil || len(levels) != 1 || levels[0] != 0 {
+		t.Fatalf("exhausted levels must be skipped: %v %v", levels, err)
+	}
+	levels = nil
+	if _, err := doubaoWebCompleteWithThinking(context.Background(), client.withModel("person-kimi"), "acc", 3, "q"); err == nil || len(levels) != 1 {
+		t.Fatalf("named models must not step through levels: %v", levels)
+	}
+	for effort, want := range map[string]int{"": 3, "high": 3, "medium": 1, "low": 1, "none": 0} {
+		if got := doubaoWebRequestThink(map[string]any{"reasoning_effort": effort}); got != want {
+			t.Fatalf("effort %q -> %d, want %d", effort, got, want)
+		}
 	}
 }
