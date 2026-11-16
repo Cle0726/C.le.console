@@ -535,6 +535,9 @@ export function CodebuddySuiteAccountsSharedView<TAccount extends CodebuddySuite
         </div>
         <div className="toolbar-right">
           <button className="btn btn-primary icon-only" onClick={() => openAddModal('oauth')} title={t('common.shared.addAccount', '添加账号')}><Plus size={14} /></button>
+          {platformConfig.intlOauthTabLabel && (
+            <button className="btn btn-secondary" onClick={() => openAddModal('oauth-intl')} title={platformConfig.intlOauthTabLabel}><Globe size={14} /> 添加国际版账号</button>
+          )}
           <button className="btn btn-secondary icon-only" onClick={handleSync} disabled={syncing || accounts.length === 0} title={platformConfig.syncButtonTitle(t)}>
             {syncing ? <RefreshCw size={14} className="loading-spinner" /> : <ArrowRightLeft size={14} />}
           </button>
@@ -590,6 +593,11 @@ export function CodebuddySuiteAccountsSharedView<TAccount extends CodebuddySuite
             <button className="btn btn-primary" onClick={() => openAddModal('oauth')}>
               <Plus size={16} /> {t('common.shared.addAccount', '添加账号')}
             </button>
+            {platformConfig.intlOauthTabLabel && (
+              <button className="btn btn-secondary" onClick={() => openAddModal('oauth-intl')}>
+                <Globe size={16} /> 添加国际版账号
+              </button>
+            )}
           </div>
         </div>
       ) : filteredAccounts.length === 0 ? (
