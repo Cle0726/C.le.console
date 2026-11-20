@@ -3006,6 +3006,10 @@ pub(crate) fn start_pool_video(prompt: String, ratio: String) -> Result<String, 
     let id = uuid::Uuid::new_v4().simple().to_string();
     set_pool_video_job(&id, serde_json::json!({"status": "running"}));
     let job = id.clone();
+    // Asked through the API there is nobody to answer Doubao's 「如果你确认，我就按这个参数生成」.
+    let prompt = format!("{}
+
+（画面比例 {}。请直接生成视频，不要再向我确认参数或提问。）", prompt.trim(), ratio);
     tauri::async_runtime::spawn(async move {
         let request = DoubaoWebVideoRequest { account_id: None, prompt, ratio };
         let state = match generate_video(app, request).await {
