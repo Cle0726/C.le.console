@@ -1,9 +1,14 @@
 //! Workbench-only outbound proxy fed by a Clash/mihomo subscription.
 //!
 //! The subscription document is the same YAML or base64 node list used by
-//! MetaCubeX/mihomo. HTTP and SOCKS5 nodes are dialed by the built-in local
-//! proxy. Other protocols are handed to a local `mihomo` binary when one is
-//! installed, because those tunnels are not reimplemented here.
+//! MetaCubeX/mihomo. Every workbench consumer talks to one local relay on
+//! `BUILTIN_PORT`; the relay decides per destination host. In split mode
+//! (the default) only overseas AI services (Google/Gemini/Antigravity,
+//! OpenAI/Codex, Anthropic, xAI, GitHub, …) go through the selected node and
+//! everything else — domestic platforms such as Doubao or WorkBuddy — is
+//! dialed directly. HTTP and SOCKS5 nodes are dialed by the relay itself;
+//! other protocols are chained to a bundled `mihomo` on `MIHOMO_PORT`.
+//! The operating system's proxy settings are never touched.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -48,6 +53,8 @@ pub struct SubscriptionProxyState {
     pub local_proxy: String,
     pub last_error: String,
     pub node_count: usize,
+    pub split_routing: bool,
+    pub extra_node_domains: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -72,7 +79,7 @@ struct StoredNode {
     raw: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Store {
     url: String,
     nodes: Vec<StoredNode>,
@@ -80,6 +87,30 @@ struct Store {
     enabled: bool,
     #[serde(default)]
     last_error: String,
+    /// Only overseas AI services use the node; everything else goes direct.
+    #[serde(default = "default_split_routing")]
+    split_routing: bool,
+    /// User-added host suffixes that must also go through the node.
+    #[serde(default)]
+    extra_node_domains: Vec<String>,
+}
+
+fn default_split_routing() -> bool {
+    true
+}
+
+impl Default for Store {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            nodes: Vec::new(),
+            selected_id: String::new(),
+            enabled: false,
+            last_error: String::new(),
+            split_routing: true,
+            extra_node_domains: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -94,6 +125,8 @@ struct Upstream {
 struct Runtime {
     route: Option<Upstream>,
     mihomo: Option<Child>,
+    split: bool,
+    extra: Vec<String>,
 }
 
 fn runtime() -> &'static Mutex<Runtime> {
@@ -102,8 +135,88 @@ fn runtime() -> &'static Mutex<Runtime> {
         Mutex::new(Runtime {
             route: None,
             mihomo: None,
+            split: true,
+            extra: Vec::new(),
         })
     })
+}
+
+static RELAY_STARTED: Mutex<bool> = Mutex::new(false);
+
+fn relay_started() -> bool {
+    *RELAY_STARTED.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn apply_routing(store: &Store) {
+    let mut runtime = runtime().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    runtime.split = store.split_routing;
+    runtime.extra = store.extra_node_domains.clone();
+}
+
+/// Host suffixes of overseas services the workbench signs in to or calls.
+/// Everything not listed here is dialed directly in split mode.
+const NODE_DOMAINS: &[&str] = &[
+    // Google: Gemini, Antigravity, Cloud Code, OAuth, reCAPTCHA
+    "google.com", "googleapis.com", "gstatic.com", "googleusercontent.com",
+    "google.dev", "googlevideo.com", "ggpht.com", "gvt1.com", "gvt2.com",
+    "withgoogle.com", "googletagmanager.com", "google-analytics.com",
+    "recaptcha.net", "youtube.com", "goo.gl", "g.co", "antigravity.google",
+    // OpenAI: ChatGPT, Codex, Sora
+    "openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com",
+    "sora.com", "openaiapi-site.azureedge.net", "auth0.com",
+    // Anthropic
+    "anthropic.com", "claude.ai", "claude.com", "claudeusercontent.com",
+    // xAI
+    "x.ai", "grok.com", "x.com", "twitter.com",
+    // Microsoft / GitHub (Copilot, releases, sign-in)
+    "github.com", "githubusercontent.com", "githubcopilot.com", "github.io",
+    "githubassets.com", "live.com", "microsoftonline.com",
+    // Other overseas AI tools the workbench manages
+    "cursor.sh", "cursor.com", "codeium.com", "windsurf.com", "kiro.dev",
+    "awsapps.com", "amazoncognito.com", "zed.dev", "augmentcode.com",
+    "factory.ai", "openrouter.ai", "mistral.ai", "groq.com", "perplexity.ai",
+    "cohere.com", "huggingface.co", "together.ai", "fireworks.ai",
+    // Challenge / bot-protection pages those sign-ins load
+    "cloudflare.com", "challenges.cloudflare.com", "hcaptcha.com",
+    "arkoselabs.com", "stripe.com", "intercom.io", "statsig.com", "sentry.io",
+];
+
+fn host_matches(host: &str, suffix: &str) -> bool {
+    let suffix = suffix.trim().trim_start_matches("*.").trim_start_matches('.').trim_end_matches('.');
+    !suffix.is_empty()
+        && (host == suffix
+            || (host.len() > suffix.len()
+                && host.ends_with(suffix)
+                && host.as_bytes()[host.len() - suffix.len() - 1] == b'.'))
+}
+
+fn routes_via_node(host: &str, split: bool, extra: &[String]) -> bool {
+    if !split {
+        return true;
+    }
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    // AWS hosts AI services in both regions; only the global partition needs the node.
+    if host.ends_with(".amazonaws.com") {
+        return true;
+    }
+    NODE_DOMAINS.iter().any(|suffix| host_matches(&host, suffix))
+        || extra.iter().any(|suffix| host_matches(&host, &suffix.to_ascii_lowercase()))
+}
+
+fn normalize_domains(items: &[String]) -> Vec<String> {
+    let mut list: Vec<String> = items
+        .iter()
+        .flat_map(|item| item.split([',', '\n', ' ', ';', '，']))
+        .map(|item| {
+            let item = item.trim().to_ascii_lowercase();
+            let item = item.strip_prefix("https://").or_else(|| item.strip_prefix("http://")).unwrap_or(&item).to_string();
+            item.split('/').next().unwrap_or_default().trim_start_matches("*.").trim_matches('.').to_string()
+        })
+        .filter(|item| !item.is_empty() && item.contains('.') && item.len() <= 253)
+        .collect();
+    list.sort();
+    list.dedup();
+    list
 }
 
 fn store_path() -> Result<PathBuf, String> {
@@ -154,28 +267,25 @@ fn view(store: &Store) -> SubscriptionProxyState {
         },
         last_error: store.last_error.clone(),
         node_count: store.nodes.len(),
+        split_routing: store.split_routing,
+        extra_node_domains: store.extra_node_domains.clone(),
     }
 }
 
-fn active_local_proxy(store: &Store) -> String {
-    let builtin = store
-        .nodes
-        .iter()
-        .find(|node| node.id == store.selected_id)
-        .map(|node| node.usable)
-        .unwrap_or(false);
-    format!(
-        "http://127.0.0.1:{}",
-        if builtin { BUILTIN_PORT } else { MIHOMO_PORT }
-    )
+fn active_local_proxy(_store: &Store) -> String {
+    // The relay is the single entry point; mihomo (when needed) sits behind it.
+    format!("http://127.0.0.1:{BUILTIN_PORT}")
 }
 
 fn runtime_is_ready(store: &Store) -> bool {
+    if !relay_started() {
+        return false;
+    }
     let builtin = store.nodes.iter().find(|node| node.id == store.selected_id).map(|node| node.usable);
     let mut runtime = runtime().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     match builtin {
         Some(true) => runtime.route.is_some(),
-        Some(false) => match runtime.mihomo.as_mut() {
+        Some(false) => runtime.route.is_some() && match runtime.mihomo.as_mut() {
             Some(child) => matches!(child.try_wait(), Ok(None)),
             None => false,
         },
@@ -188,9 +298,11 @@ pub fn enabled_local_proxy() -> Option<String> {
     if !store.enabled || store.selected_id.is_empty() {
         return None;
     }
-    // Port 0 cannot accept a TCP connection. Do not accidentally send account
-    // traffic to another program occupying our expected port after a failure.
-    Some(if runtime_is_ready(&store) { active_local_proxy(&store) } else { "http://127.0.0.1:0".to_string() })
+    // While the relay listens it stays the route even if the node is down:
+    // overseas requests then fail inside the relay (never silently direct),
+    // while domestic hosts in split mode keep working. Port 0 cannot accept a
+    // connection, so a relay that never started also fails closed.
+    Some(if relay_started() { active_local_proxy(&store) } else { "http://127.0.0.1:0".to_string() })
 }
 
 pub fn get_state() -> Result<SubscriptionProxyState, String> {
@@ -205,6 +317,8 @@ pub fn restore_on_startup() -> Result<(), String> {
     if !store.enabled {
         return Ok(());
     }
+    apply_routing(&store);
+    ensure_builtin()?;
     let node = match store.nodes.iter().find(|node| node.id == store.selected_id).cloned() {
         Some(node) => node,
         None => {
@@ -304,6 +418,7 @@ pub async fn apply(node_id: String, enabled: bool) -> Result<SubscriptionProxySt
         .cloned()
         .ok_or_else(|| "请先选择一个订阅节点".to_string())?;
     let previous = store.nodes.iter().find(|item| store.enabled && item.id == store.selected_id).cloned();
+    apply_routing(&store);
     if let Err(error) = start_node(&node) {
         if let Some(previous) = previous { let _ = start_node(&previous); }
         store.last_error = error.clone();
@@ -324,9 +439,9 @@ pub async fn apply(node_id: String, enabled: bool) -> Result<SubscriptionProxySt
 }
 
 fn start_node(node: &StoredNode) -> Result<(), String> {
+    ensure_builtin()?;
     if node.usable {
         stop_mihomo();
-        ensure_builtin()?;
         let mut runtime = runtime().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         runtime.route = Some(Upstream {
             kind: node.kind.clone(),
@@ -337,12 +452,29 @@ fn start_node(node: &StoredNode) -> Result<(), String> {
         });
         return Ok(());
     }
-    start_mihomo(node)
+    start_mihomo(node)?;
+    let mut runtime = runtime().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    runtime.route = Some(Upstream {
+        kind: "http".into(),
+        server: "127.0.0.1".into(),
+        port: MIHOMO_PORT,
+        username: String::new(),
+        password: String::new(),
+    });
+    Ok(())
+}
+
+pub async fn set_routing(split: bool, extra_domains: Vec<String>) -> Result<SubscriptionProxyState, String> {
+    let mut store = load_store()?;
+    store.split_routing = split;
+    store.extra_node_domains = normalize_domains(&extra_domains);
+    save_store(&store)?;
+    apply_routing(&store);
+    Ok(view(&store))
 }
 
 fn ensure_builtin() -> Result<(), String> {
-    static STARTED: Mutex<bool> = Mutex::new(false);
-    let mut started = STARTED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut started = RELAY_STARTED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if *started {
         return Ok(());
     }
@@ -401,14 +533,34 @@ fn handle_client(mut client: TcpStream) -> Result<(), String> {
         let port = url.port_or_known_default().unwrap_or(80);
         (host, port)
     };
-    let upstream = {
+    let (via_node, upstream) = {
         let runtime = runtime().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        runtime
-            .route
-            .clone()
-            .ok_or_else(|| "还没有选择订阅节点".to_string())?
+        (routes_via_node(&host, runtime.split, &runtime.extra), runtime.route.clone())
     };
-    let mut remote = dial_upstream(&upstream, &host, port)?;
+    let mut remote = if via_node {
+        let upstream = match upstream {
+            Some(upstream) => upstream,
+            None => {
+                let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                return Err(format!("订阅节点未就绪，已拒绝 {host} 的请求（不会改为直连）"));
+            }
+        };
+        match dial_upstream(&upstream, &host, port) {
+            Ok(remote) => remote,
+            Err(error) => {
+                let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                return Err(format!("{host}: {error}"));
+            }
+        }
+    } else {
+        match dial_direct(&host, port) {
+            Ok(remote) => remote,
+            Err(error) => {
+                let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                return Err(format!("{host}: {error}"));
+            }
+        }
+    };
     if method.eq_ignore_ascii_case("CONNECT") {
         client
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -462,6 +614,20 @@ fn split_host_port(value: &str, default_port: u16) -> Result<(String, u16), Stri
         }
     }
     Ok((value.to_string(), default_port))
+}
+
+fn dial_direct(host: &str, port: u16) -> Result<TcpStream, String> {
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| format!("直连解析失败: {error}"))?;
+    let mut last = String::from("没有可用地址");
+    for address in addresses {
+        match TcpStream::connect_timeout(&address, Duration::from_secs(8)) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last = error.to_string(),
+        }
+    }
+    Err(format!("直连失败: {last}"))
 }
 
 fn dial_upstream(upstream: &Upstream, host: &str, port: u16) -> Result<TcpStream, String> {
@@ -1019,14 +1185,29 @@ pub async fn subscription_proxy_probe() -> Result<Vec<SubscriptionConnectivity>,
         .redirect(reqwest::redirect::Policy::limited(3))
         .proxy(reqwest::Proxy::all(&proxy).map_err(|_| "订阅代理地址无效")?)
         .build().map_err(|error| format!("创建检测客户端失败: {error}"))?;
+    let split = load_store().map(|store| store.split_routing).unwrap_or(true);
+    let mut targets = vec![
+        ("OpenAI（节点）", "https://auth.openai.com/"),
+        ("Google（节点）", "https://accounts.google.com/"),
+        ("Antigravity / Gemini（节点）", "https://cloudcode-pa.googleapis.com/"),
+    ];
+    if split { targets.push(("国内平台（直连）", "https://www.doubao.com/")); }
     let mut results = Vec::new();
-    for (provider, url) in [("OpenAI", "https://auth.openai.com/"), ("Google", "https://accounts.google.com/")] {
+    for (provider, url) in targets {
         match client.get(url).send().await {
             Ok(response) => results.push(SubscriptionConnectivity { provider: provider.into(), reachable: true, status: Some(response.status().as_u16()), error: String::new() }),
             Err(error) => results.push(SubscriptionConnectivity { provider: provider.into(), reachable: false, status: None, error: error.without_url().to_string() }),
         }
     }
     Ok(results)
+}
+
+#[tauri::command]
+pub async fn subscription_proxy_set_routing(
+    split: bool,
+    extra_domains: Vec<String>,
+) -> Result<SubscriptionProxyState, String> {
+    set_routing(split, extra_domains).await
 }
 
 #[tauri::command]
@@ -1039,7 +1220,35 @@ pub async fn subscription_proxy_apply(
 
 #[cfg(test)]
 mod tests {
-    use super::{dial_upstream, handle_client, parse_subscription, runtime, update_document, Store, Upstream};
+    use super::{dial_upstream, handle_client, normalize_domains, parse_subscription, routes_via_node, runtime, update_document, Store, Upstream};
+
+    #[test]
+    fn split_routing_sends_only_overseas_ai_hosts_through_the_node() {
+        for host in ["accounts.google.com", "cloudcode-pa.googleapis.com", "daily-cloudcode-pa.sandbox.googleapis.com",
+            "generativelanguage.googleapis.com", "auth.openai.com", "chatgpt.com", "api.anthropic.com", "claude.ai",
+            "api.x.ai", "github.com", "codewhisperer.us-east-1.amazonaws.com", "ACCOUNTS.GOOGLE.COM."] {
+            assert!(routes_via_node(host, true, &[]), "{host} should use the node");
+        }
+        for host in ["www.doubao.com", "copilot.tencent.com", "www.codebuddy.cn", "api.moonshot.cn", "dashscope.aliyuncs.com",
+            "api.deepseek.com", "s3.cn-north-1.amazonaws.com.cn", "notgoogle.com", "google.com.evil.cn", "127.0.0.1"] {
+            assert!(!routes_via_node(host, true, &[]), "{host} should go direct");
+        }
+        assert!(routes_via_node("www.doubao.com", false, &[]));
+        assert!(routes_via_node("api.example.org", true, &["example.org".into()]));
+    }
+
+    #[test]
+    fn extra_domains_are_normalized() {
+        let list = normalize_domains(&["https://API.Example.org/v1, *.foo.io".into(), "bar".into(), "foo.io".into()]);
+        assert_eq!(list, vec!["api.example.org".to_string(), "foo.io".to_string()]);
+    }
+
+    #[test]
+    fn old_store_files_default_to_split_routing() {
+        let store: Store = serde_json::from_str(r#"{"url":"","nodes":[],"selected_id":"","enabled":false}"#).unwrap();
+        assert!(store.split_routing);
+        assert!(store.extra_node_domains.is_empty());
+    }
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
@@ -1142,6 +1351,7 @@ proxies:
             assert_eq!(&payload, b"PING");
             stream.write_all(b"PONG").unwrap();
         });
+        runtime().lock().unwrap().split = false;
         runtime().lock().unwrap().route = Some(Upstream { kind: "http".into(), server: "127.0.0.1".into(), port: upstream_port, username: String::new(), password: String::new() });
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let address = listener.local_addr().unwrap();
@@ -1156,6 +1366,7 @@ proxies:
         drop(client);
         server.join().unwrap(); relay.join().unwrap();
         runtime().lock().unwrap().route = None;
+        runtime().lock().unwrap().split = true;
     }
 
     #[test]
@@ -1175,6 +1386,7 @@ proxies:
             assert!(String::from_utf8_lossy(&request).starts_with("GET /probe?x=1 HTTP/1.1"));
             stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK").unwrap();
         });
+        runtime().lock().unwrap().split = false;
         runtime().lock().unwrap().route = Some(Upstream { kind: "http".into(), server: "localhost".into(), port: upstream_port, username: String::new(), password: String::new() });
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let address = listener.local_addr().unwrap();
@@ -1190,5 +1402,6 @@ proxies:
         for (key, old) in keys.iter().zip(before) { if let Some(value) = old { std::env::set_var(key, value); } else { std::env::remove_var(key); } }
         server.join().unwrap(); relay.join().unwrap();
         runtime().lock().unwrap().route = None;
+        runtime().lock().unwrap().split = true;
     }
 }

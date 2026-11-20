@@ -526,10 +526,15 @@ pub fn claude_oauth_login_prepare() -> Result<ClaudeOAuthStartResponse, String> 
 #[tauri::command]
 pub async fn claude_oauth_login_start(app: AppHandle) -> Result<ClaudeOAuthStartResponse, String> {
     let response = claude_account::start_oauth_login()?;
-    if let Err(error) = app
-        .opener()
-        .open_url(&response.verification_uri, None::<String>)
-    {
+    let opened = match crate::modules::oauth_browser::open_with_subscription(&response.verification_uri) {
+        Ok(true) => Ok(()),
+        Ok(false) => app
+            .opener()
+            .open_url(&response.verification_uri, None::<String>)
+            .map_err(|error| error.to_string()),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = opened {
         let _ = claude_account::cancel_oauth_login(Some(response.login_id.as_str()));
         return Err(format!("打开 Claude OAuth 授权页失败: {}", error));
     }

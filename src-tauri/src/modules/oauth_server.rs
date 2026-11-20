@@ -400,14 +400,21 @@ pub async fn start_oauth_flow(
 ) -> Result<oauth::TokenResponse, String> {
     let auth_url = ensure_oauth_flow_prepared(&app_handle).await?;
 
-    use tauri_plugin_opener::OpenerExt;
-    app_handle
-        .opener()
-        .open_url(&auth_url, None::<String>)
+    let opened_with_subscription = crate::modules::oauth_browser::open_with_subscription(&auth_url)
         .map_err(|e| {
             cancel_oauth_flow();
-            format!("无法打开浏览器: {}", e)
+            e
         })?;
+    if !opened_with_subscription {
+        use tauri_plugin_opener::OpenerExt;
+        app_handle
+            .opener()
+            .open_url(&auth_url, None::<String>)
+            .map_err(|e| {
+                cancel_oauth_flow();
+                format!("无法打开浏览器: {}", e)
+            })?;
+    }
 
     let (code_rx, redirect_uri) = {
         let mut lock = get_oauth_flow_state()

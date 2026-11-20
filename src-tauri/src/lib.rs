@@ -905,6 +905,7 @@ pub fn run() {
             crate::modules::subscription_proxy::subscription_proxy_refresh,
             crate::modules::subscription_proxy::subscription_proxy_import,
             crate::modules::subscription_proxy::subscription_proxy_probe,
+            crate::modules::subscription_proxy::subscription_proxy_set_routing,
             crate::modules::oauth_browser::subscription_proxy_open_auth_url,
             crate::modules::subscription_proxy::subscription_proxy_apply,
             commands::system::get_network_egress_snapshot,

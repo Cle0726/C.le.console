@@ -53,7 +53,7 @@ import {
   isGeminiVerificationRequired,
 } from "../types/gemini";
 import type { GeminiAccount } from "../types/gemini";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openOAuthUrl } from "../utils/openOAuthUrl";
 import { compareCurrentAccountFirst } from "../utils/currentAccountSort";
 import {
   buildValidAccountsFilterOption,
@@ -462,7 +462,7 @@ export function GeminiAccountsPage() {
       const validationUrl = getGeminiValidationUrl(account);
       if (!validationUrl) return;
       try {
-        await openUrl(validationUrl);
+        await openOAuthUrl(validationUrl);
       } catch (error) {
         console.error("Failed to open Gemini validation URL", error);
       }

@@ -51,6 +51,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { openOAuthUrl } from '../utils/openOAuthUrl'
 import { TagEditModal } from '../components/TagEditModal'
 import { ExportJsonModal } from '../components/ExportJsonModal'
 import { PaginationControls } from '../components/PaginationControls'
@@ -4557,9 +4558,9 @@ export function AccountsPage({ onNavigate }: AccountsPageProps) {
 
           const openLink = async (url: string) => {
             try {
-              await openUrl(url)
+              await openOAuthUrl(url)
             } catch {
-              window.open(url, '_blank', 'noopener,noreferrer')
+              await openUrl(url).catch(() => window.open(url, '_blank', 'noopener,noreferrer'))
             }
           }
 
