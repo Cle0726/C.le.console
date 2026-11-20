@@ -2789,6 +2789,7 @@ func (s *relayServer) router() *gin.Engine {
 	router.POST(videosEditsPath, s.handleVideosEdits)
 	router.POST(videosExtensionsPath, s.handleVideosExtensions)
 	router.GET(videosCreatePath+"/:video_id", s.handleVideosRetrieve)
+	router.GET(videosCreatePath+"/:video_id/content", s.handleVideosContent)
 	router.GET(ollamaVersionPath, s.handleOllamaVersion)
 	router.GET(ollamaTagsPath, s.handleOllamaTags)
 	router.POST(ollamaShowPath, s.handleOllamaShow)
@@ -2947,6 +2948,10 @@ func (s *relayServer) handleImagesGenerations(c *gin.Context) {
 	}
 	if isNativeGeminiImageModel(requestBodyModel(rawJSON)) {
 		s.handleNativeGeminiImageGeneration(c, spec, rawJSON)
+		return
+	}
+	if isDoubaoWebImageModel(requestBodyModel(rawJSON)) {
+		s.handleDoubaoWebImage(c, spec, rawJSON)
 		return
 	}
 	if s.manifest != nil && s.manifest.NativeModelRegistry && s.openAI != nil {
@@ -3586,6 +3591,10 @@ func (s *relayServer) handleVideosCreate(c *gin.Context) {
 		s.handleDoubaoSeedanceGeneration(c, spec, rawJSON)
 		return
 	}
+	if isDoubaoWebVideoModel(requestBodyModel(rawJSON)) {
+		s.handleDoubaoWebVideoCreate(c, spec, rawJSON)
+		return
+	}
 	if s.manifest == nil || !s.manifest.NativeModelRegistry || s.openAI == nil {
 		writeAPIError(c, http.StatusNotFound, "video gateway is only available in multi-model mode", "not_found")
 		return
@@ -3611,6 +3620,10 @@ func (s *relayServer) handleVideosGenerations(c *gin.Context) {
 		s.handleDoubaoSeedanceGeneration(c, spec, rawJSON)
 		return
 	}
+	if isDoubaoWebVideoModel(requestBodyModel(rawJSON)) {
+		s.handleDoubaoWebVideoCreate(c, spec, rawJSON)
+		return
+	}
 	if s.manifest == nil || !s.manifest.NativeModelRegistry || s.openAI == nil {
 		writeAPIError(c, http.StatusNotFound, "video gateway is only available in multi-model mode", "not_found")
 		return
@@ -3632,6 +3645,10 @@ func (s *relayServer) handleVideosExtensions(c *gin.Context) {
 
 func (s *relayServer) handleVideosRetrieve(c *gin.Context) {
 	videoID := strings.TrimSpace(c.Param("video_id"))
+	if strings.HasPrefix(videoID, doubaoWebVideoIDPrefix) {
+		s.handleDoubaoWebVideoRetrieve(c)
+		return
+	}
 	if strings.EqualFold(strings.TrimSpace(c.Query("provider")), doubaoSeedanceProvider) || s.doubaoSeedanceTaskKnown(videoID) {
 		s.handleDoubaoSeedanceStatus(c)
 		return

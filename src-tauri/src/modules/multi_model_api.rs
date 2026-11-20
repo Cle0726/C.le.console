@@ -5484,7 +5484,13 @@ async fn import_doubao_web_routes(config: &mut MultiModelApiConfig) -> Result<()
         };
         if let Some(route) = config.accounts.iter_mut().find(|route| route.source == source) {
             route.name = label;
-            if let Some(models) = discovered { merge_workbuddy_models(&mut route.models, models); }
+            // A catalog that cannot be read still leaves the account its fixed models.
+            match discovered {
+                Some(models) => { merge_workbuddy_models(&mut route.models, models); }
+                None => for model in crate::modules::doubao_chat_api::base_models() {
+                    if !route.models.iter().any(|known| known.id == model.id) { route.models.push(model); }
+                },
+            }
             continue;
         }
         config.accounts.push(MultiModelAccount {
@@ -5493,8 +5499,7 @@ async fn import_doubao_web_routes(config: &mut MultiModelApiConfig) -> Result<()
             cli_path: String::new(), cli_app: String::new(), cli_profile: String::new(),
             credential_json: None, proxy_url: String::new(), prefix: String::new(), priority: 0,
             headers: BTreeMap::new(),
-            models: discovered.unwrap_or_else(|| vec![MultiModelDefinition { id: crate::modules::doubao_chat_api::AUTO_MODEL.into(), alias: String::new(),
-                capabilities: vec!["text".into()], max_input_tokens: None, max_output_tokens: None, enabled: true }]),
+            models: discovered.unwrap_or_else(crate::modules::doubao_chat_api::base_models),
             enabled: true, source,
         });
     }

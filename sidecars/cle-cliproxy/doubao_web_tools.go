@@ -339,7 +339,14 @@ func (s *relayServer) handleDoubaoWebChat(c *gin.Context, spec *apiKeySpec, rawJ
 		account := accounts[(first+i)%len(accounts)]
 		cookie, err := doubaoWebCredential(ctx, account.Headers[doubaoWebCredentialHdr], account.UpstreamAPIKey)
 		if err == nil {
-			reply, err = doubaoWebCompleteWithThinking(ctx, newDoubaoWebClient(cookie, s.doubaoWebTransport(account)).withModel(doubaoWebModelKey(model)), account.ID, doubaoWebRequestThink(payload), prompt)
+			client := newDoubaoWebClient(cookie, s.doubaoWebTransport(account)).withModel(doubaoWebModelKey(model))
+			if level, fixed := doubaoWebFixedThink(model); fixed {
+				// A level the caller picked is kept: a used-up thinking quota moves to the next account.
+				client.think = level
+				reply, err = client.Complete(ctx, prompt)
+			} else {
+				reply, err = doubaoWebCompleteWithThinking(ctx, client, account.ID, doubaoWebRequestThink(payload), prompt)
+			}
 		}
 		if err == nil {
 			used = account

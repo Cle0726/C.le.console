@@ -2971,6 +2971,47 @@ pub async fn generate_video(
     Err(format!("豆包账号池尝试失败：{}", attempt_errors.join("；")))
 }
 
+// Videos asked for through the API pool (cle-cliproxy's doubao-web/video). The
+// gateway polls the job; results are kept for a few hours and then dropped.
+type PoolVideoJobs = std::sync::Mutex<std::collections::HashMap<String, (Instant, Value)>>;
+static POOL_VIDEO_JOBS: OnceLock<PoolVideoJobs> = OnceLock::new();
+const POOL_VIDEO_KEEP: Duration = Duration::from_secs(3 * 3600);
+
+fn pool_video_jobs() -> &'static PoolVideoJobs {
+    POOL_VIDEO_JOBS.get_or_init(Default::default)
+}
+
+fn set_pool_video_job(id: &str, state: Value) {
+    if let Ok(mut jobs) = pool_video_jobs().lock() {
+        jobs.retain(|_, (at, _)| at.elapsed() < POOL_VIDEO_KEEP);
+        jobs.insert(id.to_string(), (Instant::now(), state));
+    }
+}
+
+/// Starts a video in C.le's Doubao windows and returns the job ID at once.
+pub(crate) fn start_pool_video(prompt: String, ratio: String) -> Result<String, String> {
+    let app = crate::get_app_handle().ok_or("C.le 尚未启动完成")?.clone();
+    if prompt.trim().is_empty() {
+        return Err("请填写视频提示词".into());
+    }
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    set_pool_video_job(&id, serde_json::json!({"status": "running"}));
+    let job = id.clone();
+    tauri::async_runtime::spawn(async move {
+        let request = DoubaoWebVideoRequest { account_id: None, prompt, ratio };
+        let state = match generate_video(app, request).await {
+            Ok(result) => serde_json::json!({"status": "success", "result": result}),
+            Err(error) => serde_json::json!({"status": "error", "error": error}),
+        };
+        set_pool_video_job(&job, state);
+    });
+    Ok(id)
+}
+
+pub(crate) fn pool_video_state(id: &str) -> Option<Value> {
+    pool_video_jobs().lock().ok()?.get(id).map(|(_, state)| state.clone())
+}
+
 fn generation_candidates(
     app: &AppHandle,
     explicit_account_id: Option<&str>,

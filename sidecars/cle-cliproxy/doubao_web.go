@@ -116,7 +116,23 @@ func doubaoWebModelKey(model string) string {
 	if strings.EqualFold(key, "auto") {
 		return ""
 	}
+	if _, fixed := doubaoWebFixedLevels[strings.ToLower(key)]; fixed {
+		return ""
+	}
 	return key
+}
+
+// Chat-mode thinking levels picked in the web page's switch, offered as their own models.
+var doubaoWebFixedLevels = map[string]int{"fast": 0, "think": 1, "expert": 3}
+
+// doubaoWebFixedThink reports the level of doubao-web/fast, /think and /expert.
+func doubaoWebFixedThink(model string) (int, bool) {
+	key := strings.ToLower(strings.TrimSpace(model))
+	if !strings.HasPrefix(key, doubaoWebModelPrefix) {
+		return 0, false
+	}
+	level, ok := doubaoWebFixedLevels[key[len(doubaoWebModelPrefix):]]
+	return level, ok
 }
 
 // withModel returns the client set to answer with one Doubao model (empty: auto).
@@ -188,6 +204,65 @@ type doubaoWebReply struct {
 	ConversationID string
 	Answer         string
 	Thinking       string
+	Images         []doubaoWebImage // image creations (block 2074), in the order Doubao made them
+}
+
+// doubaoWebImage is one picture Doubao drew in the chat reply. Status 2 is finished.
+type doubaoWebImage struct {
+	ID     string
+	Status int
+	URL    string // image_ori_raw: the original without the watermark
+	Mark   string // image_ori: same picture with Doubao's light watermark, used when raw is missing
+	Width  int
+	Height int
+}
+
+func (r *doubaoWebReply) addCreations(content map[string]any) {
+	creation, _ := content["creation_block"].(map[string]any)
+	list, _ := creation["creations"].([]any)
+	for _, item := range list {
+		entry, _ := item.(map[string]any)
+		image, ok := entry["image"].(map[string]any)
+		if !ok {
+			continue
+		}
+		next := doubaoWebImage{ID: stringFieldFromAny(entry["id"])}
+		if status, ok := image["status"].(float64); ok {
+			next.Status = int(status)
+		}
+		pick := func(key string) (string, int, int) {
+			v, _ := image[key].(map[string]any)
+			w, _ := v["width"].(float64)
+			h, _ := v["height"].(float64)
+			return stringFieldFromAny(v["url"]), int(w), int(h)
+		}
+		next.URL, next.Width, next.Height = pick("image_ori_raw")
+		var w, h int
+		next.Mark, w, h = pick("image_ori")
+		if next.Width == 0 {
+			next.Width, next.Height = w, h
+		}
+		replaced := false
+		for i := range r.Images {
+			if r.Images[i].ID == next.ID && next.ID != "" {
+				r.Images[i], replaced = next, true
+			}
+		}
+		if !replaced {
+			r.Images = append(r.Images, next)
+		}
+	}
+}
+
+// FinishedImages are the creations Doubao finished with a downloadable picture.
+func (r *doubaoWebReply) FinishedImages() []doubaoWebImage {
+	var out []doubaoWebImage
+	for _, image := range r.Images {
+		if image.Status == 2 && (image.URL != "" || image.Mark != "") {
+			out = append(out, image)
+		}
+	}
+	return out
 }
 
 // addBlocks appends the answer text (10000) and thinking (10040) pieces of a stream event.
@@ -204,6 +279,8 @@ func (r *doubaoWebReply) addBlocks(blocks []any) {
 			if thinking, ok := content["thinking_block"].(map[string]any); ok {
 				r.Thinking += stringFieldFromAny(thinking["content"])
 			}
+		case "2074":
+			r.addCreations(content)
 		}
 	}
 }
@@ -304,6 +381,9 @@ func (c *doubaoWebClient) Complete(ctx context.Context, message string) (*doubao
 	}
 	_ = completed // a chat stream may simply close after the answer; the answer itself is the check
 	if strings.TrimSpace(reply.Answer) == "" {
+		if len(reply.Images) > 0 {
+			return reply, nil // a drawing reply carries pictures and no text
+		}
 		return nil, fmt.Errorf("豆包对话已结束，但没有返回文字")
 	}
 	if doubaoWebQuotaReply(reply.Answer) {

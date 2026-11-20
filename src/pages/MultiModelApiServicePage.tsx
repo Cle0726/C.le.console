@@ -431,7 +431,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
       setDraft(structuredClone(next.config));
       const linked = next.config.accounts.filter((account) => account.provider === 'doubao-web').length;
       setNotice({ tone: linked ? 'success' : 'info', text: linked
-        ? `已接入 ${linked} 个在线豆包账号。调用模型 doubao-web/auto，支持工具调用。`
+        ? `已接入 ${linked} 个在线豆包账号。对话模型 doubao-web/auto、fast、think、expert（支持工具调用），出图 doubao-web/image，视频 doubao-web/video。`
         : '没有在线的豆包账号，请先在下方添加账号并用浏览器登录。' });
       return linked;
     } catch (error) {
@@ -803,7 +803,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             <header className="mm-api-panel-head mm-workbuddy-heading">
               <div>
                 <h1>豆包对话 API（网页登录）</h1>
-                <p>用浏览器登录豆包账号后接入 API 账号池，调用 doubao-web/auto（默认用最深的「专家」思考，思考额度用完时自动降到「思考」再到「快速」）。豆包网页版没有原生工具调用，网关会把工具清单写进提示词再把回复转成标准 tool_calls；多个账号轮流使用，某个账号限流或额度用完时自动换下一个。</p>
+                <p>用浏览器登录豆包账号后接入 API 账号池。对话：doubao-web/auto 默认用最深的「专家」思考，思考额度用完时自动降到「思考」再到「快速」；也可以直接选定档位：doubao-web/fast（快速）、doubao-web/think（思考）、doubao-web/expert（专家）。出图用 doubao-web/image（/v1/images/generations，返回无水印原图），视频用 doubao-web/video（/v1/videos，由 C.le 的豆包窗口生成，需要 C.le 保持运行）。豆包网页版没有原生工具调用，网关会把工具清单写进提示词再把回复转成标准 tool_calls；多个账号轮流使用，某个账号限流或额度用完时自动换下一个。</p>
               </div>
               <div className="mm-inline-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => void refreshQuotas('doubao-web')} disabled={busy || !accounts.some((account) => account.provider === 'doubao-web' && account.enabled)}><RefreshCw className={operation === 'quota' ? 'spin' : ''} />刷新额度</button>

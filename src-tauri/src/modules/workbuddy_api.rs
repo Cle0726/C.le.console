@@ -94,24 +94,52 @@ async fn serve_credentials(mut socket: TcpStream, bridge: CredentialBridge) -> R
         }
         raw.extend_from_slice(&chunk[..size]);
     }
-    let request = String::from_utf8_lossy(&raw);
+    let header_end = raw.windows(4).position(|part| part == b"\r\n\r\n").map(|at| at + 4).unwrap_or(raw.len());
+    let request = String::from_utf8_lossy(&raw[..header_end]).to_string();
     let mut lines = request.split("\r\n");
     let mut start = lines.next().unwrap_or_default().split_whitespace();
     let method = start.next().unwrap_or_default();
     let target = start.next().unwrap_or_default();
-    let account_id = target
-        .split('?')
-        .next()
-        .unwrap_or_default()
-        .strip_prefix("/credentials/")
-        .unwrap_or_default();
-    let authorization = lines
-        .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("authorization")
-                .then(|| value.trim())
-        })
-        .unwrap_or_default();
+    let header = |wanted: &str| request.split("\r\n").skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim().eq_ignore_ascii_case(wanted).then(|| value.trim().to_string())
+    }).unwrap_or_default();
+    let authorization = header("authorization");
+    let path = target.split('?').next().unwrap_or_default();
+    if let Some(account_id) = path.strip_prefix("/video/") {
+        // Doubao videos for the API pool: POST starts a job, GET ?task=<id> reports it.
+        let length = header("content-length").parse::<usize>().unwrap_or(0);
+        let mut body = raw[header_end..].to_vec();
+        while method == "POST" && body.len() < length.min(64 * 1024) {
+            let size = socket.read(&mut chunk).await.map_err(|e| e.to_string())?;
+            if size == 0 { break; }
+            body.extend_from_slice(&chunk[..size]);
+        }
+        let (status, payload) = if !account_id.starts_with("doubao-web~")
+            || !account_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '~') || length > 64 * 1024 {
+            (400, json!({"error": "invalid video request"}))
+        } else if authorization != format!("Bearer {}", bridge.key(account_id)) {
+            (401, json!({"error": "credential bridge authentication failed"}))
+        } else if method == "POST" {
+            let request: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+            let text = |key: &str| request.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
+            match crate::modules::doubao_web::start_pool_video(text("prompt"), text("ratio")) {
+                Ok(task) => (200, json!({"task": task})),
+                Err(error) => (400, json!({"error": error})),
+            }
+        } else if method == "GET" {
+            let task = target.split_once("?task=").map(|(_, task)| task).unwrap_or_default();
+            match crate::modules::doubao_web::pool_video_state(task) {
+                Some(state) => (200, state),
+                None => (404, json!({"error": "没有这个视频任务"})),
+            }
+        } else {
+            (400, json!({"error": "invalid video request"}))
+        };
+        return write_bridge_response(&mut socket, status, &payload).await;
+    }
+    let account_id = path.strip_prefix("/credentials/").unwrap_or_default();
+    let authorization = authorization.as_str();
     let (status, payload) = if method != "GET"
         || account_id.is_empty()
         || !account_id
@@ -135,7 +163,11 @@ async fn serve_credentials(mut socket: TcpStream, bridge: CredentialBridge) -> R
             Err(_) => (401, json!({"error": "登录凭证不可用，请在 C.le 账号页刷新或重新登录"})),
         }
     };
-    let body = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
+    write_bridge_response(&mut socket, status, &payload).await
+}
+
+async fn write_bridge_response(socket: &mut TcpStream, status: u16, payload: &Value) -> Result<(), String> {
+    let body = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
     let headers = format!("HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         if status == 200 { "OK" } else { "Error" }, body.len());
     socket

@@ -78,7 +78,7 @@ pub(crate) fn models_from_catalog(response: &Value) -> Result<Vec<MultiModelDefi
     let config = response.pointer("/data/entry_list").and_then(Value::as_array)
         .and_then(|list| list.iter().find(|entry| entry.get("action_bar_key").and_then(Value::as_str) == Some("coco_deep_thinking")))
         .and_then(|entry| entry.get("active_switch_conf"));
-    let mut models = vec![definition(AUTO_MODEL)];
+    let mut models = base_models();
     let Some(config) = config else { return Ok(models) };
     let key = |item: &Value| item.get("model_item_key").or_else(|| item.get("item_id"))
         .map(|value| value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string())).unwrap_or_default();
@@ -109,6 +109,24 @@ pub(crate) fn models_from_catalog(response: &Value) -> Result<Vec<MultiModelDefi
 fn definition(id: &str) -> MultiModelDefinition {
     MultiModelDefinition { id: id.into(), alias: String::new(), capabilities: vec!["text".into()],
         max_input_tokens: None, max_output_tokens: None, enabled: true }
+}
+
+fn with_capabilities(id: &str, capabilities: &[&str]) -> MultiModelDefinition {
+    MultiModelDefinition { capabilities: capabilities.iter().map(|c| c.to_string()).collect(), ..definition(id) }
+}
+
+/// Models every signed-in Doubao account has, whatever its catalog says: auto
+/// (deepest level the quota allows), the chat page's 快速 / 思考 / 专家 switch as
+/// fast / think / expert, and drawing (image) and video made in the chat.
+pub(crate) fn base_models() -> Vec<MultiModelDefinition> {
+    vec![
+        with_capabilities(AUTO_MODEL, &["text", "reasoning"]),
+        with_capabilities("doubao-web/fast", &["text"]),
+        with_capabilities("doubao-web/think", &["text", "reasoning"]),
+        with_capabilities("doubao-web/expert", &["text", "reasoning"]),
+        with_capabilities("doubao-web/image", &["image"]),
+        with_capabilities("doubao-web/video", &["video"]),
+    ]
 }
 
 pub async fn fetch_models(account_id: &str, proxy: &str) -> Result<Vec<MultiModelDefinition>, String> {
@@ -197,8 +215,9 @@ mod tests {
             "model_list": {"item_list": [{"model_item_key": "seed-lite", "name": "Lite"}, {"model_item_key": "5", "name": "Pro", "subscribe_config": {"need_upgrade": true}},
                 {"model_item_key": "person-glm", "name": "GLM"}]}}}}]}});
         let ids = models_from_catalog(&response).unwrap().into_iter().map(|m| m.id).collect::<Vec<_>>();
-        assert_eq!(ids, vec!["doubao-web/auto", "doubao-web/seed-lite"]);
-        assert_eq!(models_from_catalog(&json!({"code": 0, "data": {}})).unwrap().len(), 1);
+        assert_eq!(ids, vec!["doubao-web/auto", "doubao-web/fast", "doubao-web/think", "doubao-web/expert",
+            "doubao-web/image", "doubao-web/video", "doubao-web/seed-lite"]);
+        assert_eq!(models_from_catalog(&json!({"code": 0, "data": {}})).unwrap().len(), base_models().len());
         assert!(models_from_catalog(&json!({"code": 7, "msg": "no"})).is_err());
     }
 
