@@ -3139,6 +3139,7 @@ fn is_retryable_video_error(error: &str) -> bool {
             "temporarily",
             "豆包没有返回视频任务 id",
             "访问频繁",
+            "710022004",
             "710022002",
         ]
         .iter()

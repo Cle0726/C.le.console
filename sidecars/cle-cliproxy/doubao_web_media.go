@@ -425,10 +425,24 @@ func (t *doubaoWebVideoTask) refresh(ctx context.Context) {
 			t.Status, t.Error = "failed", "豆包视频任务完成但没有返回视频地址"
 		}
 	case "error":
-		t.Status, t.Error = "failed", firstNonEmptyString(stringFieldFromAny(out["error"]), "豆包视频生成失败")
+		t.Status, t.Error = "failed", doubaoWebVideoError(firstNonEmptyString(stringFieldFromAny(out["error"]), "豆包视频生成失败"))
 	default:
 		t.Status = "in_progress"
 	}
+}
+
+// doubaoWebVideoError turns Doubao's raw rejections into what the user can act on.
+func doubaoWebVideoError(message string) string {
+	switch {
+	case strings.Contains(message, "710022004") || strings.Contains(message, `\"type\":\"verify\"`) || strings.Contains(message, `"type":"verify"`):
+		return "豆包要求人机验证（验证码），自动生成视频被拦下。请在 C.le 打开该豆包账号的网页窗口，手动生成一次视频并完成验证后再试。"
+	case strings.Contains(message, "710022002") || strings.Contains(message, "访问频繁"):
+		return "豆包账号访问过于频繁，请稍后再试。"
+	}
+	if runes := []rune(message); len(runes) > 400 {
+		return string(runes[:400]) + "…"
+	}
+	return message
 }
 
 func doubaoWebVideoLink(result any) string {

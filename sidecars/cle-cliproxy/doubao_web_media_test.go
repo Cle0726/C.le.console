@@ -218,3 +218,16 @@ func TestDoubaoWebThinkingTextUnderThinkingBlock(t *testing.T) {
 		t.Fatalf("reply %+v err %v", reply, err)
 	}
 }
+
+func TestDoubaoWebVideoErrorIsReadable(t *testing.T) {
+	raw := `{"code":710022004,"message":"rate limited","error_detail":{"ext":{"decision":"{\"type\":\"verify\"}"}}}`
+	if got := doubaoWebVideoError(raw); !strings.Contains(got, "人机验证") {
+		t.Fatalf("captcha -> %q", got)
+	}
+	if got := doubaoWebVideoError("豆包账号池尝试失败：A: 当前服务访问频繁"); !strings.Contains(got, "频繁") {
+		t.Fatalf("throttle -> %q", got)
+	}
+	if got := doubaoWebVideoError("别的错误"); got != "别的错误" {
+		t.Fatalf("other -> %q", got)
+	}
+}
