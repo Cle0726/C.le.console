@@ -205,6 +205,7 @@ type doubaoWebReply struct {
 	Answer         string
 	Thinking       string
 	Images         []doubaoWebImage // image creations (block 2074), in the order Doubao made them
+	thinkingBlocks map[string]bool  // IDs of 10040 blocks; text blocks under them are reasoning
 }
 
 // doubaoWebImage is one picture Doubao drew in the chat reply. Status 2 is finished.
@@ -273,9 +274,20 @@ func (r *doubaoWebReply) addBlocks(blocks []any) {
 		switch fmt.Sprint(block["block_type"]) {
 		case "10000":
 			if text, ok := content["text_block"].(map[string]any); ok {
-				r.Answer += stringFieldFromAny(text["text"])
+				// 思考 / 专家 stream their reasoning as text blocks whose parent is the 10040 block.
+				if parent := stringFieldFromAny(block["parent_id"]); parent != "" && r.thinkingBlocks[parent] {
+					r.Thinking += stringFieldFromAny(text["text"])
+				} else {
+					r.Answer += stringFieldFromAny(text["text"])
+				}
 			}
 		case "10040":
+			if id := stringFieldFromAny(block["block_id"]); id != "" {
+				if r.thinkingBlocks == nil {
+					r.thinkingBlocks = map[string]bool{}
+				}
+				r.thinkingBlocks[id] = true
+			}
 			if thinking, ok := content["thinking_block"].(map[string]any); ok {
 				r.Thinking += stringFieldFromAny(thinking["content"])
 			}

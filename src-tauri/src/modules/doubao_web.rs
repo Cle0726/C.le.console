@@ -3129,6 +3129,8 @@ fn is_retryable_video_error(error: &str) -> bool {
             "繁忙",
             "temporarily",
             "豆包没有返回视频任务 id",
+            "访问频繁",
+            "710022002",
         ]
         .iter()
         .any(|marker| text.contains(marker))

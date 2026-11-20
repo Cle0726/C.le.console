@@ -203,3 +203,18 @@ func TestDoubaoWebImageNeedsSignedInAccount(t *testing.T) {
 		t.Fatalf("empty prompt %d", w.Code)
 	}
 }
+
+// As seen live in 思考 mode: reasoning arrives as text blocks under the 10040 thinking block.
+func TestDoubaoWebThinkingTextUnderThinkingBlock(t *testing.T) {
+	notify := `event: STREAM_MSG_NOTIFY` + "\n" + `data: {"content":{"content_block":[{"block_type":10040,"block_id":"T1","content":{"thinking_block":{"finish_title":"已完成思考"}}}]}}` + "\n\n"
+	chunk := func(parent, text string) string {
+		raw, _ := json.Marshal(map[string]any{"patch_op": []any{map[string]any{"patch_value": map[string]any{"content_block": []any{
+			map[string]any{"block_type": 10000, "block_id": "B" + parent, "parent_id": parent, "content": map[string]any{"text_block": map[string]any{"text": text}}}}}}}})
+		return "event: STREAM_CHUNK\ndata: " + string(raw) + "\n\n"
+	}
+	rt := doubaoWebSSE(200, doubaoWebAck+notify+chunk("T1", "先算兔子")+chunk("T1", "=12。")+chunk("", "鸡23只，兔12只"))
+	reply, err := newDoubaoWebClient(doubaoWebTestCookie, rt).Complete(context.Background(), "q")
+	if err != nil || reply.Answer != "鸡23只，兔12只" || reply.Thinking != "先算兔子=12。" {
+		t.Fatalf("reply %+v err %v", reply, err)
+	}
+}
