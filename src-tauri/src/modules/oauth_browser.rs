@@ -54,6 +54,13 @@ fn browser_args(proxy: &str, profile: &Path, url: &str) -> Vec<String> {
 /// silently sends the OAuth session outside the selected route.
 #[tauri::command]
 pub fn subscription_proxy_open_auth_url(url: String) -> Result<bool, String> {
+    open_with_subscription(&url)
+}
+
+/// Backend OAuth flows (Antigravity, Claude) use this before falling back to
+/// the system browser, so a selected subscription also covers their sign-in.
+pub fn open_with_subscription(url: &str) -> Result<bool, String> {
+    let url = url.to_string();
     let Some(proxy) = crate::modules::subscription_proxy::enabled_local_proxy() else { return Ok(false); };
     validate_auth_url(&url)?;
     let parsed = Url::parse(&proxy).map_err(|_| "订阅代理地址无效".to_string())?;
