@@ -822,6 +822,13 @@ fn save_xai_usage_cache(items: &[XaiAccountUsage]) -> Result<(), String> {
 
 fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
     apply_model_capacity_defaults(config);
+    // Doubao routes saved before the thinking levels and media models existed get
+    // them without waiting for a manual sync; a model the user disabled stays disabled.
+    for route in config.accounts.iter_mut().filter(|route| route.provider == "doubao-web") {
+        for model in crate::modules::doubao_chat_api::base_models() {
+            if !route.models.iter().any(|known| known.id == model.id) { route.models.push(model); }
+        }
+    }
     if config.port == 0 {
         config.port = DEFAULT_PORT;
     }
