@@ -732,7 +732,7 @@ dependencies = [
 
 [[package]]
 name = "cle-console"
-version = "1.1.52"
+version = "1.1.53"
 dependencies = [
  "aes",
  "aes-gcm",

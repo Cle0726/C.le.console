@@ -2,6 +2,15 @@
 
 本文件记录 C.le.控制台的重要功能变化。正式发布版本使用语义化版本号；尚未生成安装包的源码更新归入“未发布”。
 
+## 1.1.53
+
+- 豆包对话新增三个固定思考档模型：`doubao-web/fast`（快速）、`doubao-web/think`（思考）、`doubao-web/expert`（专家），对应豆包网页版的思考档切换；某个账号的思考额度用完时换下一个账号，不降档。`doubao-web/auto` 仍从「专家」依次降档。思考档的推理过程放进 `reasoning_content`，不再混进回答。
+- 豆包对话的对话模型默认上下文 600k（`/v1/models` 返回 `context_window`），用户自己设置过的上限保持不变。
+- 豆包出图：`doubao-web/image` 走 `/v1/images/generations`，返回无水印原图（超过 5 MB 转成高质量 JPEG，可选返回链接），可直接接 OpenClaw / 碧琪的 `image_generate`。
+- 豆包视频：`doubao-web/video` 走 OpenAI 视频接口（`POST /v1/videos`、轮询、`/content` 下载），由 C.le 的豆包网页窗口生成，需要 C.le 保持运行。从豆包桌面版导入的账号会把登录态带进视频窗口；限流或人机验证时依次换账号；豆包要求验证码时会明确提示到账号窗口手动完成一次。
+- 已保存的豆包账号在启动时自动补上新模型，不用手动同步。
+- 工作台订阅改为分流：只有海外 AI 服务（Google/Gemini/Antigravity、OpenAI/Codex、Anthropic、xAI、GitHub 等）走节点，豆包、WorkBuddy 等国内平台直连；节点故障时海外请求返回 502，国内平台不受影响。订阅卡片可切换分流 / 全部走节点，并可追加走节点的域名。修复 Hysteria2 / TUIC 端口跳跃节点被丢弃的问题。
+
 ## 1.1.52
 
 - 豆包对话（doubao-web/auto）默认用最深的思考档「专家」，依次降到「思考」「快速」：免费账号的思考额度按 7 天计算，用完后同一账号自动降档继续回答，并在 1 小时内直接跳过已用完的档位。调用时传 `reasoning_effort: none` 走「快速」，`low` / `medium` 走「思考」。
