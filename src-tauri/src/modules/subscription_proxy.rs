@@ -923,7 +923,12 @@ fn node_from_clash(value: &serde_yaml::Value) -> Option<StoredNode> {
     let name = value.get("name")?.as_str()?.trim().to_string();
     let kind = value.get("type")?.as_str()?.trim().to_ascii_lowercase();
     let server = value.get("server")?.as_str()?.trim().to_string();
-    let port = yaml_port(value.get("port")?)?;
+    // Hysteria2/TUIC port hopping lists `ports: 20000-30000` instead of `port`;
+    // mihomo dials from the raw config, the first port is only for display/id.
+    let port = value
+        .get("port")
+        .and_then(yaml_port)
+        .or_else(|| value.get("ports").and_then(first_hop_port))?;
     if name.is_empty() || server.is_empty() || port == 0 {
         return None;
     }
@@ -940,6 +945,21 @@ fn yaml_port(value: &serde_yaml::Value) -> Option<u16> {
         .as_u64()
         .and_then(|port| u16::try_from(port).ok())
         .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+}
+
+fn first_hop_port(value: &serde_yaml::Value) -> Option<u16> {
+    if let Some(port) = yaml_port(value) {
+        return Some(port);
+    }
+    value
+        .as_str()?
+        .split([',', '/'])
+        .next()?
+        .split('-')
+        .next()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn yaml_string(value: &serde_yaml::Value, keys: &[&str]) -> String {
@@ -1268,6 +1288,18 @@ proxies:
         assert_eq!(nodes.len(), 2);
         assert!(nodes.iter().any(|node| node.name == "hk-http" && node.usable));
         assert!(nodes.iter().any(|node| node.kind == "vmess" && !node.usable));
+    }
+
+    #[test]
+    fn keeps_port_hopping_nodes_without_a_port_field() {
+        let body = "proxies:
+  - {name: jp-hy2, type: hysteria2, server: hop.example, ports: 21000-21199, password: x, sni: hop.example}
+  - {name: tw-tuic, type: tuic, server: t.example, ports: '443,8443', uuid: u, password: p}
+";
+        let nodes = parse_subscription(body);
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes.iter().any(|node| node.name == "jp-hy2" && node.port == 21000 && node.raw["ports"] == "21000-21199"));
+        assert!(nodes.iter().any(|node| node.name == "tw-tuic" && node.port == 443));
     }
 
     #[test]
