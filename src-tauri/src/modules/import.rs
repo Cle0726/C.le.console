@@ -432,10 +432,17 @@ pub async fn import_from_json_logic(json_content: String) -> Result<Vec<models::
     modules::logger::log_info("开始从 JSON 导入账号...");
 
     // 简化格式: [{"email": "xxx", "refresh_token": "..."}]
+    // 也兼容 CLIProxyAPI 导出的 antigravity 凭据（多出 access_token / expired / project_id）。
     #[derive(Debug, serde::Deserialize)]
     struct SimpleAccount {
         email: String,
         refresh_token: String,
+        #[serde(default)]
+        access_token: Option<String>,
+        #[serde(default)]
+        expired: Option<String>,
+        #[serde(default)]
+        project_id: Option<String>,
         #[serde(default)]
         tags: Vec<String>,
         #[serde(default)]
@@ -451,62 +458,81 @@ pub async fn import_from_json_logic(json_content: String) -> Result<Vec<models::
 
     if let Ok(accounts) = simple_accounts {
         let mut imported = Vec::new();
+        let mut failures: Vec<String> = Vec::new();
+        let mut offline_count = 0usize;
 
         for simple in accounts {
             modules::logger::log_info(&format!("正在导入账号: {}", simple.email));
+            if simple.refresh_token.trim().is_empty() {
+                failures.push(format!("{}: refresh_token 为空", simple.email));
+                continue;
+            }
 
-            // 使用 refresh_token 获取 access_token
-            match modules::oauth::refresh_access_token(&simple.refresh_token).await {
-                Ok(token_response) => {
-                    // 构建 TokenData
-                    let token = models::TokenData::new(
-                        token_response.access_token,
-                        token_response.refresh_token.unwrap_or(simple.refresh_token),
-                        token_response.expires_in,
-                        Some(simple.email.clone()),
-                        None,
-                        None,
-                    )
-                    .with_oauth_metadata(token_response.oauth_client_key, token_response.id_token);
-
-                    match modules::upsert_account(simple.email.clone(), None, token) {
-                        Ok(mut new_account) => {
-                            if !simple.tags.is_empty() {
-                                if let Ok(acc) = modules::account::update_account_tags(
-                                    &new_account.id,
-                                    simple.tags,
-                                ) {
-                                    new_account = acc;
-                                }
-                            }
-                            if let Some(notes) = simple.notes {
-                                if let Ok(acc) =
-                                    modules::account::update_account_notes(&new_account.id, notes)
-                                {
-                                    new_account = acc;
-                                }
-                            }
-                            modules::logger::log_info(&format!(
-                                "导入账号成功: {}",
-                                new_account.email
-                            ));
-                            imported.push(new_account);
-                        }
-                        Err(e) => {
-                            modules::logger::log_error(&format!(
-                                "保存账号失败 {}: {}",
-                                simple.email, e
-                            ));
-                        }
-                    }
+            // 先尝试在线刷新；国内网络连不上 Google 时改为离线保存，
+            // 等代理可用后由正常的 Token 刷新流程补全 access_token。
+            let token = match modules::oauth::refresh_access_token(&simple.refresh_token).await {
+                Ok(token_response) => models::TokenData::new(
+                    token_response.access_token,
+                    token_response.refresh_token.unwrap_or(simple.refresh_token.clone()),
+                    token_response.expires_in,
+                    Some(simple.email.clone()),
+                    simple.project_id.clone(),
+                    None,
+                )
+                .with_oauth_metadata(token_response.oauth_client_key, token_response.id_token),
+                Err(e) if modules::oauth::is_network_refresh_error(&e) => {
+                    modules::logger::log_warn(&format!(
+                        "刷新 Token 时无法连接 Google，离线保存账号 {}: {}",
+                        simple.email, e
+                    ));
+                    offline_count += 1;
+                    offline_token_data(&simple.email, &simple.refresh_token, simple.access_token.as_deref(), simple.expired.as_deref(), simple.project_id.clone())
                 }
                 Err(e) => {
                     modules::logger::log_error(&format!("刷新 Token 失败 {}: {}", simple.email, e));
+                    failures.push(format!("{}: {}", simple.email, e));
+                    continue;
+                }
+            };
+
+            match modules::upsert_account(simple.email.clone(), None, token) {
+                Ok(mut new_account) => {
+                    if !simple.tags.is_empty() {
+                        if let Ok(acc) =
+                            modules::account::update_account_tags(&new_account.id, simple.tags)
+                        {
+                            new_account = acc;
+                        }
+                    }
+                    if let Some(notes) = simple.notes {
+                        if let Ok(acc) =
+                            modules::account::update_account_notes(&new_account.id, notes)
+                        {
+                            new_account = acc;
+                        }
+                    }
+                    modules::logger::log_info(&format!("导入账号成功: {}", new_account.email));
+                    imported.push(new_account);
+                }
+                Err(e) => {
+                    modules::logger::log_error(&format!("保存账号失败 {}: {}", simple.email, e));
+                    failures.push(format!("{}: 保存失败 {}", simple.email, e));
                 }
             }
         }
 
-        modules::logger::log_info(&format!("JSON 导入完成，共导入 {} 个账号", imported.len()));
+        modules::logger::log_info(&format!(
+            "JSON 导入完成，共导入 {} 个账号（离线保存 {} 个，失败 {} 个）",
+            imported.len(),
+            offline_count,
+            failures.len()
+        ));
+        if !imported.is_empty() {
+            modules::websocket::broadcast_data_changed("import_from_json");
+        }
+        if imported.is_empty() && !failures.is_empty() {
+            return Err(format!("没有账号导入成功：{}", failures.join("；")));
+        }
         return Ok(imported);
     }
 
@@ -554,6 +580,42 @@ pub async fn import_from_json_logic(json_content: String) -> Result<Vec<models::
     }
 
     Ok(imported)
+}
+
+/// 连不上 Google 时用于离线保存的 Token：沿用 JSON 里仍有效的 access_token，
+/// 否则标记为已过期，让后续刷新流程在网络可用时自动换取。
+fn offline_token_data(
+    email: &str,
+    refresh_token: &str,
+    access_token: Option<&str>,
+    expired: Option<&str>,
+    project_id: Option<String>,
+) -> models::TokenData {
+    let now = chrono::Utc::now().timestamp();
+    let remaining = access_token
+        .filter(|token| !token.trim().is_empty())
+        .and(expired)
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value.trim()).ok())
+        .map(|expiry| expiry.timestamp() - now)
+        .filter(|remaining| *remaining > 60);
+    match remaining {
+        Some(expires_in) => models::TokenData::new(
+            access_token.unwrap_or_default().trim().to_string(),
+            refresh_token.trim().to_string(),
+            expires_in,
+            Some(email.to_string()),
+            project_id,
+            None,
+        ),
+        None => models::TokenData::new(
+            String::new(),
+            refresh_token.trim().to_string(),
+            0,
+            Some(email.to_string()),
+            project_id,
+            None,
+        ),
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -713,6 +775,19 @@ pub async fn import_from_files_logic(file_paths: Vec<String>) -> Result<FileImpo
                         modules::logger::log_error(&format!("保存账号失败 {}: {}", email, msg));
                         failed.push(FileImportFailure { email, error: msg });
                     }
+                }
+            }
+            Err(e) if entry.email.is_some() && modules::oauth::is_network_refresh_error(&e) => {
+                // 连不上 Google（国内常见）：已知邮箱就先离线保存，代理可用后自动刷新。
+                let email = entry.email.clone().unwrap_or_default();
+                modules::logger::log_warn(&format!("无法连接 Google，离线保存账号 {}: {}", email, e));
+                let token = offline_token_data(&email, &entry.refresh_token, None, None, None);
+                match modules::upsert_account(email.clone(), None, token) {
+                    Ok(new_account) => imported.push(new_account),
+                    Err(save_error) => failed.push(FileImportFailure {
+                        email,
+                        error: format!("保存失败: {}", save_error),
+                    }),
                 }
             }
             Err(e) => {
@@ -904,4 +979,39 @@ pub async fn import_from_extension_credentials(
     }
 
     Ok(imported_count)
+}
+
+#[cfg(test)]
+mod offline_import_tests {
+    use super::*;
+
+    #[test]
+    fn offline_token_without_access_token_is_marked_expired() {
+        let token = offline_token_data("a@b.com", " rt ", None, None, Some("p1".into()));
+        assert!(token.access_token.is_empty());
+        assert_eq!(token.refresh_token, "rt");
+        assert!(token.expiry_timestamp <= chrono::Utc::now().timestamp());
+        assert_eq!(token.project_id.as_deref(), Some("p1"));
+    }
+
+    #[test]
+    fn offline_token_keeps_still_valid_access_token() {
+        let expiry = (chrono::Utc::now() + chrono::Duration::minutes(30)).to_rfc3339();
+        let token = offline_token_data("a@b.com", "rt", Some("at"), Some(&expiry), None);
+        assert_eq!(token.access_token, "at");
+        assert!(token.expiry_timestamp > chrono::Utc::now().timestamp() + 1500);
+    }
+
+    #[test]
+    fn offline_token_drops_expired_access_token() {
+        let expiry = (chrono::Utc::now() - chrono::Duration::minutes(5)).to_rfc3339();
+        let token = offline_token_data("a@b.com", "rt", Some("at"), Some(&expiry), None);
+        assert!(token.access_token.is_empty());
+    }
+
+    #[test]
+    fn network_and_rejection_errors_are_told_apart() {
+        assert!(modules::oauth::is_network_refresh_error("刷新请求失败: error sending request"));
+        assert!(!modules::oauth::is_network_refresh_error("刷新失败: invalid_grant"));
+    }
 }

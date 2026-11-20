@@ -400,6 +400,10 @@ pub async fn start_oauth_flow(
 ) -> Result<oauth::TokenResponse, String> {
     let auth_url = ensure_oauth_flow_prepared(&app_handle).await?;
 
+    // 连不上 Google 时不打开浏览器（国内直连只会白屏），也不取消已生成的授权链接：
+    // 用户选好订阅节点后再点一次即可继续同一个授权会话。
+    oauth::ensure_google_reachable().await?;
+
     let opened_with_subscription = crate::modules::oauth_browser::open_with_subscription(&auth_url)
         .map_err(|e| {
             cancel_oauth_flow();

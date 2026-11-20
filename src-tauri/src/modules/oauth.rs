@@ -122,7 +122,7 @@ pub async fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenRespon
         .send()
         .await
         .map_err(|e| {
-            let msg = format!("Token 交换请求失败: {}", e);
+            let msg = format!("Token 交换请求失败: {}（{}）", e, GOOGLE_UNREACHABLE_HINT);
             crate::modules::logger::log_error(&msg);
             msg
         })?;
@@ -155,6 +155,30 @@ pub async fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenRespon
     }
 }
 
+const REFRESH_NETWORK_ERROR_PREFIX: &str = "刷新请求失败: ";
+
+/// 国内网络直连 Google 会失败，提示用户走应用内代理。
+pub const GOOGLE_UNREACHABLE_HINT: &str =
+    "无法连接 Google：国内网络需要先在「订阅节点」里选择一个节点，或在设置中开启全局代理";
+
+/// 刷新请求没有到达 Google（网络/代理问题），而不是 Google 拒绝了 refresh_token。
+pub fn is_network_refresh_error(error: &str) -> bool {
+    error.starts_with(REFRESH_NETWORK_ERROR_PREFIX)
+}
+
+/// 授权前先确认应用当前的网络路线（订阅节点 / 全局代理 / 系统代理）能连上 Google。
+/// 任何 HTTP 响应都算连通；只有连接失败才报错，避免国内用户打开一个永远加载不出来的页面。
+pub async fn ensure_google_reachable() -> Result<(), String> {
+    let client = crate::utils::http::create_client(8);
+    match client.get(TOKEN_URL).send().await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            crate::modules::logger::log_warn(&format!("[OAuth] Google 连通性检查失败: {}", e));
+            Err(format!("{}。", GOOGLE_UNREACHABLE_HINT))
+        }
+    }
+}
+
 /// 使用 refresh_token 刷新 access_token
 pub async fn refresh_access_token(refresh_token: &str) -> Result<TokenResponse, String> {
     refresh_access_token_with_client(refresh_token, None).await
@@ -180,7 +204,7 @@ pub async fn refresh_access_token_with_client(
         .form(&params)
         .send()
         .await
-        .map_err(|e| format!("刷新请求失败: {}", e))?;
+        .map_err(|e| format!("{}{}（{}）", REFRESH_NETWORK_ERROR_PREFIX, e, GOOGLE_UNREACHABLE_HINT))?;
 
     if response.status().is_success() {
         let mut token_data = response

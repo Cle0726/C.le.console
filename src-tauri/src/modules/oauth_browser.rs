@@ -61,14 +61,21 @@ pub fn subscription_proxy_open_auth_url(url: String) -> Result<bool, String> {
 /// the system browser, so a selected subscription also covers their sign-in.
 pub fn open_with_subscription(url: &str) -> Result<bool, String> {
     let url = url.to_string();
-    let Some(proxy) = crate::modules::subscription_proxy::enabled_local_proxy() else { return Ok(false); };
+    let (proxy, port) = if let Some(proxy) = crate::modules::subscription_proxy::enabled_local_proxy() {
+        let parsed = Url::parse(&proxy).map_err(|_| "订阅代理地址无效".to_string())?;
+        let port = parsed.port().ok_or_else(|| "订阅代理端口无效".to_string())?;
+        std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+            std::time::Duration::from_millis(500),
+        ).map_err(|_| "订阅节点尚未就绪，请先在订阅节点页面重新选择节点".to_string())?;
+        (proxy, port)
+    } else if let Some((proxy, port)) = manual_global_proxy(&crate::modules::config::get_user_config()) {
+        // 没有订阅节点但设置里开了全局代理：授权浏览器同样走这条代理。
+        (proxy, port)
+    } else {
+        return Ok(false);
+    };
     validate_auth_url(&url)?;
-    let parsed = Url::parse(&proxy).map_err(|_| "订阅代理地址无效".to_string())?;
-    let port = parsed.port().ok_or_else(|| "订阅代理端口无效".to_string())?;
-    std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
-        std::time::Duration::from_millis(500),
-    ).map_err(|_| "订阅节点尚未就绪，请先在订阅节点页面重新选择节点".to_string())?;
     let browser = browser_candidates().into_iter().find(|path| path.is_file())
         .ok_or_else(|| "未找到 Chrome、Edge 或 Chromium；请先安装其中一个浏览器以完成授权".to_string())?;
     let profile = crate::modules::config::get_data_dir()?.join("oauth-browser").join(port.to_string());
@@ -84,6 +91,28 @@ pub fn open_with_subscription(url: &str) -> Result<bool, String> {
     Ok(true)
 }
 
+/// 设置里开启的全局代理，转换成 Chrome --proxy-server 能识别的形式。
+fn manual_global_proxy(config: &crate::modules::config::UserConfig) -> Option<(String, u16)> {
+    if !config.global_proxy_enabled {
+        return None;
+    }
+    let raw = config.global_proxy_url.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let with_scheme = if raw.contains("://") { raw.to_string() } else { format!("http://{raw}") };
+    let parsed = Url::parse(&with_scheme).ok()?;
+    let scheme = match parsed.scheme() {
+        "http" | "https" => parsed.scheme().to_string(),
+        "socks5" | "socks5h" => "socks5".to_string(),
+        "socks4" | "socks4a" => "socks4".to_string(),
+        _ => return None,
+    };
+    let host = parsed.host_str()?;
+    let port = parsed.port_or_known_default()?;
+    Some((format!("{scheme}://{host}:{port}"), port))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +121,18 @@ mod tests {
         assert!(validate_auth_url("https://accounts.google.com/o/oauth2/auth?state=x").is_ok());
         assert!(validate_auth_url("http://example.com/").is_err());
         assert!(validate_auth_url("https://user:pass@example.com/").is_err());
+    }
+    #[test]
+    fn manual_global_proxy_is_used_only_when_enabled() {
+        let mut config = crate::modules::config::UserConfig::default();
+        config.global_proxy_url = "127.0.0.1:7890".into();
+        assert_eq!(manual_global_proxy(&config), None);
+        config.global_proxy_enabled = true;
+        assert_eq!(manual_global_proxy(&config), Some(("http://127.0.0.1:7890".into(), 7890)));
+        config.global_proxy_url = "socks5h://127.0.0.1:7891".into();
+        assert_eq!(manual_global_proxy(&config), Some(("socks5://127.0.0.1:7891".into(), 7891)));
+        config.global_proxy_url = "  ".into();
+        assert_eq!(manual_global_proxy(&config), None);
     }
     #[test]
     fn proxy_browser_isolated_and_local_callbacks_bypass_proxy() {
