@@ -2470,7 +2470,16 @@ async fn export_account_cookies(
             return Ok(cookies);
         }
     }
+    stored_account_cookies(app, account).await
+}
 
+/// The account's cookies from where they are kept between runs: the Doubao
+/// desktop profile it was imported from, its own browser profile, or the
+/// portable credential file. Running windows are not consulted.
+async fn stored_account_cookies(
+    app: &AppHandle,
+    account: &DoubaoWebAccountRecord,
+) -> Result<Vec<PortableDoubaoCookie>, String> {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         if let Some(profile_dir) = account.desktop_profile_dir.as_deref() {
@@ -3158,7 +3167,16 @@ async fn generate_video_inner(
 ) -> Result<Value, String> {
     let window = ensure_window(&app, account, false)?;
     wait_until_page_ready(&window).await?;
-    let state = inspect_account(&app, &account).await?;
+    let mut state = inspect_account(&app, &account).await?;
+    if !state.logged_in && seed_window_cookies(&app, account, &window).await {
+        // Accounts imported from the Doubao desktop app keep their session in
+        // that app's profile (which the API pool's chat reads); give the video
+        // window the same session and look again.
+        let _ = window.navigate(Url::parse("https://www.doubao.com/chat/").map_err(|e| e.to_string())?);
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        wait_until_page_ready(&window).await?;
+        state = inspect_account(&app, &account).await?;
+    }
     update_last_known_login(&app, &account.id, state.logged_in)?;
     if !state.logged_in {
         if show_login_on_auth_error {
@@ -3216,6 +3234,33 @@ async fn generate_video_inner(
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+}
+
+/// Writes the account's stored session cookies into its video window. Returns
+/// whether a session cookie was written.
+async fn seed_window_cookies(app: &AppHandle, account: &DoubaoWebAccountRecord, window: &WebviewWindow) -> bool {
+    let Ok(cookies) = stored_account_cookies(app, account).await else { return false };
+    if !cookies.iter().any(|c| matches!(c.name.as_str(), "sessionid" | "sessionid_ss" | "sid_tt") && !c.value.is_empty()) {
+        return false;
+    }
+    let window = window.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut written = false;
+        for cookie in &cookies {
+            let host = cookie.domain.trim().trim_start_matches('.').to_ascii_lowercase();
+            if host != "doubao.com" && host != "www.doubao.com" { continue; }
+            for domain in [".doubao.com", "www.doubao.com"] {
+                let mut builder = tauri::webview::Cookie::build((cookie.name.clone(), cookie.value.clone()))
+                    .domain(domain.to_string()).path(if cookie.path.is_empty() { "/".to_string() } else { cookie.path.clone() })
+                    .secure(cookie.secure).http_only(cookie.http_only).same_site(SameSite::None);
+                if let Some(expires) = cookie.expires_unix.and_then(|value| OffsetDateTime::from_unix_timestamp(value).ok()) {
+                    builder = builder.expires(expires);
+                }
+                written |= window.set_cookie(builder.build()).is_ok();
+            }
+        }
+        written
+    }).await.unwrap_or(false)
 }
 
 fn task_state_from_url(url: &Url, task_id: &str) -> Option<Value> {
