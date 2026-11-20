@@ -9,7 +9,15 @@ pub(super) fn positive_tokens(value: Option<&Value>) -> Option<u32> {
     u32::try_from(number).ok().filter(|number| *number > 0)
 }
 
+/// Default context for Doubao web chat (auto, the thinking levels and named
+/// chat models). Picture and video models have no text context.
+pub(super) const DOUBAO_WEB_CONTEXT_TOKENS: u32 = 600_000;
+
 pub(super) fn defaults(provider: &str, id: &str) -> (Option<u32>, Option<u32>) {
+    if provider == "doubao-web" {
+        let media = matches!(id.to_ascii_lowercase().as_str(), "doubao-web/image" | "doubao-web/video");
+        return (if media { None } else { Some(DOUBAO_WEB_CONTEXT_TOKENS) }, None);
+    }
     static CATALOG: OnceLock<Value> = OnceLock::new();
     let catalog = CATALOG.get_or_init(|| serde_json::from_str(include_str!(
         "../../../sidecars/cle-cliproxy/cdk/CLIProxyAPI/internal/registry/models/models.json"
