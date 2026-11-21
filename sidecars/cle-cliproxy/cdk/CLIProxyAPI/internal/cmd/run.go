@@ -10,9 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -24,11 +25,23 @@ import (
 //   - cfg: The application configuration
 //   - configPath: The path to the configuration file
 //   - localPassword: Optional password accepted for local management requests
-func StartService(cfg *config.Config, configPath string, localPassword string) {
+func StartService(cfg *config.Config, configPath string, localPassword string) error {
+	return StartServiceWithPluginHost(cfg, configPath, localPassword, nil)
+}
+
+// StartServiceWithPluginHost builds and runs the proxy service with a shared plugin host.
+// Startup and runtime failures are returned after cleanup; cancellation is a normal shutdown.
+func StartServiceWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host, serverOptions ...api.ServerOption) error {
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).
 		WithLocalManagementPassword(localPassword)
+	if host != nil {
+		builder = builder.WithPluginHost(host)
+	}
+	if len(serverOptions) > 0 {
+		builder = builder.WithServerOptions(serverOptions...)
+	}
 
 	ctxSignal, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -46,22 +59,35 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 	service, err := builder.Build()
 	if err != nil {
 		log.Errorf("failed to build proxy service: %v", err)
-		return
+		return err
 	}
 
 	err = service.Run(runCtx)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Errorf("proxy service exited with error: %v", err)
+		return err
 	}
+	return nil
 }
 
 // StartServiceBackground starts the proxy service in a background goroutine
 // and returns a cancel function for shutdown and a done channel.
 func StartServiceBackground(cfg *config.Config, configPath string, localPassword string) (cancel func(), done <-chan struct{}) {
+	return StartServiceBackgroundWithPluginHost(cfg, configPath, localPassword, nil)
+}
+
+// StartServiceBackgroundWithPluginHost starts the proxy service with a shared plugin host.
+func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host, serverOptions ...api.ServerOption) (cancel func(), done <-chan struct{}) {
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).
 		WithLocalManagementPassword(localPassword)
+	if host != nil {
+		builder = builder.WithPluginHost(host)
+	}
+	if len(serverOptions) > 0 {
+		builder = builder.WithServerOptions(serverOptions...)
+	}
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 	doneCh := make(chan struct{})

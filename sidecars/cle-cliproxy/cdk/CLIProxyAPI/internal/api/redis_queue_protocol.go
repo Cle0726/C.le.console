@@ -9,12 +9,21 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/redisqueue"
 	log "github.com/sirupsen/logrus"
 )
 
-const redisUsageChannel = "usage"
+const (
+	redisUsageChannel  = "usage"
+	redisErrorsChannel = "errors"
+
+	maxRESPArrayLen   = 1024
+	maxRESPBulkLen    = 64 << 10 // 64 KiB
+	maxRESPFrameBytes = 64 << 10 // 64 KiB
+	maxRESPLineLen    = 64 << 10 // 64 KiB
+)
 
 type redisSubscriptionCommand struct {
 	args []string
@@ -37,12 +46,16 @@ func (s *Server) handleRedisConnection(conn net.Conn, reader *bufio.Reader) {
 	if reader == nil {
 		reader = bufio.NewReader(conn)
 	}
+	_ = conn.SetReadDeadline(time.Now().Add(muxSniffDeadline))
 
 	clientIP, localClient := resolveRemoteIP(conn.RemoteAddr())
 	authed := false
 	writer := bufio.NewWriter(conn)
 	defer func() {
-		if errClose := conn.Close(); errClose != nil {
+		if recovered := recover(); recovered != nil {
+			log.Errorf("panic while handling redis connection from %v: %v", conn.RemoteAddr(), recovered)
+		}
+		if errClose := conn.Close(); errClose != nil && !errors.Is(errClose, net.ErrClosed) {
 			log.Errorf("redis connection close error: %v", errClose)
 		}
 	}()
@@ -55,7 +68,7 @@ func (s *Server) handleRedisConnection(conn net.Conn, reader *bufio.Reader) {
 		return true
 	}
 
-	if s.cfg != nil && s.cfg.Home.Enabled {
+	if cfg := s.getConfig(); cfg != nil && cfg.Home.Enabled {
 		_ = writeRedisError(writer, "ERR redis usage output disabled in home mode")
 		_ = writer.Flush()
 		return
@@ -137,6 +150,7 @@ func (s *Server) handleRedisConnection(conn net.Conn, reader *bufio.Reader) {
 				continue
 			}
 			authed = true
+			_ = conn.SetReadDeadline(time.Time{})
 			_ = writeRedisSimpleString(writer, "OK")
 			if !flush() {
 				return
@@ -150,15 +164,15 @@ func (s *Server) handleRedisConnection(conn net.Conn, reader *bufio.Reader) {
 				}
 				continue
 			}
-			if !strings.EqualFold(channel, redisUsageChannel) {
+			messages, unsubscribe, ok := subscribeRedisChannel(channel)
+			if !ok {
 				_ = writeRedisError(writer, fmt.Sprintf("ERR unsupported channel '%s'", channel))
 				if !flush() {
 					return
 				}
 				continue
 			}
-			messages, unsubscribe := redisqueue.SubscribeUsage()
-			if errWrite := writeRedisPubSubSubscribe(writer, redisUsageChannel, 1); errWrite != nil {
+			if errWrite := writeRedisPubSubSubscribe(writer, channel, 1); errWrite != nil {
 				unsubscribe()
 				log.Errorf("redis protocol subscribe response error: %v", errWrite)
 				return
@@ -167,7 +181,7 @@ func (s *Server) handleRedisConnection(conn net.Conn, reader *bufio.Reader) {
 				unsubscribe()
 				return
 			}
-			s.streamRedisUsageSubscription(reader, writer, messages, unsubscribe)
+			s.streamRedisSubscription(reader, writer, channel, messages, unsubscribe)
 			return
 		case "LPOP", "RPOP":
 			count, hasCount, ok := parsePopCount(args)
@@ -185,7 +199,14 @@ func (s *Server) handleRedisConnection(conn net.Conn, reader *bufio.Reader) {
 				}
 				continue
 			}
-			items := redisqueue.PopOldest(count)
+			items, ok := popRedisQueueItems(args[1], count)
+			if !ok {
+				_ = writeRedisError(writer, fmt.Sprintf("ERR unsupported channel '%s'", strings.TrimSpace(args[1])))
+				if !flush() {
+					return
+				}
+				continue
+			}
 			if hasCount {
 				_ = writeRedisArrayOfBulkStrings(writer, items)
 				if !flush() {
@@ -213,7 +234,29 @@ func (s *Server) handleRedisConnection(conn net.Conn, reader *bufio.Reader) {
 	}
 }
 
-func (s *Server) streamRedisUsageSubscription(reader *bufio.Reader, writer *bufio.Writer, messages <-chan []byte, unsubscribe func()) {
+func subscribeRedisChannel(channel string) (<-chan []byte, func(), bool) {
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case redisUsageChannel:
+		messages, unsubscribe := redisqueue.SubscribeUsage()
+		return messages, unsubscribe, true
+	case redisErrorsChannel:
+		messages, unsubscribe := redisqueue.SubscribeErrors()
+		return messages, unsubscribe, true
+	default:
+		return nil, nil, false
+	}
+}
+
+func popRedisQueueItems(channel string, count int) ([][]byte, bool) {
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case redisUsageChannel:
+		return redisqueue.PopOldest(count), true
+	default:
+		return nil, false
+	}
+}
+
+func (s *Server) streamRedisSubscription(reader *bufio.Reader, writer *bufio.Writer, channel string, messages <-chan []byte, unsubscribe func()) {
 	if unsubscribe == nil {
 		return
 	}
@@ -231,7 +274,7 @@ func (s *Server) streamRedisUsageSubscription(reader *bufio.Reader, writer *bufi
 			if !ok {
 				return
 			}
-			if errWrite := writeRedisPubSubMessage(writer, redisUsageChannel, msg); errWrite != nil {
+			if errWrite := writeRedisPubSubMessage(writer, channel, msg); errWrite != nil {
 				log.Errorf("redis protocol publish message error: %v", errWrite)
 				return
 			}
@@ -243,7 +286,7 @@ func (s *Server) streamRedisUsageSubscription(reader *bufio.Reader, writer *bufi
 			if !ok {
 				return
 			}
-			keepOpen := handleRedisSubscriptionCommand(writer, command)
+			keepOpen := handleRedisSubscriptionCommand(writer, channel, command)
 			if errFlush := writer.Flush(); errFlush != nil {
 				log.Errorf("redis protocol flush error: %v", errFlush)
 				return
@@ -257,6 +300,11 @@ func (s *Server) streamRedisUsageSubscription(reader *bufio.Reader, writer *bufi
 
 func readRedisSubscriptionCommands(reader *bufio.Reader, commands chan<- redisSubscriptionCommand, done <-chan struct{}) {
 	defer close(commands)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Errorf("panic while reading redis subscription commands: %v", recovered)
+		}
+	}()
 
 	for {
 		args, errRead := readRESPArray(reader)
@@ -277,7 +325,7 @@ func readRedisSubscriptionCommands(reader *bufio.Reader, commands chan<- redisSu
 	}
 }
 
-func handleRedisSubscriptionCommand(writer *bufio.Writer, command redisSubscriptionCommand) bool {
+func handleRedisSubscriptionCommand(writer *bufio.Writer, channel string, command redisSubscriptionCommand) bool {
 	if command.err != nil {
 		_ = writeRedisError(writer, "ERR "+command.err.Error())
 		return false
@@ -297,7 +345,7 @@ func handleRedisSubscriptionCommand(writer *bufio.Writer, command redisSubscript
 		_ = writeRedisPubSubPong(writer, payload)
 		return true
 	case "UNSUBSCRIBE":
-		_ = writeRedisPubSubUnsubscribe(writer, redisUsageChannel, 0)
+		_ = writeRedisPubSubUnsubscribe(writer, channel, 0)
 		return false
 	case "QUIT":
 		_ = writeRedisSimpleString(writer, "OK")
@@ -391,12 +439,13 @@ func readRESPArray(reader *bufio.Reader) ([]string, error) {
 		return nil, errLine
 	}
 	count, errParse := strconv.Atoi(line)
-	if errParse != nil || count < 0 {
+	if errParse != nil || count < 0 || count > maxRESPArrayLen {
 		return nil, fmt.Errorf("protocol error")
 	}
 	args := make([]string, 0, count)
+	remainingBytes := maxRESPFrameBytes
 	for i := 0; i < count; i++ {
-		value, errString := readRESPString(reader)
+		value, errString := readRESPStringWithBudget(reader, &remainingBytes)
 		if errString != nil {
 			return nil, errString
 		}
@@ -406,21 +455,39 @@ func readRESPArray(reader *bufio.Reader) ([]string, error) {
 }
 
 func readRESPString(reader *bufio.Reader) (string, error) {
+	return readRESPStringWithBudget(reader, nil)
+}
+
+func readRESPStringWithBudget(reader *bufio.Reader, remainingBytes *int) (string, error) {
 	prefix, errRead := reader.ReadByte()
 	if errRead != nil {
 		return "", errRead
 	}
 	switch prefix {
 	case '$':
-		return readRESPBulkString(reader)
+		return readRESPBulkStringWithBudget(reader, remainingBytes)
 	case '+', ':':
-		return readRESPLine(reader)
+		line, errLine := readRESPLine(reader)
+		if errLine != nil {
+			return "", errLine
+		}
+		if remainingBytes != nil {
+			if len(line) > *remainingBytes {
+				return "", fmt.Errorf("protocol error")
+			}
+			*remainingBytes -= len(line)
+		}
+		return line, nil
 	default:
 		return "", fmt.Errorf("protocol error")
 	}
 }
 
 func readRESPBulkString(reader *bufio.Reader) (string, error) {
+	return readRESPBulkStringWithBudget(reader, nil)
+}
+
+func readRESPBulkStringWithBudget(reader *bufio.Reader, remainingBytes *int) (string, error) {
 	line, errLine := readRESPLine(reader)
 	if errLine != nil {
 		return "", errLine
@@ -429,27 +496,56 @@ func readRESPBulkString(reader *bufio.Reader) (string, error) {
 	if errParse != nil {
 		return "", fmt.Errorf("protocol error")
 	}
+	if length < -1 {
+		return "", fmt.Errorf("protocol error")
+	}
 	if length < 0 {
 		return "", nil
+	}
+	if length > maxRESPBulkLen || (remainingBytes != nil && length > *remainingBytes) {
+		return "", fmt.Errorf("bulk string too large")
 	}
 	buf := make([]byte, length+2)
 	if _, errRead := io.ReadFull(reader, buf); errRead != nil {
 		return "", errRead
 	}
-	if length+2 < 2 || buf[length] != '\r' || buf[length+1] != '\n' {
+	if buf[length] != '\r' || buf[length+1] != '\n' {
 		return "", fmt.Errorf("protocol error")
+	}
+	if remainingBytes != nil {
+		*remainingBytes -= length
 	}
 	return string(buf[:length]), nil
 }
 
 func readRESPLine(reader *bufio.Reader) (string, error) {
-	line, errRead := reader.ReadString('\n')
-	if errRead != nil {
+	var buf []byte
+	for {
+		fragment, errRead := reader.ReadSlice('\n')
+		if len(buf)+len(fragment) > maxRESPLineLen+2 {
+			return "", fmt.Errorf("protocol error")
+		}
+		if errRead == nil {
+			var line string
+			if len(buf) == 0 {
+				line = string(fragment)
+			} else {
+				buf = append(buf, fragment...)
+				line = string(buf)
+			}
+			line = strings.TrimSuffix(line, "\n")
+			line = strings.TrimSuffix(line, "\r")
+			if len(line) > maxRESPLineLen {
+				return "", fmt.Errorf("protocol error")
+			}
+			return line, nil
+		}
+		if errors.Is(errRead, bufio.ErrBufferFull) {
+			buf = append(buf, fragment...)
+			continue
+		}
 		return "", errRead
 	}
-	line = strings.TrimSuffix(line, "\n")
-	line = strings.TrimSuffix(line, "\r")
-	return line, nil
 }
 
 func writeRedisSimpleString(writer *bufio.Writer, value string) error {

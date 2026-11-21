@@ -22,6 +22,116 @@ func TestGetAvailableModelsReturnsClonedSnapshots(t *testing.T) {
 	}
 }
 
+func TestGetAvailableModelsClaudeIncludesTokenLimits(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("client-1", "Claude", []*ModelInfo{
+		{ID: "claude-sonnet-4-6", OwnedBy: "anthropic", Type: "claude", Created: 1771372800, ContextLength: 200000, MaxCompletionTokens: 64000},
+		{ID: "claude-no-limits", OwnedBy: "anthropic", Type: "claude"},
+	})
+
+	models := r.GetAvailableModels("claude")
+	byID := make(map[string]map[string]any, len(models))
+	for _, m := range models {
+		id, _ := m["id"].(string)
+		byID[id] = m
+	}
+
+	withLimits, ok := byID["claude-sonnet-4-6"]
+	if !ok {
+		t.Fatalf("expected claude-sonnet-4-6 in available models, got %v", byID)
+	}
+	if got := withLimits["max_input_tokens"]; got != 200000 {
+		t.Fatalf("expected max_input_tokens 200000, got %v", got)
+	}
+	if got := withLimits["max_tokens"]; got != 64000 {
+		t.Fatalf("expected max_tokens 64000, got %v", got)
+	}
+	if got := withLimits["created_at"]; got != "2026-02-18T00:00:00Z" {
+		t.Fatalf("expected created_at as RFC 3339 string, got %v", got)
+	}
+
+	withDefaults, ok := byID["claude-no-limits"]
+	if !ok {
+		t.Fatalf("expected claude-no-limits in available models, got %v", byID)
+	}
+	if got := withDefaults["max_input_tokens"]; got != DefaultClaudeMaxInputTokens {
+		t.Fatalf("expected fallback max_input_tokens %d, got %v", DefaultClaudeMaxInputTokens, got)
+	}
+	if got := withDefaults["max_tokens"]; got != DefaultClaudeMaxOutputTokens {
+		t.Fatalf("expected fallback max_tokens %d, got %v", DefaultClaudeMaxOutputTokens, got)
+	}
+	if got := withDefaults["display_name"]; got != "claude-no-limits" {
+		t.Fatalf("expected display_name to fall back to id, got %v", got)
+	}
+	if got := withDefaults["type"]; got != "model" {
+		t.Fatalf("expected type to default to model, got %v", got)
+	}
+}
+
+func TestGetAvailableModelsGeminiIncludesTokenLimits(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("client-1", "gemini", []*ModelInfo{
+		{
+			ID:                  "gemini-3.8-flash",
+			Name:                "models/gemini-3.8-flash",
+			DisplayName:         "Gemini 3.8 Flash",
+			ContextLength:       1048576,
+			MaxCompletionTokens: 65536,
+		},
+		{
+			ID:               "gemini-2.5-pro",
+			Name:             "models/gemini-2.5-pro",
+			DisplayName:      "Gemini 2.5 Pro",
+			InputTokenLimit:  1048576,
+			OutputTokenLimit: 65536,
+		},
+		{
+			ID:   "gemini-no-limits",
+			Name: "models/gemini-no-limits",
+		},
+	})
+
+	models := r.GetAvailableModels("gemini")
+	byName := make(map[string]map[string]any, len(models))
+	for _, m := range models {
+		name, _ := m["name"].(string)
+		byName[name] = m
+	}
+
+	fromContext, ok := byName["models/gemini-3.8-flash"]
+	if !ok {
+		t.Fatalf("expected models/gemini-3.8-flash in available models, got %v", byName)
+	}
+	if got := fromContext["inputTokenLimit"]; got != 1048576 {
+		t.Fatalf("gemini-3.8-flash inputTokenLimit = %v, want 1048576", got)
+	}
+	if got := fromContext["outputTokenLimit"]; got != 65536 {
+		t.Fatalf("gemini-3.8-flash outputTokenLimit = %v, want 65536", got)
+	}
+
+	fromExplicit, ok := byName["models/gemini-2.5-pro"]
+	if !ok {
+		t.Fatalf("expected models/gemini-2.5-pro in available models, got %v", byName)
+	}
+	if got := fromExplicit["inputTokenLimit"]; got != 1048576 {
+		t.Fatalf("gemini-2.5-pro inputTokenLimit = %v, want 1048576", got)
+	}
+	if got := fromExplicit["outputTokenLimit"]; got != 65536 {
+		t.Fatalf("gemini-2.5-pro outputTokenLimit = %v, want 65536", got)
+	}
+
+	noLimits, ok := byName["models/gemini-no-limits"]
+	if !ok {
+		t.Fatalf("expected models/gemini-no-limits in available models, got %v", byName)
+	}
+	if _, exists := noLimits["inputTokenLimit"]; exists {
+		t.Fatalf("expected inputTokenLimit to be omitted when unknown, got %v", noLimits)
+	}
+	if _, exists := noLimits["outputTokenLimit"]; exists {
+		t.Fatalf("expected outputTokenLimit to be omitted when unknown, got %v", noLimits)
+	}
+}
+
 func TestGetAvailableModelsInvalidatesCacheOnRegistryChanges(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "OpenAI", []*ModelInfo{{ID: "m1", OwnedBy: "team-a", DisplayName: "Model One"}})

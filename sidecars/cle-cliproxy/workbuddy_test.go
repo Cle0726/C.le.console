@@ -13,10 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	executor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
-	translator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	executor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
+	translator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
 func TestNativeOpenAIFramerRestoresConsumedDoneOnlyOnce(t *testing.T) {
@@ -212,6 +212,10 @@ func TestWorkbuddyRuntimeRotatesSeparateManagedCredentials(t *testing.T) {
 	var selected []string
 	previous := http.DefaultTransport
 	http.DefaultTransport = workbuddyTestTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost || r.Body == nil {
+			// Background catalog/version updaters; not part of this test.
+			return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
 		selected = append(selected, r.Header.Get("Authorization"))
 		var payload map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&payload)

@@ -1,6 +1,6 @@
 package chat_completions
 
-import internalcache "github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
+import internalcache "github.com/router-for-me/CLIProxyAPI/v8/internal/cache"
 
 // Gemini 3 attaches a thoughtSignature to every functionCall it makes. OpenAI
 // Chat Completions clients have nowhere to keep it, so the relay remembers
@@ -13,5 +13,5 @@ func rememberToolCallSignature(id, signature string) {
 }
 
 func toolCallThoughtSignature(id string) string {
-	return internalcache.GeminiToolCallSignature(id, geminiCLIFunctionThoughtSignature)
+	return internalcache.GeminiToolCallSignature(id, antigravityFunctionThoughtSignature)
 }
