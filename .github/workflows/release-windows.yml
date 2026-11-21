@@ -95,13 +95,18 @@ jobs:
           # the manifest to only that binary, so link it with `cargo rustc`
           # (rustc args apply to this one target) and run the executable.
           $dependency = "/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
-          cargo rustc --locked -p cle-console --lib --profile test -- -C link-arg=/MANIFEST:EMBED -C "link-arg=$dependency"
+          # Ask cargo where it put the executable: newer cargo no longer places it in
+          # target/debug/deps. Diagnostics stay on stderr, stdout carries the artifacts.
+          $messages = cargo rustc --locked -p cle-console --lib --profile test --message-format=json-render-diagnostics -- -C link-arg=/MANIFEST:EMBED -C "link-arg=$dependency"
           if ($LASTEXITCODE -ne 0) { throw 'Could not build the lib test executable' }
-          $exe = Get-ChildItem target/debug/deps -Filter 'antigravity_cle_console_lib-*.exe' |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $exe) { throw 'Lib test executable was not produced' }
+          $exe = $messages | Where-Object { $_ -like '{*"reason":"compiler-artifact"*"executable":"*' } |
+            ForEach-Object { $_ | ConvertFrom-Json } |
+            Where-Object { $_.profile.test -and $_.executable } |
+            Select-Object -Last 1 -ExpandProperty executable
+          if (-not $exe -or -not (Test-Path $exe)) { throw "Lib test executable was not produced (cargo reported: $exe)" }
+          Write-Host "Running $exe"
           foreach ($filter in 'modules::subscription_proxy::tests', 'app_updates::tests') {
-            & $exe.FullName $filter --test-threads=1
+            & $exe $filter --test-threads=1
             if ($LASTEXITCODE -ne 0) { throw "Tests failed: $filter" }
           }
       - name: Build signed Windows updater
