@@ -13,15 +13,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	"github.com/tidwall/gjson"
 )
 
@@ -377,18 +377,18 @@ func TestSidecarRuntimeRegistersConfigCodexAPIKeyAuths(t *testing.T) {
 
 func TestManifestRegistryModelsPreservesStaticThinkingSupport(t *testing.T) {
 	models := manifestRegistryModels(&manifest{
-		ModelIDs: []string{"gpt-5.2"},
+		ModelIDs: []string{"gpt-6-luna"},
 	})
 
-	info := findModelInfoForTest(models, "gpt-5.2")
+	info := findModelInfoForTest(models, "gpt-6-luna")
 	if info == nil {
-		t.Fatalf("expected gpt-5.2 in manifest registry models: %#v", models)
+		t.Fatalf("expected gpt-6-luna in manifest registry models: %#v", models)
 	}
 	if info.Thinking == nil {
-		t.Fatalf("expected gpt-5.2 to preserve static thinking support: %#v", info)
+		t.Fatalf("expected gpt-6-luna to preserve static thinking support: %#v", info)
 	}
 	if !stringSliceContains(info.Thinking.Levels, "high") {
-		t.Fatalf("expected gpt-5.2 thinking levels to include high: %#v", info.Thinking.Levels)
+		t.Fatalf("expected gpt-6-luna thinking levels to include high: %#v", info.Thinking.Levels)
 	}
 	if info.UserDefined {
 		t.Fatalf("static model should not be marked user-defined: %#v", info)
@@ -398,13 +398,13 @@ func TestManifestRegistryModelsPreservesStaticThinkingSupport(t *testing.T) {
 func TestManifestRegistryModelsCopiesSourceThinkingToAliases(t *testing.T) {
 	models := manifestRegistryModels(&manifest{
 		ModelAliases: []modelAliasSpec{{
-			SourceModel: "gpt-5.2",
-			Alias:       "gpt-5.2-codex",
+			SourceModel: "gpt-6-luna",
+			Alias:       "gpt-6-luna-codex",
 			Fork:        true,
 		}},
 	})
 
-	alias := findModelInfoForTest(models, "gpt-5.2-codex")
+	alias := findModelInfoForTest(models, "gpt-6-luna-codex")
 	if alias == nil {
 		t.Fatalf("expected alias in manifest registry models: %#v", models)
 	}

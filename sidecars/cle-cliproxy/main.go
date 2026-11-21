@@ -10,6 +10,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v8/cle-cliproxy/geminicli"
 	"io"
 	"mime/multipart"
 	"net"
@@ -26,23 +28,23 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
-	internalmisc "github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
-	internalregistry "github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	responsesconverter "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/openai/openai/responses"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher/synthesizer"
-	sdkhandlers "github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
-	sdkopenai "github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/openai"
-	sdkauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
-	_ "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator/builtin"
+	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+	internalmisc "github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
+	internalregistry "github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	responsesconverter "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/openai/openai/responses"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher/synthesizer"
+	sdkhandlers "github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	sdkopenai "github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/openai"
+	sdkauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/proxyutil"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator/builtin"
 	"github.com/tidwall/sjson"
 )
 
@@ -697,16 +699,23 @@ func (p *requestPolicy) lookupAPIKey(r *http.Request) *apiKeySpec {
 	return p.manifest.apiKeyByValue[key]
 }
 
+func newRelayRequestID() string {
+	if requestID, err := internallogging.GenerateRequestID(); err == nil && requestID != "" {
+		return requestID
+	}
+	return uuid.NewString()
+}
+
 func ensureRequestID(c *gin.Context) string {
 	if c == nil || c.Request == nil {
-		return internallogging.GenerateRequestID()
+		return newRelayRequestID()
 	}
 	requestID := strings.TrimSpace(internallogging.GetRequestID(c.Request.Context()))
 	if requestID == "" {
 		requestID = strings.TrimSpace(internallogging.GetGinRequestID(c))
 	}
 	if requestID == "" {
-		requestID = internallogging.GenerateRequestID()
+		requestID = newRelayRequestID()
 	}
 	internallogging.SetGinRequestID(c, requestID)
 	c.Request = c.Request.WithContext(internallogging.WithRequestID(c.Request.Context(), requestID))
@@ -2238,8 +2247,43 @@ func buildCoreAuthManager(cfg *config.Config, selector coreauth.Selector, hook c
 type sidecarRuntime struct {
 	manager *coreauth.Manager
 	service *cliproxy.Service
+	cfg     *config.Config
 	cancel  context.CancelFunc
 	done    chan error
+}
+
+// runtimeProviderKeys maps manifest provider names to the CLIProxyAPI v8
+// provider keys. v8 registers openai-compatibility entries as
+// "openai-compatible-<name>" while the manifest keeps the bare entry name.
+func runtimeProviderKeys(cfg *config.Config, providers []string) []string {
+	if cfg == nil || len(cfg.OpenAICompatibility) == 0 || len(providers) == 0 {
+		return providers
+	}
+	out := make([]string, 0, len(providers))
+	seen := make(map[string]struct{}, len(providers))
+	for _, provider := range providers {
+		key := runtimeProviderKey(cfg, provider)
+		lower := strings.ToLower(key)
+		if _, ok := seen[lower]; ok {
+			continue
+		}
+		seen[lower] = struct{}{}
+		out = append(out, key)
+	}
+	return out
+}
+
+func runtimeProviderKey(cfg *config.Config, provider string) string {
+	trimmed := strings.TrimSpace(provider)
+	if cfg == nil || trimmed == "" {
+		return trimmed
+	}
+	for i := range cfg.OpenAICompatibility {
+		if strings.EqualFold(strings.TrimSpace(cfg.OpenAICompatibility[i].Name), trimmed) {
+			return util.OpenAICompatibleProviderKey(trimmed)
+		}
+	}
+	return trimmed
 }
 
 func newSidecarRuntime(ctx context.Context, configPath string, cfg *config.Config, m *manifest, manager *coreauth.Manager) (*sidecarRuntime, error) {
@@ -2255,7 +2299,6 @@ func newSidecarRuntime(ctx context.Context, configPath string, cfg *config.Confi
 
 	authManager := sdkauth.NewManager(
 		sdkauth.GetTokenStore(),
-		sdkauth.NewGeminiAuthenticator(),
 		sdkauth.NewCodexAuthenticator(),
 		sdkauth.NewClaudeAuthenticator(),
 		sdkauth.NewAntigravityAuthenticator(),
@@ -2264,6 +2307,7 @@ func newSidecarRuntime(ctx context.Context, configPath string, cfg *config.Confi
 	readyCh := make(chan struct{})
 	var readyOnce sync.Once
 	service, err := cliproxy.NewBuilder().
+		WithStaticPlugin(geminicli.ID, 0, geminicli.Build()).
 		WithConfig(cfg).
 		WithConfigPath(configPath).
 		WithAuthManager(authManager).
@@ -2325,7 +2369,7 @@ func newSidecarRuntime(ctx context.Context, configPath string, cfg *config.Confi
 		}
 	}
 
-	return &sidecarRuntime{manager: manager, service: service, cancel: cancel, done: done}, nil
+	return &sidecarRuntime{manager: manager, service: service, cfg: cfg, cancel: cancel, done: done}, nil
 }
 
 func registerConfigAPIKeyAuths(ctx context.Context, service *cliproxy.Service, manager *coreauth.Manager, cfg *config.Config, m *manifest) error {
@@ -2362,14 +2406,14 @@ func (r *sidecarRuntime) Execute(ctx context.Context, providers []string, req cl
 	if r == nil || r.service == nil {
 		return cliproxyexecutor.Response{}, fmt.Errorf("runtime is not initialized")
 	}
-	return r.service.Execute(ctx, providers, req, opts)
+	return r.service.Execute(ctx, runtimeProviderKeys(r.cfg, providers), req, opts)
 }
 
 func (r *sidecarRuntime) ExecuteStream(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	if r == nil || r.service == nil {
 		return nil, fmt.Errorf("runtime is not initialized")
 	}
-	return r.service.ExecuteStream(ctx, providers, req, opts)
+	return r.service.ExecuteStream(ctx, runtimeProviderKeys(r.cfg, providers), req, opts)
 }
 
 func (r *sidecarRuntime) Stop() {
@@ -2480,6 +2524,12 @@ func registerManifestModelsForAuth(manager *coreauth.Manager, m *manifest, auth 
 	}
 	if account != nil && strings.TrimSpace(account.Provider) != "" {
 		provider = strings.TrimSpace(account.Provider)
+	}
+	// v8 keys openai-compatibility auths as "openai-compatible-<name>"; keep
+	// the registry on the same key as the auth so scheduling finds it.
+	if lowerAuthProvider := strings.ToLower(strings.TrimSpace(auth.Provider)); strings.HasPrefix(lowerAuthProvider, "openai-compatible-") &&
+		strings.EqualFold(strings.TrimPrefix(lowerAuthProvider, "openai-compatible-"), provider) {
+		provider = strings.TrimSpace(auth.Provider)
 	}
 	if provider == "" {
 		return
@@ -4525,7 +4575,12 @@ func (s *relayServer) handleProviderGatewayRequest(c *gin.Context, gateway *prov
 	if wireAPI == "chat_completions" {
 		switch {
 		case sourceFormatEqual(sourceFormat, sdktranslator.FormatOpenAIResponse):
-			upstreamBody = responsesconverter.ConvertOpenAIResponsesRequestToOpenAIChatCompletions(upstreamModel, body, stream)
+			converted, errConvert := responsesconverter.ConvertOpenAIResponsesRequestToOpenAIChatCompletions(upstreamModel, body, stream)
+			if errConvert != nil {
+				writeAPIError(c, http.StatusBadRequest, errConvert.Error(), "invalid_request")
+				return
+			}
+			upstreamBody = converted
 		case sourceFormatEqual(sourceFormat, sdktranslator.FormatOpenAI):
 			upstreamBody = rewriteProviderGatewayBodyModel(body, upstreamModel)
 		case sourceFormatEqual(sourceFormat, sdktranslator.FormatClaude), sourceFormatEqual(sourceFormat, sdktranslator.FormatGemini):

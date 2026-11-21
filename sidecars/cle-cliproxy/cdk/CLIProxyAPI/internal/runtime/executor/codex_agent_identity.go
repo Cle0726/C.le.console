@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/nacl/box"
 )
@@ -366,8 +366,13 @@ func (t *codexAgentIdentityRoundTripper) RoundTrip(req *http.Request) (*http.Res
 }
 
 func newCodexAuthenticatedHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth) *http.Client {
-	client := helps.NewUtlsHTTPClient(ctx, cfg, auth, 0)
-	if !isCodexAgentIdentityAuth(auth) {
+	return wrapCodexAgentIdentityClient(helps.NewUtlsHTTPClient(ctx, cfg, auth, 0), auth)
+}
+
+// wrapCodexAgentIdentityClient signs requests with the Codex agent identity
+// assertion when the credential is an agent identity (C.le Codex local access).
+func wrapCodexAgentIdentityClient(client *http.Client, auth *cliproxyauth.Auth) *http.Client {
+	if client == nil || !isCodexAgentIdentityAuth(auth) {
 		return client
 	}
 	base := client.Transport

@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"encoding/base64"
+	"errors"
 	"fmt"
+	"github.com/MoeForge/moego/base64"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/net/proxy"
 )
@@ -71,6 +74,24 @@ func Parse(raw string) (Setting, error) {
 	}
 }
 
+// ValidRequestProxy reports whether raw is a concrete execution proxy override.
+// The host must be present, and an explicit port must be in the range 1-65535.
+func ValidRequestProxy(raw string) bool {
+	setting, errParse := Parse(raw)
+	if errParse != nil || setting.Mode != ModeProxy || setting.URL == nil {
+		return false
+	}
+	if strings.TrimSpace(setting.URL.Hostname()) == "" {
+		return false
+	}
+	port := setting.URL.Port()
+	if port == "" {
+		return true
+	}
+	number, errPort := strconv.Atoi(port)
+	return errPort == nil && number >= 1 && number <= 65535
+}
+
 func cloneDefaultTransport() *http.Transport {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok && transport != nil {
 		return transport.Clone()
@@ -83,6 +104,14 @@ func NewDirectTransport() *http.Transport {
 	clone := cloneDefaultTransport()
 	clone.Proxy = nil
 	return clone
+}
+
+// socksForwardDialer dials the SOCKS5 proxy itself. It mirrors net/http's
+// DefaultTransport dialer so the resulting upstream socket gets TCP keepalive:
+// proxy.Direct would leave keepalive at the OS default of hours, which lets a
+// silently dead peer pin an otherwise reusable connection.
+func socksForwardDialer() *net.Dialer {
+	return &net.Dialer{KeepAlive: 30 * time.Second}
 }
 
 // BuildHTTPTransport constructs an HTTP transport for the provided proxy setting.
@@ -105,7 +134,7 @@ func BuildHTTPTransport(raw string) (*http.Transport, Mode, error) {
 				password, _ := setting.URL.User.Password()
 				proxyAuth = &proxy.Auth{User: username, Password: password}
 			}
-			dialer, errSOCKS5 := proxy.SOCKS5("tcp", setting.URL.Host, proxyAuth, proxy.Direct)
+			dialer, errSOCKS5 := proxy.SOCKS5("tcp", setting.URL.Host, proxyAuth, socksForwardDialer())
 			if errSOCKS5 != nil {
 				return nil, setting.Mode, fmt.Errorf("create SOCKS5 dialer failed: %w", errSOCKS5)
 			}
@@ -116,11 +145,68 @@ func BuildHTTPTransport(raw string) (*http.Transport, Mode, error) {
 			}
 			return transport, setting.Mode, nil
 		}
+		if setting.URL.Scheme == "https" {
+			transport := cloneDefaultTransport()
+			transport.Proxy = http.ProxyURL(setting.URL)
+			transport.DialTLSContext = buildHTTPSProxyDialTLSContext(setting.URL, nil, transport.TLSHandshakeTimeout, transport.DialContext)
+			return transport, setting.Mode, nil
+		}
 		transport := cloneDefaultTransport()
 		transport.Proxy = http.ProxyURL(setting.URL)
 		return transport, setting.Mode, nil
 	default:
 		return nil, setting.Mode, nil
+	}
+}
+
+func buildHTTPSProxyDialTLSContext(
+	proxyURL *url.URL,
+	baseTLS *tls.Config,
+	handshakeTimeout time.Duration,
+	baseDialContext func(ctx context.Context, network, addr string) (net.Conn, error),
+) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	proxyHostname := proxyURL.Hostname()
+	var privateTLS *tls.Config
+	if baseTLS != nil {
+		privateTLS = baseTLS.Clone()
+	}
+	dialContext := baseDialContext
+	if dialContext == nil {
+		dialContext = (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		rawConn, errDial := dialContext(ctx, network, addr)
+		if errDial != nil {
+			return nil, errDial
+		}
+		var tlsConfig *tls.Config
+		if privateTLS != nil {
+			tlsConfig = privateTLS.Clone()
+		} else {
+			tlsConfig = &tls.Config{}
+		}
+		if tlsConfig.ServerName == "" {
+			tlsConfig.ServerName = proxyHostname
+		}
+		tlsConfig.NextProtos = []string{"http/1.1"}
+
+		tlsConn := tls.Client(rawConn, tlsConfig)
+		handshakeCtx := ctx
+		if handshakeTimeout > 0 {
+			var cancelHandshake context.CancelFunc
+			handshakeCtx, cancelHandshake = context.WithTimeout(ctx, handshakeTimeout)
+			defer cancelHandshake()
+		}
+		if errHandshake := tlsConn.HandshakeContext(handshakeCtx); errHandshake != nil {
+			if errClose := rawConn.Close(); errClose != nil {
+				return nil, fmt.Errorf("HTTPS proxy TLS handshake failed: %w; close failed: %v", errHandshake, errClose)
+			}
+			return nil, fmt.Errorf("HTTPS proxy TLS handshake failed: %w", errHandshake)
+		}
+		return tlsConn, nil
 	}
 }
 
@@ -151,20 +237,53 @@ func BuildDialer(raw string) (proxy.Dialer, Mode, error) {
 }
 
 type httpConnectDialer struct {
-	proxyURL *url.URL
-	dialer   proxy.Dialer
+	proxyURL  *url.URL
+	dialer    proxy.Dialer
+	tlsConfig *tls.Config
 }
 
 func (d *httpConnectDialer) Dial(network, addr string) (net.Conn, error) {
-	proxyConn, errDial := d.dialer.Dial(network, proxyDialAddr(d.proxyURL))
+	return d.DialContext(context.Background(), network, addr)
+}
+
+func (d *httpConnectDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	contextDialer, ok := d.dialer.(proxy.ContextDialer)
+	if !ok {
+		return nil, errors.New("HTTP proxy base dialer does not support context cancellation")
+	}
+	proxyConn, errDial := contextDialer.DialContext(ctx, network, proxyDialAddr(d.proxyURL))
 	if errDial != nil {
 		return nil, fmt.Errorf("dial HTTP proxy failed: %w", errDial)
 	}
 
 	conn := proxyConn
+	cancelDone := make(chan struct{})
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = proxyConn.Close()
+		close(cancelDone)
+	})
+	defer func() {
+		if !stopCancel() {
+			<-cancelDone
+		}
+	}()
 	if d.proxyURL.Scheme == "https" {
-		tlsConn := tls.Client(conn, &tls.Config{ServerName: d.proxyURL.Hostname()})
-		if errHandshake := tlsConn.Handshake(); errHandshake != nil {
+		var tlsConfig *tls.Config
+		if d.tlsConfig != nil {
+			tlsConfig = d.tlsConfig.Clone()
+		} else {
+			tlsConfig = &tls.Config{}
+		}
+		if tlsConfig.ServerName == "" {
+			tlsConfig.ServerName = d.proxyURL.Hostname()
+		}
+		tlsConfig.NextProtos = []string{"http/1.1"}
+
+		tlsConn := tls.Client(conn, tlsConfig)
+		if errHandshake := tlsConn.HandshakeContext(ctx); errHandshake != nil {
 			if errClose := conn.Close(); errClose != nil {
 				return nil, fmt.Errorf("HTTPS proxy TLS handshake failed: %w; close failed: %v", errHandshake, errClose)
 			}
@@ -173,12 +292,12 @@ func (d *httpConnectDialer) Dial(network, addr string) (net.Conn, error) {
 		conn = tlsConn
 	}
 
-	req := &http.Request{
+	req := (&http.Request{
 		Method: http.MethodConnect,
 		URL:    &url.URL{Host: addr},
 		Host:   addr,
 		Header: make(http.Header),
-	}
+	}).WithContext(ctx)
 	if d.proxyURL.User != nil {
 		req.Header.Set("Proxy-Authorization", proxyAuthorization(d.proxyURL.User))
 	}
@@ -207,6 +326,12 @@ func (d *httpConnectDialer) Dial(network, addr string) (net.Conn, error) {
 		return nil, fmt.Errorf("proxy CONNECT returned status %s", resp.Status)
 	}
 
+	if errContext := ctx.Err(); errContext != nil {
+		if errClose := conn.Close(); errClose != nil && !errors.Is(errClose, net.ErrClosed) {
+			return nil, fmt.Errorf("HTTP proxy context ended: %w; close failed: %v", errContext, errClose)
+		}
+		return nil, errContext
+	}
 	if reader.Buffered() > 0 {
 		return &bufferedConn{Conn: conn, reader: reader}, nil
 	}

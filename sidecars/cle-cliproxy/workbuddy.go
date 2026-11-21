@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	internalutil "github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,10 +18,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	runtimeexecutor "github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
+	runtimeexecutor "github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
 const workbuddyCredentialHeader = "X-Cle-Workbuddy-Credential-URL"
@@ -34,7 +35,7 @@ type workbuddyExecutor struct {
 func newWorkbuddyExecutor(cfg *config.Config) *workbuddyExecutor {
 	copy := *cfg
 	copy.ProxyURL = "" // The adapter owns the remote transport; the credential hop is always direct.
-	return &workbuddyExecutor{OpenAICompatExecutor: runtimeexecutor.NewOpenAICompatExecutor("workbuddy", &copy),
+	return &workbuddyExecutor{OpenAICompatExecutor: runtimeexecutor.NewOpenAICompatExecutor(internalutil.OpenAICompatibleProviderKey("workbuddy"), &copy),
 		transports: newSidecarRoundTripperProvider(), proxy: cfg.ProxyURL}
 }
 

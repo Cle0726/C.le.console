@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	internalregistry "github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	internalregistry "github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 )
 
 // These are account-authorized upstream limits, not client defaults or guesses.

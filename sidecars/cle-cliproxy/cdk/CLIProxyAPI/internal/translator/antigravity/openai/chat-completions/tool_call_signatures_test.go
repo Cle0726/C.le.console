@@ -24,11 +24,15 @@ func TestToolCallSignatureRoundTrips(t *testing.T) {
 		`{"role":"tool","tool_call_id":"` + id + `","content":"Thu"},` +
 		`{"role":"assistant","content":"","tool_calls":[{"id":"unknown-1","type":"function","function":{"name":"exec","arguments":"{}"}}]},` +
 		`{"role":"tool","tool_call_id":"unknown-1","content":"x"}]}`)
-	converted := string(ConvertOpenAIRequestToAntigravity("gemini-3.8-flash-tiered", req, true))
+	convertedBytes, errConvert := ConvertOpenAIRequestToAntigravity("gemini-3.8-flash-tiered", req, true)
+	if errConvert != nil {
+		t.Fatal(errConvert)
+	}
+	converted := string(convertedBytes)
 	if !strings.Contains(converted, "REAL_SIGNATURE_abcdefghijklmnopqrstuvwxyz0123456789") {
 		t.Fatalf("real signature not replayed: %s", converted)
 	}
-	if !strings.Contains(converted, geminiCLIFunctionThoughtSignature) {
+	if !strings.Contains(converted, antigravityFunctionThoughtSignature) {
 		t.Fatalf("unknown call should keep the placeholder: %s", converted)
 	}
 }
@@ -39,10 +43,10 @@ func TestToolCallSignatureSurvivesRewrittenID(t *testing.T) {
 	if got := toolCallThoughtSignature("exec179392261586962000023"); got != "SIG_FOR_REWRITTEN_ID" {
 		t.Fatalf("rewritten id lookup = %q", got)
 	}
-	if got := toolCallThoughtSignature("call_other"); got != geminiCLIFunctionThoughtSignature {
+	if got := toolCallThoughtSignature("call_other"); got != antigravityFunctionThoughtSignature {
 		t.Fatalf("unknown id lookup = %q", got)
 	}
-	if got := toolCallThoughtSignature("---"); got != geminiCLIFunctionThoughtSignature {
+	if got := toolCallThoughtSignature("---"); got != antigravityFunctionThoughtSignature {
 		t.Fatalf("empty key lookup = %q", got)
 	}
 }

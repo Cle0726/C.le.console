@@ -4,69 +4,9 @@
 package misc
 
 import (
-	"fmt"
 	"net/http"
-	"runtime"
 	"strings"
 )
-
-const (
-	// GeminiCLIVersion is the version string reported in the User-Agent for upstream requests.
-	GeminiCLIVersion = "0.67.0"
-
-	// GeminiCLIApiClientHeader is the value for the X-Goog-Api-Client header sent to the Gemini CLI upstream.
-	GeminiCLIApiClientHeader = "google-genai-sdk/1.41.0 gl-node/v22.19.0"
-)
-
-// geminiCLIOS maps Go runtime OS names to the Node.js-style platform strings used by Gemini CLI.
-func geminiCLIOS() string {
-	switch runtime.GOOS {
-	case "windows":
-		return "win32"
-	default:
-		return runtime.GOOS
-	}
-}
-
-// geminiCLIArch maps Go runtime architecture names to the Node.js-style arch strings used by Gemini CLI.
-func geminiCLIArch() string {
-	switch runtime.GOARCH {
-	case "amd64":
-		return "x64"
-	case "386":
-		return "x86"
-	default:
-		return runtime.GOARCH
-	}
-}
-
-// GeminiCLIUserAgent returns a User-Agent string that matches the Gemini CLI format.
-// The model parameter is included in the UA; pass "" or "unknown" when the model is not applicable.
-func GeminiCLIUserAgent(model string) string {
-	if model == "" {
-		model = "unknown"
-	}
-	version := ClientVersion(ClientGeminiCLI)
-	if version == "" {
-		version = GeminiCLIVersion
-	}
-	return fmt.Sprintf("GeminiCLI/%s/%s (%s; %s; terminal)", version, model, geminiCLIOS(), geminiCLIArch())
-}
-
-// GeminiCLIApiClientHeaderValue is the live X-Goog-Api-Client value.
-// It follows the current Gemini CLI and Node releases after the updater starts.
-func GeminiCLIApiClientHeaderValue() string {
-	sdk := ClientVersion(ClientGoogleGenAI)
-	node := ClientVersion(ClientNode)
-	if sdk == "" {
-		sdk = "1.41.0"
-	}
-	if node == "" {
-		node = "22.19.0"
-	}
-	node = strings.TrimPrefix(node, "v")
-	return fmt.Sprintf("google-genai-sdk/%s gl-node/v%s", sdk, node)
-}
 
 // ScrubProxyAndFingerprintHeaders removes all headers that could reveal
 // proxy infrastructure, client identity, or browser fingerprints from an
@@ -133,6 +73,14 @@ func EnsureHeader(target http.Header, source http.Header, key, defaultValue stri
 		if val := strings.TrimSpace(source.Get(key)); val != "" {
 			target.Set(key, val)
 			return
+		}
+		for k, v := range source {
+			if strings.EqualFold(k, key) && len(v) > 0 {
+				if val := strings.TrimSpace(v[0]); val != "" {
+					target.Set(key, val)
+					return
+				}
+			}
 		}
 	}
 	if strings.TrimSpace(target.Get(key)) != "" {

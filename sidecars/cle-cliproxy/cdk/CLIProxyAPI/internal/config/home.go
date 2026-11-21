@@ -3,6 +3,7 @@ package config
 // HomeConfig stores runtime-only Home control plane settings from -home-jwt.
 type HomeConfig struct {
 	Enabled                 bool          `yaml:"enabled" json:"enabled"`
+	NodeID                  string        `yaml:"-" json:"-"`
 	Host                    string        `yaml:"host" json:"-"`
 	Port                    int           `yaml:"port" json:"-"`
 	DisableClusterDiscovery bool          `yaml:"disable-cluster-discovery" json:"-"`
@@ -18,4 +19,13 @@ type HomeTLSConfig struct {
 	ClientCert          string `yaml:"-" json:"-"`
 	ClientKey           string `yaml:"-" json:"-"`
 	UseTargetServerName bool   `yaml:"-" json:"-"`
+}
+
+// NormalizeHomePort ensures that the CPA server port received from Home is valid,
+// defaulting to 8317 when omitted or non-positive.
+func NormalizeHomePort(port int) int {
+	if port <= 0 {
+		return 8317
+	}
+	return port
 }

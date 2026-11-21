@@ -2,26 +2,25 @@ package management
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/MoeForge/moego/json"
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 func TestListAuthFiles_IncludesProjectIDFromManager(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
-	gin.SetMode(gin.TestMode)
 
 	authDir := t.TempDir()
-	fileName := "gemini-user@example.com-project-a.json"
+	fileName := "antigravity-user@example.com-project-a.json"
 	filePath := filepath.Join(authDir, fileName)
-	if errWrite := os.WriteFile(filePath, []byte(`{"type":"gemini","email":"user@example.com","project_id":"project-a"}`), 0o600); errWrite != nil {
+	if errWrite := os.WriteFile(filePath, []byte(`{"type":"antigravity","email":"user@example.com","project_id":"project-a"}`), 0o600); errWrite != nil {
 		t.Fatalf("failed to write auth file: %v", errWrite)
 	}
 
@@ -29,13 +28,13 @@ func TestListAuthFiles_IncludesProjectIDFromManager(t *testing.T) {
 	record := &coreauth.Auth{
 		ID:       fileName,
 		FileName: fileName,
-		Provider: "gemini-cli",
+		Provider: "antigravity",
 		Status:   coreauth.StatusActive,
 		Attributes: map[string]string{
 			"path": filePath,
 		},
 		Metadata: map[string]any{
-			"type":       "gemini",
+			"type":       "antigravity",
 			"email":      "user@example.com",
 			"project_id": "project-a",
 		},
@@ -55,11 +54,10 @@ func TestListAuthFiles_IncludesProjectIDFromManager(t *testing.T) {
 
 func TestListAuthFilesFromDisk_IncludesProjectID(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
-	gin.SetMode(gin.TestMode)
 
 	authDir := t.TempDir()
-	filePath := filepath.Join(authDir, "gemini-user@example.com-project-a.json")
-	if errWrite := os.WriteFile(filePath, []byte(`{"type":"gemini","email":"user@example.com","project_id":"project-a"}`), 0o600); errWrite != nil {
+	filePath := filepath.Join(authDir, "antigravity-user@example.com-project-a.json")
+	if errWrite := os.WriteFile(filePath, []byte(`{"type":"antigravity","email":"user@example.com","project_id":"project-a"}`), 0o600); errWrite != nil {
 		t.Fatalf("failed to write auth file: %v", errWrite)
 	}
 
@@ -73,7 +71,6 @@ func TestListAuthFilesFromDisk_IncludesProjectID(t *testing.T) {
 
 func TestListAuthFiles_IncludesWebsocketsFromManager(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
-	gin.SetMode(gin.TestMode)
 
 	authDir := t.TempDir()
 	fileName := "codex-user@example.com-pro.json"
@@ -111,7 +108,6 @@ func TestListAuthFiles_IncludesWebsocketsFromManager(t *testing.T) {
 
 func TestListAuthFilesFromDisk_IncludesWebsockets(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
-	gin.SetMode(gin.TestMode)
 
 	authDir := t.TempDir()
 	filePath := filepath.Join(authDir, "codex-user@example.com-pro.json")

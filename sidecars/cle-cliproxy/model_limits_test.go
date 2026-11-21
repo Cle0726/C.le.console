@@ -70,8 +70,8 @@ func TestWorkbuddyTokenLimitsRespectAliasesPrefixesAndKeyAccountScope(t *testing
 
 func TestKnownProviderMaximaReplaceGenericDefaultsWithoutErasingThemWithNull(t *testing.T) {
 	m := &manifest{Accounts: []accountSpec{
-		{ID: "claude", Provider: "claude", Models: []string{"claude-sonnet-4-6", "claude-opus-5-5"},
-			ModelLimits: map[string]modelTokenLimits{"claude-sonnet-4-6": {}}},
+		{ID: "claude", Provider: "claude", Models: []string{"claude-sonnet-5-5", "claude-opus-5-5"},
+			ModelLimits: map[string]modelTokenLimits{"claude-sonnet-5-5": {}}},
 	}}
 	for _, id := range m.Accounts[0].Models {
 		if got := tokenLimitsForModel(m, nil, id); got.MaxInputTokens != 1000000 || got.MaxOutputTokens != 128000 {

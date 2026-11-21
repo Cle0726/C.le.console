@@ -4,40 +4,50 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // StripVertexOpenAIResponsesToolCallIDs removes OpenAI Responses call IDs that
 // Vertex rejects in Gemini functionCall/functionResponse payloads.
 func StripVertexOpenAIResponsesToolCallIDs(payload []byte, sourceFormat string) []byte {
-	if !strings.EqualFold(strings.TrimSpace(sourceFormat), "openai-response") {
+	if len(payload) == 0 || !strings.EqualFold(strings.TrimSpace(sourceFormat), "openai-response") {
 		return payload
 	}
+	doc := ojson.NewDoc(payload)
+	if !StripVertexOpenAIResponsesToolCallIDsDoc(doc, sourceFormat) {
+		return payload
+	}
+	return doc.Bytes()
+}
 
-	contents := gjson.GetBytes(payload, "contents")
+// StripVertexOpenAIResponsesToolCallIDsDoc removes OpenAI Responses call IDs that
+// Vertex rejects in Gemini functionCall/functionResponse payloads in place on doc.
+func StripVertexOpenAIResponsesToolCallIDsDoc(doc *ojson.Doc, sourceFormat string) bool {
+	if doc == nil || doc.Len() == 0 || !strings.EqualFold(strings.TrimSpace(sourceFormat), "openai-response") {
+		return false
+	}
+
+	contents := doc.Get("contents")
 	if !contents.IsArray() {
-		return payload
+		return false
 	}
 
-	out := payload
-	for contentIndex, content := range contents.Array() {
+	changed := false
+	for cIdx, content := range contents.Array() {
 		parts := content.Get("parts")
 		if !parts.IsArray() {
 			continue
 		}
-		for partIndex, part := range parts.Array() {
-			if part.Get("functionCall.id").Exists() {
-				if updated, errDelete := sjson.DeleteBytes(out, fmt.Sprintf("contents.%d.parts.%d.functionCall.id", contentIndex, partIndex)); errDelete == nil {
-					out = updated
+		for pIdx, part := range parts.Array() {
+			for _, field := range []string{"functionCall.id", "functionResponse.id"} {
+				if !part.Get(field).Exists() {
+					continue
 				}
-			}
-			if part.Get("functionResponse.id").Exists() {
-				if updated, errDelete := sjson.DeleteBytes(out, fmt.Sprintf("contents.%d.parts.%d.functionResponse.id", contentIndex, partIndex)); errDelete == nil {
-					out = updated
+				if errDel := doc.Delete(fmt.Sprintf("contents.%d.parts.%d.%s", cIdx, pIdx, field)); errDel == nil {
+					changed = true
 				}
 			}
 		}
 	}
-	return out
+	return changed
 }
