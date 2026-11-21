@@ -439,6 +439,12 @@ func (s *Service) registerOpenAICompatProviderExecutor(providerKey string, auth 
 	}
 	compatExecutor := executor.NewOpenAICompatExecutor(providerKey, cfg)
 	nextExecutor := s.wrapOpenAICompatIfPluginAuth(compatExecutor, auth, cfg)
+	// C.le: an adapter the embedding application registered for this provider
+	// (WorkBuddy) must not be swapped for the bare native executor, which would
+	// send the internal placeholder key upstream.
+	if existingExecutor, hasExecutor := s.coreManager.Executor(providerKey); hasExecutor && executorSurvivesRebind(existingExecutor) {
+		return
+	}
 	if !forceReplace {
 		if existingExecutor, hasExecutor := s.coreManager.Executor(providerKey); hasExecutor {
 			decisionExisting := existingExecutor

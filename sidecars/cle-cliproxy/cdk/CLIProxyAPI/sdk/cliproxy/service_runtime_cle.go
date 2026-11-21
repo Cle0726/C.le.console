@@ -17,6 +17,16 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// executorSurvivesRebind reports whether an executor registered by the embedding
+// application must outlive the service's executor rebinding (startup, credential
+// updates, config reloads). Since v8 a non-bare OpenAI-compat executor is replaced
+// by a fresh native one on those events; an adapter that signs its own requests
+// (the WorkBuddy credential bridge) opts out by implementing SurvivesExecutorRebind.
+func executorSurvivesRebind(existing coreauth.ProviderExecutor) bool {
+	keeper, ok := existing.(interface{ SurvivesExecutorRebind() bool })
+	return ok && keeper.SurvivesExecutorRebind()
+}
+
 // StartRuntime starts only the embedded execution runtime without exposing the
 // CLIProxyAPI HTTP server. It blocks until ctx is cancelled.
 func (s *Service) StartRuntime(ctx context.Context) error {
