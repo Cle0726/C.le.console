@@ -78,12 +78,26 @@ jobs:
       - run: npm run build
       - name: Test subscription routing and update proxy
         shell: pwsh
+        env:
+          # The sidecar was built above; do not rebuild it for the test binary.
+          CLE_SKIP_CLIPROXY_BUILD: '1'
         run: |
           $ErrorActionPreference = 'Stop'
-          cargo test --release -p cle-console --lib modules::subscription_proxy::tests -- --test-threads=1
-          if ($LASTEXITCODE -ne 0) { throw 'Subscription routing tests failed' }
-          cargo test --release -p cle-console --lib app_updates::tests -- --test-threads=1
-          if ($LASTEXITCODE -ne 0) { throw 'Update proxy tests failed' }
+          # The lib test executable carries no Windows application manifest, so
+          # the dialog dependencies fail to load comctl32 v6 at start-up
+          # (STATUS_ENTRYPOINT_NOT_FOUND, 0xc0000139). `cargo test` cannot add
+          # the manifest to only that binary, so link it with `cargo rustc`
+          # (rustc args apply to this one target) and run the executable.
+          $dependency = "/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
+          cargo rustc --locked -p cle-console --lib --profile test -- -C link-arg=/MANIFEST:EMBED -C "link-arg=$dependency"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not build the lib test executable' }
+          $exe = Get-ChildItem target/debug/deps -Filter 'antigravity_cle_console_lib-*.exe' |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $exe) { throw 'Lib test executable was not produced' }
+          foreach ($filter in 'modules::subscription_proxy::tests', 'app_updates::tests') {
+            & $exe.FullName $filter --test-threads=1
+            if ($LASTEXITCODE -ne 0) { throw "Tests failed: $filter" }
+          }
       - name: Build signed Windows updater
         run: npm run tauri -- build --config src-tauri/tauri.updater.conf.json --bundles nsis
 
