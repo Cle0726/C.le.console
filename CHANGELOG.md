@@ -2,6 +2,12 @@
 
 本文件记录 C.le.控制台的重要功能变化。正式发布版本使用语义化版本号；尚未生成安装包的源码更新归入“未发布”。
 
+## 1.1.55
+
+- 号池内核（cle-cliproxy 内置的 CLIProxyAPI）从 v7.1.22 升级到上游最新的 v8.0.80，带上了这半年上游的修复，包括 Antigravity 客户端版本 2.33.0、令牌刷新的连接方式、违反服务条款账号自动停用、流式中断处理等；C.le 自己的功能（API Key 绑定账号、GPT Image 2 主模型与回退、Codex Agent Identity、Veo 视频、xAI 视频、流式超时设置等）全部保留。
+- Gemini CLI 账号：上游 v8 去掉了内置的 Gemini CLI 支持，改为插件。C.le 把官方插件直接编进号池，不需要另装文件；过期的访问令牌会自动刷新。没有 project_id 的账号会明确提示，而不是只返回 Google 的 403。
+- Antigravity 授权多申请 `aicode` 权限，与上游一致。
+
 ## 1.1.54
 
 - Antigravity 账号 JSON / 文件导入：国内网络连不上 Google 时不再把账号悄悄丢掉（以前会显示「成功导入 0 个」），改为先离线保存 refresh_token，等订阅节点或全局代理可用后自动刷新；JSON 里仍有效的 access_token（如 CLIProxyAPI 导出的凭据）直接沿用。Google 明确拒绝的账号会列出原因，一个都没导入成功时报错。
