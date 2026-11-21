@@ -73,6 +73,12 @@ jobs:
           New-Item -ItemType Directory -Force sidecars/cockpit-cliproxy/bin | Out-Null
           Copy-Item $source.FullName sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe -Force
 
+      - name: Test sidecar adapters
+        working-directory: sidecars/cle-cliproxy
+        env:
+          CGO_ENABLED: '0'
+        run: go test -count=1 .
+
       - run: npm run typecheck
       # Release-mode Rust tests embed frontendDist; a clean runner has no dist yet.
       - run: npm run build

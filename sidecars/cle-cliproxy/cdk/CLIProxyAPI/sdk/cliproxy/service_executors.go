@@ -217,6 +217,13 @@ func (s *Service) registerExecutor(exec coreauth.ProviderExecutor) {
 	if s == nil || s.coreManager == nil || exec == nil {
 		return
 	}
+	// C.le: an adapter the embedding application registered itself (WorkBuddy,
+	// Kiro/Copilot/Claude credential bridges) must not be swapped for the bare
+	// native executor when the service rebinds executors; the bare one would
+	// call upstream with the internal placeholder key.
+	if existing, found := s.coreManager.Executor(strings.ToLower(strings.TrimSpace(exec.Identifier()))); found && existing != exec && executorSurvivesRebind(existing) {
+		return
+	}
 	owned := exec
 	if s.executorWrapper != nil {
 		if wrapped := s.executorWrapper(strings.ToLower(strings.TrimSpace(exec.Identifier())), exec); wrapped != nil {
@@ -439,12 +446,6 @@ func (s *Service) registerOpenAICompatProviderExecutor(providerKey string, auth 
 	}
 	compatExecutor := executor.NewOpenAICompatExecutor(providerKey, cfg)
 	nextExecutor := s.wrapOpenAICompatIfPluginAuth(compatExecutor, auth, cfg)
-	// C.le: an adapter the embedding application registered for this provider
-	// (WorkBuddy) must not be swapped for the bare native executor, which would
-	// send the internal placeholder key upstream.
-	if existingExecutor, hasExecutor := s.coreManager.Executor(providerKey); hasExecutor && executorSurvivesRebind(existingExecutor) {
-		return
-	}
 	if !forceReplace {
 		if existingExecutor, hasExecutor := s.coreManager.Executor(providerKey); hasExecutor {
 			decisionExisting := existingExecutor

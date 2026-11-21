@@ -21,6 +21,10 @@ const managedCredentialHeader = "X-Cle-Managed-Credential-URL"
 // Selection/retries/translation stay in CLIProxyAPI; C.le owns account tokens.
 type managedNativeExecutor struct{ coreauth.ProviderExecutor }
 
+// SurvivesExecutorRebind keeps v8's executor registry from replacing the credential
+// bridge wrapper with the bare native executor when it rebinds executors.
+func (e *managedNativeExecutor) SurvivesExecutorRebind() bool { return e != nil }
+
 func newManagedNativeExecutor(provider string, cfg *config.Config) coreauth.ProviderExecutor {
 	var native coreauth.ProviderExecutor
 	switch provider {
