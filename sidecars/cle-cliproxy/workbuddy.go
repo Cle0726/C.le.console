@@ -39,6 +39,25 @@ func newWorkbuddyExecutor(cfg *config.Config) *workbuddyExecutor {
 		transports: newSidecarRoundTripperProvider(), proxy: cfg.ProxyURL}
 }
 
+// ForAPIKey is what v8's conductor calls on the picked executor for every
+// API-key auth (all WorkBuddy accounts) right before Execute. The promoted
+// OpenAICompatExecutor.ForAPIKey would return a scoped copy of the bare inner
+// executor and silently drop this adapter, so requests reached WorkBuddy with the
+// internal placeholder key and every account answered 401. Scope the inner
+// executor but keep the adapter around it.
+func (e *workbuddyExecutor) ForAPIKey() coreauth.ProviderExecutor {
+	inner, ok := e.OpenAICompatExecutor.ForAPIKey().(*runtimeexecutor.OpenAICompatExecutor)
+	if !ok {
+		return e
+	}
+	return &workbuddyExecutor{OpenAICompatExecutor: inner, transports: e.transports, proxy: e.proxy}
+}
+
+// SurvivesExecutorRebind keeps v8's executor registry from replacing this adapter
+// with the bare native OpenAI-compat executor when it rebinds executors (startup,
+// credential updates, config reloads).
+func (e *workbuddyExecutor) SurvivesExecutorRebind() bool { return e != nil }
+
 func (e *workbuddyExecutor) prepare(ctx context.Context, auth *coreauth.Auth) (context.Context, *coreauth.Auth) {
 	copy := auth.Clone()
 	if copy.ProxyURL == "" {

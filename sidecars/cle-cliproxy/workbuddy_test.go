@@ -246,14 +246,30 @@ func TestWorkbuddyRuntimeRotatesSeparateManagedCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer runtime.Stop()
-	for i := 0; i < 2; i++ {
-		_, err := runtime.Execute(context.Background(), []string{"workbuddy"}, executor.Request{Model: "workbuddy/hy3", Payload: []byte(`{"model":"workbuddy/hy3","messages":[{"role":"user","content":"hello"}]}`)}, executor.Options{SourceFormat: translator.FromString("openai")})
-		if err != nil {
-			t.Fatal(err)
+	// Round 1 is the freshly started runtime, round 2 follows the service
+	// rebinding its executors (startup, credential update, config reload).
+	for round := 0; round < 2; round++ {
+		if round == 1 {
+			runtime.service.RebindRuntimeExecutors()
+			selected = nil
 		}
-	}
-	if len(selected) != 2 || selected[0] == selected[1] {
-		t.Fatalf("accounts did not rotate independently: %v", selected)
+		for i := 0; i < 2; i++ {
+			_, err := runtime.Execute(context.Background(), []string{"workbuddy"}, executor.Request{Model: "workbuddy/hy3", Payload: []byte(`{"model":"workbuddy/hy3","messages":[{"role":"user","content":"hello"}]}`)}, executor.Options{SourceFormat: translator.FromString("openai")})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(selected) != 2 || selected[0] == selected[1] {
+			t.Fatalf("round %d: accounts did not rotate independently: %v", round, selected)
+		}
+		// Upstream must see each account's own credential from the bridge, never the
+		// internal placeholder key (v8 hands API-key auths a scoped copy of the bare
+		// executor, which silently skipped this adapter and got 401 from every account).
+		for _, got := range selected {
+			if got != "Bearer account-a" && got != "Bearer account-b" {
+				t.Fatalf("round %d: upstream saw %q instead of an account credential: %v", round, got, selected)
+			}
+		}
 	}
 }
 

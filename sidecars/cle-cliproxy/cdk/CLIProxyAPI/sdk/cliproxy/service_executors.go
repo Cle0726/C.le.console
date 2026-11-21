@@ -217,6 +217,13 @@ func (s *Service) registerExecutor(exec coreauth.ProviderExecutor) {
 	if s == nil || s.coreManager == nil || exec == nil {
 		return
 	}
+	// C.le: an adapter the embedding application registered itself (WorkBuddy,
+	// Kiro/Copilot/Claude credential bridges) must not be swapped for the bare
+	// native executor when the service rebinds executors; the bare one would
+	// call upstream with the internal placeholder key.
+	if existing, found := s.coreManager.Executor(strings.ToLower(strings.TrimSpace(exec.Identifier()))); found && existing != exec && executorSurvivesRebind(existing) {
+		return
+	}
 	owned := exec
 	if s.executorWrapper != nil {
 		if wrapped := s.executorWrapper(strings.ToLower(strings.TrimSpace(exec.Identifier())), exec); wrapped != nil {

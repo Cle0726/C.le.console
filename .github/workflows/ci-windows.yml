@@ -24,6 +24,18 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sidecars/cle-cliproxy/go.mod
+          cache-dependency-path: sidecars/cle-cliproxy/go.sum
+
+      - name: Test sidecar adapters
+        working-directory: sidecars/cle-cliproxy
+        env:
+          CGO_ENABLED: '0'
+        run: go test -count=1 .
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -45,7 +57,8 @@ jobs:
           $paths = @(
             'sidecars/cle-cliproxy/bin/cle-cliproxy-x86_64-pc-windows-msvc.exe',
             'sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe',
-            'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe'
+            'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe',
+            'sidecars/mihomo/bin/mihomo-x86_64-pc-windows-msvc.exe'
           )
 
           foreach ($path in $paths) {
