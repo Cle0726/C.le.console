@@ -58,6 +58,7 @@ jobs:
             'sidecars/cle-cliproxy/bin/cle-cliproxy-x86_64-pc-windows-msvc.exe',
             'sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe',
             'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe',
+            'sidecars/aws-quick/bin/cle-aws-quick-x86_64-pc-windows-msvc.exe',
             'sidecars/mihomo/bin/mihomo-x86_64-pc-windows-msvc.exe'
           )
 

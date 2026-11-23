@@ -3,6 +3,7 @@
     "externalBin": [
       "../sidecars/cle-cliproxy/bin/cle-cliproxy",
       "../sidecars/jimeng-api/bin/jimeng-api",
+      "../sidecars/aws-quick/bin/cle-aws-quick",
       "../sidecars/agent2api/bin/cle-agent-bridge"
     ],
     "resources": {

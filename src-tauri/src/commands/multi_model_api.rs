@@ -27,6 +27,36 @@ pub async fn extension_provider_login_finish(app: tauri::AppHandle, state: Strin
 }
 
 #[tauri::command]
+pub async fn aws_quick_list_accounts() -> Result<Vec<crate::modules::aws_quick::AwsQuickAccount>, String> {
+    Ok(crate::modules::aws_quick::list())
+}
+#[tauri::command]
+pub async fn aws_quick_login_start(enterprise: bool, region: String) -> Result<crate::modules::aws_quick::AwsQuickLogin, String> {
+    tokio::task::spawn_blocking(move || crate::modules::aws_quick::login_start(enterprise, region)).await.map_err(|_| "登录启动中断".to_string())?
+}
+#[tauri::command]
+pub async fn aws_quick_login_status(login_id: String) -> Result<crate::modules::aws_quick::AwsQuickLogin, String> {
+    crate::modules::aws_quick::login_status(&login_id)
+}
+#[tauri::command]
+pub async fn aws_quick_login_cancel(login_id: String) -> Result<(), String> {
+    crate::modules::aws_quick::login_cancel(&login_id); Ok(())
+}
+#[tauri::command]
+pub async fn aws_quick_remove_account(id: String) -> Result<MultiModelApiState, String> {
+    crate::modules::aws_quick::remove(&id)?;
+    multi_model_api::sync_aws_quick_accounts().await
+}
+#[tauri::command]
+pub async fn aws_quick_quota(id: String) -> Result<Value, String> {
+    crate::modules::aws_quick::quota(&id).await
+}
+#[tauri::command]
+pub async fn multi_model_api_sync_aws_quick_accounts() -> Result<MultiModelApiState, String> {
+    multi_model_api::sync_aws_quick_accounts().await
+}
+
+#[tauri::command]
 pub async fn multi_model_api_sync_extension_accounts() -> Result<MultiModelApiState, String> {
     multi_model_api::sync_extension_accounts().await
 }

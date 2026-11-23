@@ -3,7 +3,7 @@ use crate::modules::atomic_write::{parse_json_with_auto_restore, write_string_at
 use crate::modules::multi_model_xai::{self, XaiAccountUsage, XaiOAuthStartResponse};
 use crate::modules::{
     account, claude_account, codex_local_access, gemini_account, logger, process,
-    workbuddy_account, workbuddy_api, workbuddy_oauth, managed_provider_api, kiro_account, github_copilot_account, agent_provider_bridge,
+    workbuddy_account, workbuddy_api, workbuddy_oauth, managed_provider_api, kiro_account, github_copilot_account, agent_provider_bridge, aws_quick,
 };
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
@@ -1445,7 +1445,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
             _ => {
                 providers.insert(provider.clone());
                 let compat_models = models.iter().flat_map(|model| {
-                    if account.source.starts_with("agent2api:") {
+                    if account.source.starts_with("agent2api:") || account.source.starts_with(aws_quick::SOURCE_PREFIX) {
                         let upstream = model.id.strip_prefix(&format!("{provider}/")).unwrap_or(&model.id);
                         let mut entries = vec![json!({"name": upstream, "alias": model.id})];
                         if !model.alias.is_empty() { entries.push(json!({"name": upstream, "alias": model.alias})); }
@@ -1457,7 +1457,7 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                     "priority": account.priority,
                     "prefix": account.prefix,
                     "base-url": account.base_url,
-                    "api-key-entries": [{"api-key": key, "proxy-url": if account.source.starts_with("agent2api:") { "direct" } else { &account_proxy }}],
+                    "api-key-entries": [{"api-key": key, "proxy-url": if account.source.starts_with("agent2api:") || account.source.starts_with(aws_quick::SOURCE_PREFIX) { "direct" } else { &account_proxy }}],
                     "models": compat_models,
                     "headers": account.headers,
                     "disable-cooling": true
@@ -4639,7 +4639,7 @@ fn upstream_models_url(account: &MultiModelAccount) -> Option<String> {
     let provider = normalize_provider(&account.provider);
     if matches!(
         provider.as_str(),
-        "antigravity" | "claude-web" | "doubao-seedance"
+        "antigravity" | "claude-web" | "doubao-seedance" | "aws-quick"
     ) {
         return None;
     }
@@ -5400,10 +5400,52 @@ pub async fn sync_managed_accounts() -> Result<MultiModelApiState, String> {
         logger::log_warn(&format!("[MultiModelAPI] 豆包对话账号同步: {error}"));
     }
     import_native_routes(&mut config).await?;
+    if let Err(error) = import_aws_quick_routes(&mut config).await {
+        logger::log_warn(&format!("[MultiModelAPI] AWS Quick 账号同步: {error}"));
+    }
     if config.accounts.iter().any(|route| route.source.starts_with("agent2api:")) {
         import_extension_routes(&mut config, false).await?;
     }
     save_config(config).await
+}
+
+pub async fn sync_aws_quick_accounts() -> Result<MultiModelApiState, String> {
+    let mut config = load_config()?;
+    import_aws_quick_routes(&mut config).await?;
+    save_config(config).await
+}
+
+fn aws_quick_models() -> Vec<MultiModelDefinition> {
+    aws_quick::MODES.iter().map(|mode| MultiModelDefinition {
+        id: format!("{}/{mode}", aws_quick::PROVIDER), alias: String::new(),
+        capabilities: vec!["text".into(), "reasoning".into()],
+        max_input_tokens: None, max_output_tokens: None, enabled: true,
+    }).collect()
+}
+
+// Every signed-in AWS Quick account is its own local gateway; they share the
+// provider name, so the gateway pools them under aws-quick/<mode>.
+async fn import_aws_quick_routes(config: &mut MultiModelApiConfig) -> Result<(), String> {
+    let accounts = aws_quick::ensure_all().await?;
+    let sources = accounts.iter().map(|account| format!("{}{}", aws_quick::SOURCE_PREFIX, account.id)).collect::<BTreeSet<_>>();
+    config.accounts.retain(|route| !route.source.starts_with(aws_quick::SOURCE_PREFIX) || sources.contains(&route.source));
+    for account in accounts {
+        if account.port == 0 || account.api_key.is_empty() { continue; }
+        let source = format!("{}{}", aws_quick::SOURCE_PREFIX, account.id);
+        let name = format!("AWS Quick{} · {}", if account.enterprise { " 企业" } else { "" },
+            if account.account_id.is_empty() { &account.id } else { &account.account_id });
+        let base_url = format!("http://127.0.0.1:{}/v1", account.port);
+        if let Some(route) = config.accounts.iter_mut().find(|route| route.source == source) {
+            route.name = name; route.base_url = base_url; route.api_key = account.api_key;
+            merge_workbuddy_models(&mut route.models, aws_quick_models());
+        } else {
+            config.accounts.push(MultiModelAccount { id: format!("cle-aws-quick-{}", account.id), name,
+                provider: aws_quick::PROVIDER.into(), auth_mode: "api_key".into(), base_url, api_key: account.api_key,
+                cli_path: String::new(), cli_app: String::new(), cli_profile: String::new(), credential_json: None, proxy_url: String::new(),
+                prefix: String::new(), priority: 0, headers: BTreeMap::new(), models: aws_quick_models(), enabled: true, source });
+        }
+    }
+    Ok(())
 }
 
 pub async fn sync_extension_accounts() -> Result<MultiModelApiState, String> {
@@ -6066,7 +6108,7 @@ mod tests {
         parent.name = "Claude · fixture".into();
         parent.models = vec![MultiModelDefinition {
             id: "claude-haiku-5-5".into(), alias: "old-alias".into(),
-            capabilities: vec!["text".into(), "vision".into(), "reasoning".into()],
+            capabilities: vec!["text".into(), "reasoning".into()],
             max_input_tokens: Some(100_000), max_output_tokens: Some(8192), enabled: true,
         }];
         let original = serde_json::to_value(&parent).unwrap();

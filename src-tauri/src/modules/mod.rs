@@ -1,5 +1,6 @@
 pub mod account;
 pub mod agent_provider_bridge;
+pub mod aws_quick;
 pub mod app_lifecycle;
 pub mod extension_login;
 pub(crate) mod model_capacity;

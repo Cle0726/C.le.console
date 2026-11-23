@@ -66,6 +66,8 @@ jobs:
           go build -buildvcs=false -trimpath -ldflags '-s -w' -o bin/cle-cliproxy-x86_64-pc-windows-msvc.exe .
           Pop-Location
           ./scripts/build-jimeng-sidecar.ps1
+          node scripts/build-aws-quick-sidecar.mjs x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw 'Could not build the AWS Quick sidecar' }
           $extractRoot = Join-Path $env:RUNNER_TEMP 'cle-console-portable-baseline'
           Expand-Archive release/C.le.console_1.1.4_x64_portable.zip $extractRoot -Force
           $source = Get-ChildItem $extractRoot -Recurse -File -Filter cockpit-cliproxy.exe | Select-Object -First 1

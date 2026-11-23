@@ -2,6 +2,12 @@
 
 本文件记录 C.le.控制台的重要功能变化。正式发布版本使用语义化版本号；尚未生成安装包的源码更新归入“未发布”。
 
+## 1.1.57
+
+- 多模型 API 新增 **AWS Quick（Amazon Quick）** 账号：在「API 服务 → AWS Quick」或账号菜单「添加 AWS Quick 账号」里用浏览器登录，个人账号和企业账号（IAM Identity Center，填区域）都支持，可重复登录添加多个账号。账号自动接入 API 账号池，用同一个网关地址和 Key 调用 `aws-quick/smart`、`aws-quick/balanced`、`aws-quick/fast`、`aws-quick/auto`，多个账号轮流使用，OpenAI / Anthropic / Responses 三种接口都能用；可在页面查看每个账号的额度。
+- 由开源项目 [magpie-AWS-Quick-bridge](https://github.com/DaBinBinah/magpie-AWS-Quick-bridge)（GPL-3.0，原样收录）作为独立进程提供，每个账号一个只监听 127.0.0.1 的本机网关；登录凭证只保存在本机。非 Amazon 官方项目，请只使用自己的或经授权的账号。
+- 登录时浏览器提示 `Your session has expired`：请用无痕窗口打开登录地址，或清除 `signin.aws` 的 Cookie 后再登录。
+
 ## 1.1.56
 
 - **紧急修复**：1.1.55 里 WorkBuddy 账号的所有模型调用都会返回 401（`401 Authorization Required`），经 API 池使用 WorkBuddy 的客户端（例如碧琪）全部不可用。原因是号池内核升到 v8 后，C.le 自己的 WorkBuddy 适配器被 v8 自带的普通执行器绕过，请求带着内部占位 Key 直接打到 WorkBuddy。已修复，已装 1.1.55 的用户请更新到本版本。

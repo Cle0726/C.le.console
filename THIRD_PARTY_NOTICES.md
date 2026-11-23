@@ -1,5 +1,16 @@
 # Third-party notices
 
+## magpie-AWS-Quick-bridge (AWS Quick accounts)
+
+The AWS Quick (Amazon Quick) accounts in the multi-model API are served by the
+unmodified sources of
+[`DaBinBinah/magpie-AWS-Quick-bridge`](https://github.com/DaBinBinah/magpie-AWS-Quick-bridge)
+0.3.11 (commit `5a8d414`), vendored in `third_party/magpie-aws-quick-bridge`
+and driven by `sidecars/aws-quick/entry.mjs`. Both are licensed under the
+GNU General Public License v3.0 and ship as a separate executable
+(`cle-aws-quick`) that C.le.控制台 talks to only over loopback HTTP and stdout.
+Copyright © 2026 DaBinBinah. See `sidecars/aws-quick/NOTICE.md`.
+
 ## doubao2api protocol reference
 
 Parts of the Doubao web login and Samantha video-generation flow in

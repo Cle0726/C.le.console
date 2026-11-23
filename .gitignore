@@ -79,3 +79,5 @@ __pycache__/
 
 # Installer formats not committed unless copied deliberately to release/
 *.dmg
+sidecars/aws-quick/bin/
+sidecars/aws-quick/build/
