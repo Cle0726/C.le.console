@@ -988,6 +988,13 @@ func buildCodexClientModelsResponse(models []string) gin.H {
 			if isHiddenCodexClientModel(slug) {
 				model["visibility"] = "hide"
 			}
+			// C.le serves every listed model over the API; the remote Codex
+			// template (refreshed at runtime) may mark its source model as
+			// app-only, which would make Codex hide it for API-key users.
+			model["supported_in_api"] = true
+			if shell, _ := model["shell_type"].(string); shell == "" {
+				model["shell_type"] = "shell_command"
+			}
 			model["max_context_window"] = 1000000
 			model["priority"] = 1000 + index
 			model["additional_speed_tiers"] = []any{}

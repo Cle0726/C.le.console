@@ -7,6 +7,7 @@
 - 多模型 API 新增 **AWS Quick（Amazon Quick）** 账号：在「API 服务 → AWS Quick」或账号菜单「添加 AWS Quick 账号」里用浏览器登录，个人账号和企业账号（IAM Identity Center，填区域）都支持，可重复登录添加多个账号。账号自动接入 API 账号池，用同一个网关地址和 Key 调用 `aws-quick/smart`、`aws-quick/balanced`、`aws-quick/fast`、`aws-quick/auto`，多个账号轮流使用，OpenAI / Anthropic / Responses 三种接口都能用；可在页面查看每个账号的额度。
 - 由开源项目 [magpie-AWS-Quick-bridge](https://github.com/DaBinBinah/magpie-AWS-Quick-bridge)（GPL-3.0，原样收录）作为独立进程提供，每个账号一个只监听 127.0.0.1 的本机网关；登录凭证只保存在本机。非 Amazon 官方项目，请只使用自己的或经授权的账号。
 - 登录时浏览器提示 `Your session has expired`：请用无痕窗口打开登录地址，或清除 `signin.aws` 的 Cookie 后再登录。
+- 修复：上游 Codex 模型目录在线更新后把 `gpt-5.5` 标成「API 不可用」，Codex 客户端经 C.le API 连接时可能看不到 GPT 模型。C.le 提供给 Codex 的模型目录现在固定标记为 API 可用。
 
 ## 1.1.56
 
