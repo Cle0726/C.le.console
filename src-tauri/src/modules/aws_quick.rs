@@ -480,8 +480,6 @@ mod tests {
     fn models_declare_vision_thinking_and_limits() {
         let models = super::super::multi_model_api::aws_quick_models_for_test();
         assert!(models.iter().all(|m| m.capabilities.iter().any(|c| c == "vision") && m.capabilities.iter().any(|c| c == "reasoning")));
-        assert!(models.iter().all(|m| m.max_input_tokens == Some(1_000_000)));
-        assert_eq!(models.iter().find(|m| m.id == "aws-quick/fast").and_then(|m| m.max_output_tokens), Some(32_000));
-        assert_eq!(models.iter().find(|m| m.id == "aws-quick/smart").and_then(|m| m.max_output_tokens), Some(64_000));
+        assert!(models.iter().all(|m| m.max_input_tokens == Some(900_000) && m.max_output_tokens == Some(128_000)));
     }
 }

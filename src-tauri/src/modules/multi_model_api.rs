@@ -5422,15 +5422,19 @@ pub async fn sync_aws_quick_accounts() -> Result<MultiModelApiState, String> {
     save_config(config).await
 }
 
-// What the bridge itself declares for each mode (plugin/settings.mjs): image
-// input, thinking levels (low/medium/high, sent per request as
-// reasoning_effort), the 1M context Amazon Quick reports
-// with its usage, and its estimated output limits.
+// Amazon Quick's modes run Claude models (seen in its usage events on a real
+// account, 2026-11: fast = Haiku 5.5, balanced = Sonnet 5.5, smart and auto =
+// Opus 5.5), all with a 1M context and 128K output. Quick adds about 70K
+// tokens of its own prompt to every turn, so clients get 900K. Images and
+// thinking levels (reasoning_effort low/medium/high) pass through the bridge.
+const AWS_QUICK_MAX_INPUT_TOKENS: u32 = 900_000;
+const AWS_QUICK_MAX_OUTPUT_TOKENS: u32 = 128_000;
+
 fn aws_quick_models() -> Vec<MultiModelDefinition> {
     aws_quick::MODES.iter().map(|mode| MultiModelDefinition {
         id: format!("{}/{mode}", aws_quick::PROVIDER), alias: String::new(),
         capabilities: vec!["text".into(), "vision".into(), "reasoning".into()],
-        max_input_tokens: Some(1_000_000), max_output_tokens: Some(if *mode == "fast" { 32_000 } else { 64_000 }), enabled: true,
+        max_input_tokens: Some(AWS_QUICK_MAX_INPUT_TOKENS), max_output_tokens: Some(AWS_QUICK_MAX_OUTPUT_TOKENS), enabled: true,
     }).collect()
 }
 
