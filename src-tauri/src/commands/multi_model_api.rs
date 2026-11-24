@@ -48,6 +48,12 @@ pub async fn aws_quick_remove_account(id: String) -> Result<MultiModelApiState, 
     multi_model_api::sync_aws_quick_accounts().await
 }
 #[tauri::command]
+pub async fn aws_quick_import(text: String, tenant_url: String) -> Result<Value, String> {
+    let result = tokio::task::spawn_blocking(move || crate::modules::aws_quick::import(&text, &tenant_url)).await.map_err(|_| "导入中断".to_string())??;
+    let state = multi_model_api::sync_aws_quick_accounts().await?;
+    Ok(serde_json::json!({ "imported": result.imported, "warnings": result.warnings, "failed": result.failed, "state": state }))
+}
+#[tauri::command]
 pub async fn aws_quick_quota(id: String) -> Result<Value, String> {
     crate::modules::aws_quick::quota(&id).await
 }

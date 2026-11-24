@@ -2,6 +2,13 @@
 
 本文件记录 C.le.控制台的重要功能变化。正式发布版本使用语义化版本号；尚未生成安装包的源码更新归入“未发布”。
 
+## 1.1.58
+
+- **修复**：1.1.57 的 AWS Quick 账号无法登录、本机网关和额度查询也都启动不了。原因是 C.le 调用 AWS Quick 组件时把参数顺序写反了（`--home <目录> login`，组件要求 `login --home <目录>`），组件只报用法错误就退出。现在按正确顺序调用；组件本身也改成两种顺序都接受。
+- AWS Quick 新增 **导入 JSON / Token**：可以粘贴或选择 account.json（C.le、magpie-AWS-Quick-bridge 导出的都行，`access_token` / `refresh_token` / `client_id` 等写法也认，多个账号放进 JSON 数组即可批量导入），也可以只粘贴 access token 加账号的 tenantUrl。导入前会先向 Amazon Quick 验证并读出账号邮箱；带 refresh token 和 clientId / clientSecret 的账号会自动续期，只有 access token 的到期后需要重新导入或登录。
+- AWS Quick 额度接入「API 服务」的统一 **刷新额度** 和额度显示，与其他账号一致：月度、会话（以及有的话月度超额）的 credits 剩余量和重置时间。网络偶尔断开导致的额度查询失败会自动重试。
+- AWS Quick 模型按 Amazon Quick 实际能力声明：支持图片输入、思考程度（请求里的 `reasoning_effort`：low / medium / high，思考过程放在 `reasoning_content`）、100 万 token 上下文，输出上限 fast 32K、其他 64K。
+
 ## 1.1.57
 
 - 多模型 API 新增 **AWS Quick（Amazon Quick）** 账号：在「API 服务 → AWS Quick」或账号菜单「添加 AWS Quick 账号」里用浏览器登录，个人账号和企业账号（IAM Identity Center，填区域）都支持，可重复登录添加多个账号。账号自动接入 API 账号池，用同一个网关地址和 Key 调用 `aws-quick/smart`、`aws-quick/balanced`、`aws-quick/fast`、`aws-quick/auto`，多个账号轮流使用，OpenAI / Anthropic / Responses 三种接口都能用；可在页面查看每个账号的额度。

@@ -2,10 +2,11 @@
 //! magpie-AWS-Quick-bridge sidecar (GPL-3.0, separate process, loopback only).
 //! Each account has its own folder and its own local gateway; the multi-model
 //! API pools them as OpenAI-compatible upstreams under the shared C.le key.
-use std::{collections::BTreeMap, fs, io::{BufRead, BufReader}, path::{Path, PathBuf}, process::{Child, ChildStdin, Command, Stdio}, sync::{Mutex, OnceLock, atomic::{AtomicBool, Ordering}}, time::Duration};
+use std::{collections::BTreeMap, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, ChildStdin, Command, Stdio}, sync::{Mutex, OnceLock, atomic::{AtomicBool, Ordering}}, time::Duration};
 use serde::Serialize;
 use serde_json::{json, Value};
 use super::config;
+use super::multi_model_api::{MultiModelAccountUsage, MultiModelUsageBucket};
 
 pub const PROVIDER: &str = "aws-quick";
 pub const SOURCE_PREFIX: &str = "cle:aws-quick:";
@@ -61,10 +62,11 @@ fn executable() -> Option<PathBuf> {
         .into_iter().find(|path| path.is_file())
 }
 
-fn command(home: &Path) -> Result<Command, String> {
+/// The sidecar takes its subcommand first: `cle-aws-quick <login|serve|status> --home <dir>`.
+fn command(subcommand: &str, home: &Path) -> Result<Command, String> {
     let exe = executable().ok_or("未找到 AWS Quick 组件（cle-aws-quick），请重新安装 C.le.控制台")?;
     let mut cmd = Command::new(exe);
-    cmd.env("AWS_QUICK_BRIDGE_HOME", home).arg("--home").arg(home);
+    cmd.env("AWS_QUICK_BRIDGE_HOME", home).arg(subcommand).arg("--home").arg(home);
     #[cfg(windows)] { use std::os::windows::process::CommandExt; cmd.creation_flags(0x0800_0000); }
     Ok(cmd)
 }
@@ -135,7 +137,7 @@ pub async fn ensure_all() -> Result<Vec<AwsQuickAccount>, String> {
         let port = account_port(&dir)?;
         // A gateway left over from a previous run serves the same folder: reuse it.
         if healthy(port).await { continue; }
-        let mut child = command(&dir)?.arg("serve").arg("--port").arg(port.to_string())
+        let mut child = command("serve", &dir)?.arg("--port").arg(port.to_string())
             .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
             .map_err(|error| format!("AWS Quick 组件无法启动: {error}"))?;
         let stdin = child.stdin.take();
@@ -194,8 +196,7 @@ pub fn login_start(enterprise: bool, region: String) -> Result<AwsQuickLogin, St
     let pending = root().join("pending").join(&login_id);
     fs::create_dir_all(&pending).map_err(|_| "无法创建登录目录")?;
     protect(&root()); protect(&pending);
-    let mut cmd = command(&pending)?;
-    cmd.arg("login");
+    let mut cmd = command("login", &pending)?;
     if enterprise { cmd.arg("--enterprise"); }
     let region = region.trim();
     if !region.is_empty() {
@@ -239,6 +240,88 @@ pub fn login_start(enterprise: bool, region: String) -> Result<AwsQuickLogin, St
     Ok(info)
 }
 
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsQuickImport {
+    pub imported: Vec<String>,
+    pub warnings: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+/// The accounts in pasted text: one JSON object, a JSON array of them, or a
+/// bare access token. A token only works on its account's own cell, which it
+/// does not name, so `tenant_url` fills in entries that lack one.
+fn import_items(text: &str, tenant_url: &str) -> Result<Vec<Value>, String> {
+    let tenant_url = tenant_url.trim();
+    if !tenant_url.is_empty() && !tenant_url.starts_with("https://") { return Err("tenantUrl 应以 https:// 开头".into()); }
+    let mut items = parse_import(text)?;
+    if !tenant_url.is_empty() {
+        for item in &mut items {
+            let Some(object) = item.as_object_mut() else { continue };
+            if !["tenantUrl", "tenant_url"].iter().any(|key| object.get(*key).and_then(Value::as_str).is_some_and(|v| !v.trim().is_empty())) {
+                object.insert("tenantUrl".into(), Value::String(tenant_url.to_string()));
+            }
+        }
+    }
+    Ok(items)
+}
+
+fn parse_import(text: &str) -> Result<Vec<Value>, String> {
+    let text = text.trim().trim_start_matches('\u{feff}');
+    if text.is_empty() { return Err("请粘贴 account.json 内容或 access token".into()); }
+    if text.starts_with('{') || text.starts_with('[') {
+        return match serde_json::from_str::<Value>(text).map_err(|error| format!("JSON 格式错误: {error}"))? {
+            Value::Array(items) if !items.is_empty() => Ok(items),
+            Value::Array(_) => Err("JSON 数组里没有账号".into()),
+            value => Ok(vec![value]),
+        };
+    }
+    let token = text.strip_prefix("Bearer ").unwrap_or(text).trim();
+    if token.chars().any(char::is_whitespace) { return Err("无法识别：请粘贴 JSON，或单独一个 access token".into()); }
+    Ok(vec![json!({ "access": token })])
+}
+
+fn import_one(item: &Value) -> Result<(String, String), String> {
+    let pending = root().join("pending").join(uuid::Uuid::new_v4().to_string());
+    fs::create_dir_all(&pending).map_err(|_| "无法创建导入目录")?;
+    protect(&root()); protect(&pending);
+    let result = (|| -> Result<(String, String), String> {
+        let mut child = command("import", &pending)?.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
+            .map_err(|error| format!("AWS Quick 组件无法启动: {error}"))?;
+        if let Some(mut stdin) = child.stdin.take() { let _ = stdin.write_all(item.to_string().as_bytes()); }
+        let output = child.wait_with_output().map_err(|error| format!("AWS Quick 导入中断: {error}"))?;
+        let last: Value = String::from_utf8_lossy(&output.stdout).lines().rev()
+            .find_map(|line| serde_json::from_str(line).ok()).unwrap_or(Value::Null);
+        match text(&last, "event").as_str() {
+            "success" => Ok((adopt(&pending)?, text(&last, "warning"))),
+            "error" => Err(text(&last, "message")),
+            _ => Err("AWS Quick 组件没有返回结果，请确认 C.le.控制台 是最新版".to_string()),
+        }
+    })();
+    if result.is_err() { let _ = fs::remove_dir_all(&pending); }
+    result
+}
+
+/// Imports pasted accounts. Amazon Quick checks each token before it is kept;
+/// one bad entry does not stop the others.
+pub fn import(text: &str, tenant_url: &str) -> Result<AwsQuickImport, String> {
+    let items = import_items(text, tenant_url)?;
+    let many = items.len() > 1;
+    let mut out = AwsQuickImport::default();
+    for (index, item) in items.iter().enumerate() {
+        let label = if many { format!("第 {} 个：", index + 1) } else { String::new() };
+        match import_one(item) {
+            Ok((account_id, warning)) => {
+                if !warning.is_empty() { out.warnings.push(format!("{label}{warning}")); }
+                out.imported.push(account_id);
+            }
+            Err(error) => out.failed.push(format!("{label}{error}")),
+        }
+    }
+    if out.imported.is_empty() { return Err(out.failed.join("；")); }
+    Ok(out)
+}
+
 pub fn login_status(login_id: &str) -> Result<AwsQuickLogin, String> {
     logins().lock().map_err(|_| "登录状态被占用")?.get(login_id).map(|login| login.info.clone()).ok_or_else(|| "登录已结束".into())
 }
@@ -261,12 +344,85 @@ pub fn remove(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Plan and quota windows as the sidecar reports them; nothing is invented.
+#[derive(Clone, Default)]
+struct CachedUsage { updated_at: Option<String>, status: String, status_reason: Option<String>, buckets: Vec<MultiModelUsageBucket> }
+
+fn usage_cache() -> &'static Mutex<BTreeMap<String, CachedUsage>> {
+    static CACHE: OnceLock<Mutex<BTreeMap<String, CachedUsage>>> = OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+/// The sidecar's quota windows (credits used of a limit, or a percentage used)
+/// as the shared quota buckets; nothing is invented.
+fn buckets(status: &Value) -> Vec<MultiModelUsageBucket> {
+    let plan = text(status, "plan");
+    status.get("windows").and_then(Value::as_array).into_iter().flatten().filter_map(|window| {
+        let name = text(window, "name");
+        let label = match name.as_str() { "Monthly" => "月度额度", "Session" => "会话额度", "Monthly overage" => "月度超额", other => other }.to_string();
+        let limit = window.get("limit").and_then(Value::as_f64).filter(|limit| *limit > 0.0);
+        let (remaining, total, remaining_percent) = match limit {
+            Some(limit) => {
+                let left = (limit - window.get("amount").and_then(Value::as_f64).unwrap_or(0.0)).max(0.0);
+                (Some(left), Some(limit), ((left / limit) * 100.0).round() as i32)
+            }
+            None => (None, None, (100.0 - window.get("used").and_then(Value::as_f64)?).clamp(0.0, 100.0).round() as i32),
+        };
+        let reset_at = window.get("resetsAt").and_then(Value::as_str).map(str::to_string).or_else(|| {
+            window.get("resetSecs").and_then(Value::as_i64).map(|secs| (chrono::Utc::now() + chrono::Duration::seconds(secs)).to_rfc3339())
+        });
+        Some(MultiModelUsageBucket { id: name.to_ascii_lowercase().replace(' ', "-"),
+            label: if plan.is_empty() { label } else { format!("{plan} · {label}") }, remaining_percent, remaining, total, reset_at })
+    }).collect()
+}
+
+/// Keeps a quota answer for the shared quota view and says whether it was
+/// one; a failed query keeps the last buckets and records why.
+fn cache_quota(id: &str, status: Result<&Value, &str>) -> Result<(), String> {
+    let verdict = match status {
+        Err(error) => Err(("error", error.to_string())),
+        Ok(status) => {
+            let error = text(status, "error");
+            if status.get("signedIn").and_then(Value::as_bool) == Some(false) { Err(("login_required", "AWS Quick 账号未登录，请重新登录或导入".to_string())) }
+            else if status.get("expired").and_then(Value::as_bool) == Some(true) { Err(("login_required", format!("AWS Quick 登录已过期，请重新登录或导入（{error}）"))) }
+            else if !error.is_empty() { Err(("error", format!("AWS Quick 额度查询失败：{error}"))) }
+            else { Ok(buckets(status)) }
+        }
+    };
+    let mut cache = usage_cache().lock().map_err(|_| "额度缓存被占用".to_string())?;
+    let entry = cache.entry(id.to_string()).or_default();
+    match verdict {
+        Ok(buckets) => { *entry = CachedUsage { updated_at: Some(chrono::Utc::now().to_rfc3339()), status: "normal".into(), status_reason: None, buckets }; Ok(()) }
+        Err((status, reason)) => { entry.status = status.into(); entry.status_reason = Some(reason.clone()); Err(reason) }
+    }
+}
+
+/// For the shared quota refresh: fails when Amazon Quick gave no quota.
+pub async fn refresh_quota(id: &str) -> Result<(), String> {
+    match quota_raw(id).await {
+        Ok(status) => cache_quota(id, Ok(&status)),
+        Err(error) => { let _ = cache_quota(id, Err(&error)); Err(error) }
+    }
+}
+
+pub fn usage(id: &str, route_id: &str) -> Option<MultiModelAccountUsage> {
+    let cached = usage_cache().lock().ok()?.get(id).cloned()?;
+    Some(MultiModelAccountUsage { account_id: route_id.into(), updated_at: cached.updated_at, status: cached.status,
+        status_reason: cached.status_reason, buckets: cached.buckets })
+}
+
+/// Plan and quota windows as the sidecar reports them, for the panel; the
+/// answer is also kept for the shared quota view.
 pub async fn quota(id: &str) -> Result<Value, String> {
+    let status = quota_raw(id).await?;
+    let _ = cache_quota(id, Ok(&status));
+    Ok(status)
+}
+
+async fn quota_raw(id: &str) -> Result<Value, String> {
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_hexdigit()) { return Err("账号 ID 无效".into()); }
     let dir = accounts_dir().join(id);
-    let mut cmd = command(&dir)?;
-    cmd.arg("status").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut cmd = command("status", &dir)?;
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     let output = tokio::task::spawn_blocking(move || cmd.output()).await.map_err(|_| "额度查询中断")?
         .map_err(|error| format!("AWS Quick 组件无法启动: {error}"))?;
     let line = String::from_utf8_lossy(&output.stdout).lines().last().unwrap_or_default().to_string();
@@ -276,5 +432,56 @@ pub async fn quota(id: &str) -> Result<Value, String> {
 pub async fn start_if_configured() {
     if accounts_dir().is_dir() {
         if let Err(error) = ensure_all().await { super::logger::log_warn(&format!("[AWS Quick] {error}")); }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quota_windows_become_buckets() {
+        let status = json!({"event": "status", "plan": "Free Trial", "windows": [
+            {"name": "Monthly", "amount": 420, "limit": 600, "unit": "credits", "resetsAt": "2026-12-01T00:00:00.000Z"},
+            {"name": "Session", "amount": 38, "limit": 100, "resetSecs": 600},
+            {"name": "Monthly overage", "used": 25}]});
+        let buckets = buckets(&status);
+        assert_eq!(buckets.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["monthly", "session", "monthly-overage"]);
+        assert_eq!(buckets[0].label, "Free Trial · 月度额度");
+        assert_eq!((buckets[0].remaining, buckets[0].total, buckets[0].remaining_percent), (Some(180.0), Some(600.0), 30));
+        assert_eq!(buckets[0].reset_at.as_deref(), Some("2026-12-01T00:00:00.000Z"));
+        assert_eq!(buckets[1].remaining_percent, 62);
+        assert!(buckets[1].reset_at.is_some());
+        assert_eq!((buckets[2].remaining, buckets[2].remaining_percent), (None, 75));
+    }
+
+    #[test]
+    fn pasted_text_becomes_accounts() {
+        assert_eq!(import_items("  Bearer abc  ", "").unwrap(), vec![json!({"access": "abc"})]);
+        assert_eq!(import_items("abc", "https://cell.example").unwrap(), vec![json!({"access": "abc", "tenantUrl": "https://cell.example"})]);
+        let both = import_items(r#"[{"access":"a","tenant_url":"https://own"},{"access":"b"}]"#, "https://given").unwrap();
+        assert!(both[0].get("tenantUrl").is_none());
+        assert_eq!(both[1]["tenantUrl"], "https://given");
+        assert!(import_items("", "").is_err());
+        assert!(import_items("two words", "").is_err());
+        assert!(import_items("[]", "").is_err());
+        assert!(import_items("{bad", "").is_err());
+        assert!(import_items("abc", "http://plain").is_err());
+    }
+
+    #[test]
+    fn sidecar_takes_its_subcommand_first() {
+        let Ok(cmd) = command("status", Path::new("home")) else { return };
+        let args = cmd.get_args().map(|arg| arg.to_string_lossy().to_string()).collect::<Vec<_>>();
+        assert_eq!(args, ["status", "--home", "home"]);
+    }
+
+    #[test]
+    fn models_declare_vision_thinking_and_limits() {
+        let models = super::super::multi_model_api::aws_quick_models_for_test();
+        assert!(models.iter().all(|m| m.capabilities.iter().any(|c| c == "vision") && m.capabilities.iter().any(|c| c == "reasoning")));
+        assert!(models.iter().all(|m| m.max_input_tokens == Some(1_000_000)));
+        assert_eq!(models.iter().find(|m| m.id == "aws-quick/fast").and_then(|m| m.max_output_tokens), Some(32_000));
+        assert_eq!(models.iter().find(|m| m.id == "aws-quick/smart").and_then(|m| m.max_output_tokens), Some(64_000));
     }
 }

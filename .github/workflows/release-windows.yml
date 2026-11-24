@@ -107,7 +107,7 @@ jobs:
             Select-Object -Last 1 -ExpandProperty executable
           if (-not $exe -or -not (Test-Path $exe)) { throw "Lib test executable was not produced (cargo reported: $exe)" }
           Write-Host "Running $exe"
-          foreach ($filter in 'modules::subscription_proxy::tests', 'app_updates::tests') {
+          foreach ($filter in 'modules::subscription_proxy::tests', 'app_updates::tests', 'modules::aws_quick::tests') {
             & $exe $filter --test-threads=1
             if ($LASTEXITCODE -ne 0) { throw "Tests failed: $filter" }
           }

@@ -3263,6 +3263,9 @@ fn collect_account_usages(config: &MultiModelApiConfig) -> Vec<MultiModelAccount
             if let Some(id) = route.source.strip_prefix("cle:doubao-web:") {
                 return crate::modules::doubao_chat_api::usage(id, &route.id);
             }
+            if let Some(id) = route.source.strip_prefix(aws_quick::SOURCE_PREFIX) {
+                return aws_quick::usage(id, &route.id);
+            }
             if let Some(id) = route.source.strip_prefix("cle:workbuddy:") {
                 let item = workbuddy.get(id)?;
                 return Some(MultiModelAccountUsage {
@@ -3402,6 +3405,7 @@ fn quota_refresh_supported(route: &MultiModelAccount) -> bool {
         || route.source.starts_with("cle:antigravity:")
         || route.source.starts_with("cle:gemini:")
         || route.source.starts_with("cle:claude-cli:")
+        || route.source.starts_with(aws_quick::SOURCE_PREFIX)
         || (managed_provider_api::supported(&route.provider) && route.source.starts_with(&format!("cle:{}:",route.provider)))
         || (route.auth_mode == "oauth_json" && (route.source.starts_with("cle:claude:") || route.source.starts_with("cle:claude-web:")))
 }
@@ -3498,6 +3502,9 @@ async fn refresh_managed_quota(route: &MultiModelAccount) -> Result<(), String> 
     }
     if let Some(id) = route.source.strip_prefix("cle:doubao-web:") {
         return crate::modules::doubao_chat_api::refresh_quota(id, &route.proxy_url).await;
+    }
+    if let Some(id) = route.source.strip_prefix(aws_quick::SOURCE_PREFIX) {
+        return aws_quick::refresh_quota(id).await;
     }
     if let Some(id) = route.source.strip_prefix("cle:workbuddy:") {
         let (_, diagnostics) = workbuddy_account::refresh_account_detailed(id).await?;
@@ -5415,13 +5422,20 @@ pub async fn sync_aws_quick_accounts() -> Result<MultiModelApiState, String> {
     save_config(config).await
 }
 
+// What the bridge itself declares for each mode (plugin/settings.mjs): image
+// input, thinking levels (low/medium/high, sent per request as
+// reasoning_effort), the 1M context Amazon Quick reports
+// with its usage, and its estimated output limits.
 fn aws_quick_models() -> Vec<MultiModelDefinition> {
     aws_quick::MODES.iter().map(|mode| MultiModelDefinition {
         id: format!("{}/{mode}", aws_quick::PROVIDER), alias: String::new(),
-        capabilities: vec!["text".into(), "reasoning".into()],
-        max_input_tokens: None, max_output_tokens: None, enabled: true,
+        capabilities: vec!["text".into(), "vision".into(), "reasoning".into()],
+        max_input_tokens: Some(1_000_000), max_output_tokens: Some(if *mode == "fast" { 32_000 } else { 64_000 }), enabled: true,
     }).collect()
 }
+
+#[cfg(test)]
+pub(crate) fn aws_quick_models_for_test() -> Vec<MultiModelDefinition> { aws_quick_models() }
 
 // Every signed-in AWS Quick account is its own local gateway; they share the
 // provider name, so the gateway pools them under aws-quick/<mode>.

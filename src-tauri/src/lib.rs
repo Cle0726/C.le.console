@@ -1101,6 +1101,7 @@ pub fn run() {
             commands::multi_model_api::aws_quick_login_cancel,
             commands::multi_model_api::aws_quick_remove_account,
             commands::multi_model_api::aws_quick_quota,
+            commands::multi_model_api::aws_quick_import,
             commands::multi_model_api::multi_model_api_sync_aws_quick_accounts,
             commands::multi_model_api::multi_model_api_open_window,
             commands::multi_model_api::multi_model_api_save_config,

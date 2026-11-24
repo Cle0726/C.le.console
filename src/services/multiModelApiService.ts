@@ -36,6 +36,7 @@ export interface MultiModelGenericOAuthExchangeRequest {
 }
 
 export interface AwsQuickAccount { id: string; accountId: string; tenantUrl: string; enterprise: boolean; port: number; running: boolean }
+export interface AwsQuickImportResult { imported: string[]; warnings: string[]; failed: string[]; state: MultiModelApiState }
 export interface AwsQuickLogin { loginId: string; url: string; status: 'waiting' | 'success' | 'error'; message: string; accountId: string }
 
 export const multiModelApiService = {
@@ -52,6 +53,7 @@ export const multiModelApiService = {
   awsQuickLoginCancel: (loginId: string) => invoke<void>('aws_quick_login_cancel', { loginId }),
   awsQuickRemove: (id: string) => invoke<MultiModelApiState>('aws_quick_remove_account', { id }),
   awsQuickQuota: (id: string) => invoke<unknown>('aws_quick_quota', { id }),
+  awsQuickImport: (text: string, tenantUrl: string) => invoke<AwsQuickImportResult>('aws_quick_import', { text, tenantUrl }),
   syncAwsQuickAccounts: () => invoke<MultiModelApiState>('multi_model_api_sync_aws_quick_accounts'),
   openWindow: () => invoke<void>('multi_model_api_open_window'),
   getState: () => invoke<MultiModelApiState>('multi_model_api_get_state'),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { confirm } from '@tauri-apps/plugin-dialog';
-import { BadgeCheck, Building2, LogIn, RefreshCw, Trash2 } from 'lucide-react';
+import { BadgeCheck, Building2, FileJson, LogIn, RefreshCw, Trash2 } from 'lucide-react';
 import { openOAuthUrl } from '../utils/openOAuthUrl';
 import { multiModelApiService as api, type AwsQuickAccount } from '../services/multiModelApiService';
 import type { MultiModelApiState } from '../types/multiModelApi';
@@ -8,14 +8,19 @@ import type { MultiModelApiState } from '../types/multiModelApi';
 type Quota = { plan?: string; windows?: { name: string; display?: string; resetsAt?: string }[]; error?: string; expired?: boolean };
 
 // AWS Quick (Amazon Quick) accounts via the bundled magpie-AWS-Quick-bridge
-// sidecar. Each account signs in in the browser and joins the pool behind the
-// shared C.le key as aws-quick/<mode>.
+// sidecar. Each account signs in in the browser, or is imported from an
+// account.json or a token, and joins the pool behind the shared C.le key as
+// aws-quick/<mode>.
 export function AwsQuickPanel({ onChanged }: { onChanged: (state: MultiModelApiState) => void }) {
   const [accounts, setAccounts] = useState<AwsQuickAccount[]>([]);
   const [quotas, setQuotas] = useState<Record<string, Quota>>({});
   const [busy, setBusy] = useState(false);
   const [login, setLogin] = useState<{ id: string; url: string } | null>(null);
   const [region, setRegion] = useState('us-east-1');
+  const [importing, setImporting] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importTenant, setImportTenant] = useState('');
+  const fileInput = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState<{ tone: 'info' | 'error' | 'success'; text: string } | null>(null);
   const mounted = useRef(true);
 
@@ -95,6 +100,23 @@ export function AwsQuickPanel({ onChanged }: { onChanged: (state: MultiModelApiS
     } finally { setBusy(false); }
   };
 
+  const submitImport = () => run(async () => {
+    const result = await api.awsQuickImport(importText, importTenant);
+    onChanged(result.state);
+    await load();
+    setImportText('');
+    setImportTenant('');
+    setImporting(false);
+    const notes = [...result.warnings, ...result.failed.map((item) => `未导入 ${item}`)];
+    return `已导入 ${result.imported.join('、')}，并接入 API 账号池。${notes.length ? ` ${notes.join('；')}` : ''}`;
+  });
+
+  const readFile = async (file: File | undefined) => {
+    if (!file) return;
+    try { setImportText(await file.text()); } catch (error) { setMessage({ tone: 'error', text: String(error) }); }
+    if (fileInput.current) fileInput.current.value = '';
+  };
+
   const refreshQuota = (id: string) => run(async () => {
     const quota = await api.awsQuickQuota(id) as Quota;
     setQuotas((prev) => ({ ...prev, [id]: quota }));
@@ -105,8 +127,19 @@ export function AwsQuickPanel({ onChanged }: { onChanged: (state: MultiModelApiS
       <button type="button" className="btn btn-primary" disabled={busy || !!login} onClick={() => void start(false)}><LogIn />添加个人账号（浏览器登录）</button>
       <input className="mm-aws-quick-region" value={region} onChange={(event) => setRegion(event.target.value)} placeholder="区域，如 us-east-1" aria-label="企业账号区域" />
       <button type="button" className="btn btn-secondary" disabled={busy || !!login} onClick={() => void start(true)}><Building2 />添加企业账号（IAM Identity Center）</button>
+      <button type="button" className="btn btn-secondary" disabled={busy || !!login} onClick={() => setImporting((open) => !open)}><FileJson />导入 JSON / Token</button>
       <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void run(async () => { await sync(); return '已同步到 API 账号池。'; })}><RefreshCw />接入 API / 同步</button>
     </div>
+    {importing && <div className="mm-add-section wide">
+      <p className="section-desc">粘贴 AWS Quick 的 account.json（C.le 或 magpie-AWS-Quick-bridge 导出的都可以，access_token / refresh_token 等写法也认），多个账号可以放进一个 JSON 数组；也可以只粘贴一个 access token，这时要同时填账号的 tenantUrl（token 只在自己账号所在的节点有效，它本身不带这个地址）。带 refresh token 和 clientId / clientSecret 的账号会自动续期；只有 access token 的账号到期后就不能用了，需要重新导入或登录。导入前会先向 Amazon Quick 验证。</p>
+      <label><span>account.json 或 access token</span><textarea rows={6} value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={'{"access":"...","refresh":"...","clientId":"...","clientSecret":"...","tenantUrl":"..."}\n或直接粘贴 access token'} /></label>
+      <label><span>tenantUrl（只粘贴 token 时必填）</span><input value={importTenant} onChange={(event) => setImportTenant(event.target.value)} placeholder="https://qbs-cell….dp.appintegrations.us-east-1.prod.plato.ai.aws.dev" /></label>
+      <input ref={fileInput} type="file" accept="application/json,.json" style={{ display: 'none' }} onChange={(event) => void readFile(event.target.files?.[0])} />
+      <div className="mm-inline-actions">
+        <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => fileInput.current?.click()}><FileJson />选择 JSON 文件</button>
+        <button type="button" className="btn btn-primary" disabled={busy || !importText.trim()} onClick={() => void submitImport()}><BadgeCheck />{busy ? '验证中…' : '导入'}</button>
+      </div>
+    </div>}
     {login && <div className="mm-api-message info"><LogIn /><span>请在浏览器里登录 Amazon Quick，看到 “Login complete” 即可回到这里。浏览器没有打开？<a href="#" onClick={(event) => { event.preventDefault(); void openOAuthUrl(login.url); }}>再次打开</a> · <a href="#" onClick={(event) => { event.preventDefault(); void cancel(); }}>取消</a>。提示 “Your session has expired” 时，请用无痕窗口打开登录地址或清除 signin.aws 的 Cookie。</span></div>}
     {message && <div className={`mm-api-message ${message.tone}`}><BadgeCheck /><span>{message.text}</span></div>}
     <div className="mm-doubao-web-list">
@@ -129,7 +162,7 @@ export function AwsQuickPanel({ onChanged }: { onChanged: (state: MultiModelApiS
           </div>
         </article>;
       })}
-      {!accounts.length && <p className="mm-quota-hint">还没有 AWS Quick 账号。点“添加个人账号”在浏览器登录 Amazon Quick；企业账号先填区域再登录。可以重复登录添加多个账号。</p>}
+      {!accounts.length && <p className="mm-quota-hint">还没有 AWS Quick 账号。点“添加个人账号”在浏览器登录 Amazon Quick；企业账号先填区域再登录；已有 account.json 或 token 的点“导入 JSON / Token”。可以添加多个账号。</p>}
     </div>
   </section>;
 }
