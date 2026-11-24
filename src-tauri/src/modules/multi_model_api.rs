@@ -1446,7 +1446,11 @@ fn write_launch_files(config: &MultiModelApiConfig) -> Result<MultiModelLaunch, 
                 providers.insert(provider.clone());
                 let compat_models = models.iter().flat_map(|model| {
                     if account.source.starts_with("agent2api:") || account.source.starts_with(aws_quick::SOURCE_PREFIX) {
-                        let upstream = model.id.strip_prefix(&format!("{provider}/")).unwrap_or(&model.id);
+                        // the bridge takes Quick's mode names, clients the real model names
+                        let upstream: &str = match account.source.starts_with(aws_quick::SOURCE_PREFIX).then(|| aws_quick::upstream_mode(&model.id)).flatten() {
+                            Some(mode) => mode,
+                            None => model.id.strip_prefix(&format!("{provider}/")).unwrap_or(&model.id),
+                        };
                         let mut entries = vec![json!({"name": upstream, "alias": model.id})];
                         if !model.alias.is_empty() { entries.push(json!({"name": upstream, "alias": model.alias})); }
                         entries
@@ -5422,20 +5426,41 @@ pub async fn sync_aws_quick_accounts() -> Result<MultiModelApiState, String> {
     save_config(config).await
 }
 
-// Amazon Quick's modes run Claude models (seen in its usage events on a real
-// account, 2026-11: fast = Haiku 5.5, balanced = Sonnet 5.5, smart and auto =
-// Opus 5.5), all with a 1M context and 128K output. Quick adds about 70K
-// tokens of its own prompt to every turn, so clients get 900K. Images and
-// thinking levels (reasoning_effort low/medium/high) pass through the bridge.
+// AWS Quick's models under their real names (aws_quick::MODELS), all with a
+// 1M context and 128K output. Quick adds about 70K tokens of its own prompt
+// to every turn, so clients get 900K. Images and thinking levels
+// (reasoning_effort low/medium/high) pass through the bridge.
 const AWS_QUICK_MAX_INPUT_TOKENS: u32 = 900_000;
 const AWS_QUICK_MAX_OUTPUT_TOKENS: u32 = 128_000;
 
 fn aws_quick_models() -> Vec<MultiModelDefinition> {
-    aws_quick::MODES.iter().map(|mode| MultiModelDefinition {
-        id: format!("{}/{mode}", aws_quick::PROVIDER), alias: String::new(),
+    aws_quick::MODELS.iter().map(|(model, _)| MultiModelDefinition {
+        id: format!("{}/{model}", aws_quick::PROVIDER), alias: String::new(),
         capabilities: vec!["text".into(), "vision".into(), "reasoning".into()],
         max_input_tokens: Some(AWS_QUICK_MAX_INPUT_TOKENS), max_output_tokens: Some(AWS_QUICK_MAX_OUTPUT_TOKENS), enabled: true,
     }).collect()
+}
+
+/// 1.1.57 listed AWS Quick by mode (aws-quick/smart …): routes and the
+/// model lists of API keys move to the real model names, keeping aliases and
+/// toggles.
+fn rename_aws_quick_models(config: &mut MultiModelApiConfig) {
+    for route in config.accounts.iter_mut().filter(|route| route.source.starts_with(aws_quick::SOURCE_PREFIX)) {
+        let mut seen = BTreeSet::new();
+        route.models.retain_mut(|model| {
+            if let Some(name) = aws_quick::renamed(&model.id) { model.id = name; }
+            seen.insert(model.id.clone())
+        });
+    }
+    for key in &mut config.api_keys {
+        for list in [&mut key.allowed_models, &mut key.excluded_models] {
+            let mut seen = BTreeSet::new();
+            list.retain_mut(|model| {
+                if let Some(name) = aws_quick::renamed(model) { *model = name; }
+                seen.insert(model.clone())
+            });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -5444,6 +5469,7 @@ pub(crate) fn aws_quick_models_for_test() -> Vec<MultiModelDefinition> { aws_qui
 // Every signed-in AWS Quick account is its own local gateway; they share the
 // provider name, so the gateway pools them under aws-quick/<mode>.
 async fn import_aws_quick_routes(config: &mut MultiModelApiConfig) -> Result<(), String> {
+    rename_aws_quick_models(config);
     let accounts = aws_quick::ensure_all().await?;
     let sources = accounts.iter().map(|account| format!("{}{}", aws_quick::SOURCE_PREFIX, account.id)).collect::<BTreeSet<_>>();
     config.accounts.retain(|route| !route.source.starts_with(aws_quick::SOURCE_PREFIX) || sources.contains(&route.source));

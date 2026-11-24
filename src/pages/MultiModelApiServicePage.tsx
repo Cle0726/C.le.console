@@ -811,7 +811,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             <header className="mm-api-panel-head mm-workbuddy-heading">
               <div>
                 <h1>AWS Quick（Amazon Quick）API</h1>
-                <p>浏览器登录 Amazon Quick 账号（个人或企业 IAM Identity Center），可添加多个账号。使用同一个网关地址和 Key，调用 aws-quick/smart、aws-quick/balanced、aws-quick/fast、aws-quick/auto；各账号按自己的额度扣费。</p>
+                <p>浏览器登录 Amazon Quick 账号（个人或企业 IAM Identity Center），可添加多个账号。使用同一个网关地址和 Key，调用 aws-quick/claude-opus-5-5、aws-quick/claude-sonnet-5-5、aws-quick/claude-haiku-5-5；也可以导入 account.json 或 token。各账号按自己的额度扣费。</p>
               </div>
               <div className="mm-inline-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => { setProviderFilter('aws-quick'); setTab('accounts'); }}><Users />查看 API 账号池</button>

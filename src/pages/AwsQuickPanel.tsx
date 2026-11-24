@@ -10,7 +10,8 @@ type Quota = { plan?: string; windows?: { name: string; display?: string; resets
 // AWS Quick (Amazon Quick) accounts via the bundled magpie-AWS-Quick-bridge
 // sidecar. Each account signs in in the browser, or is imported from an
 // account.json or a token, and joins the pool behind the shared C.le key as
-// aws-quick/<mode>.
+// aws-quick/claude-opus-5-5, aws-quick/claude-sonnet-5-5 and
+// aws-quick/claude-haiku-5-5.
 export function AwsQuickPanel({ onChanged }: { onChanged: (state: MultiModelApiState) => void }) {
   const [accounts, setAccounts] = useState<AwsQuickAccount[]>([]);
   const [quotas, setQuotas] = useState<Record<string, Quota>>({});
@@ -55,7 +56,7 @@ export function AwsQuickPanel({ onChanged }: { onChanged: (state: MultiModelApiS
           if (status.status === 'success') {
             setLogin(null);
             await sync();
-            setMessage({ tone: 'success', text: `${status.accountId || 'AWS Quick 账号'} 已登录，并接入 API 账号池（aws-quick/smart 等）。` });
+            setMessage({ tone: 'success', text: `${status.accountId || 'AWS Quick 账号'} 已登录，并接入 API 账号池（aws-quick/claude-opus-5-5 等）。` });
             return;
           }
           if (status.status === 'error') {

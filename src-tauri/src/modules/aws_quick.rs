@@ -10,7 +10,27 @@ use super::multi_model_api::{MultiModelAccountUsage, MultiModelUsageBucket};
 
 pub const PROVIDER: &str = "aws-quick";
 pub const SOURCE_PREFIX: &str = "cle:aws-quick:";
-pub const MODES: &[&str] = &["smart", "balanced", "fast", "auto"];
+/// The models clients ask for and the Amazon Quick mode each one is. Quick
+/// names the model behind every mode in its usage (seen on a real account,
+/// 2026-11): smart = Claude Opus 5.5, balanced = Sonnet 5.5, fast = Haiku 5.5.
+pub const MODELS: &[(&str, &str)] = &[
+    ("claude-opus-5-5", "smart"),
+    ("claude-sonnet-5-5", "balanced"),
+    ("claude-haiku-5-5", "fast"),
+];
+
+/// The Quick mode the bridge is asked for, for `aws-quick/<model>`.
+pub fn upstream_mode(model_id: &str) -> Option<&'static str> {
+    let model = model_id.strip_prefix(&format!("{PROVIDER}/")).unwrap_or(model_id);
+    MODELS.iter().find(|(name, _)| *name == model).map(|(_, mode)| *mode)
+}
+
+/// What a model saved under 1.1.57's mode names is called now; auto ran Opus.
+pub fn renamed(model_id: &str) -> Option<String> {
+    let mode = model_id.strip_prefix(&format!("{PROVIDER}/"))?;
+    let mode = if mode == "auto" { "smart" } else { mode };
+    MODELS.iter().find(|(_, m)| *m == mode).map(|(name, _)| format!("{PROVIDER}/{name}"))
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -477,9 +497,23 @@ mod tests {
     }
 
     #[test]
+    fn real_model_names_map_to_quick_modes() {
+        assert_eq!(upstream_mode("aws-quick/claude-opus-5-5"), Some("smart"));
+        assert_eq!(upstream_mode("aws-quick/claude-sonnet-5-5"), Some("balanced"));
+        assert_eq!(upstream_mode("claude-haiku-5-5"), Some("fast"));
+        assert_eq!(upstream_mode("aws-quick/smart"), None);
+        assert_eq!(renamed("aws-quick/smart").as_deref(), Some("aws-quick/claude-opus-5-5"));
+        assert_eq!(renamed("aws-quick/auto").as_deref(), Some("aws-quick/claude-opus-5-5"));
+        assert_eq!(renamed("aws-quick/fast").as_deref(), Some("aws-quick/claude-haiku-5-5"));
+        assert_eq!(renamed("aws-quick/claude-opus-5-5"), None);
+        assert_eq!(renamed("doubao-web/fast"), None);
+    }
+
+    #[test]
     fn models_declare_vision_thinking_and_limits() {
         let models = super::super::multi_model_api::aws_quick_models_for_test();
         assert!(models.iter().all(|m| m.capabilities.iter().any(|c| c == "vision") && m.capabilities.iter().any(|c| c == "reasoning")));
         assert!(models.iter().all(|m| m.max_input_tokens == Some(900_000) && m.max_output_tokens == Some(128_000)));
+        assert_eq!(models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["aws-quick/claude-opus-5-5", "aws-quick/claude-sonnet-5-5", "aws-quick/claude-haiku-5-5"]);
     }
 }
