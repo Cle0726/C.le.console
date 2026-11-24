@@ -601,10 +601,12 @@ fn load_config() -> Result<MultiModelApiConfig, String> {
     let removed_separated_gpt_accounts = config.accounts.iter().any(is_separated_gpt_account);
     let legacy_openai = config.accounts.iter().any(|account| account.provider == "openai");
     let capacity_defaults_added = apply_model_capacity_defaults(&mut config);
+    let aws_quick_renamed = config.accounts.iter().any(|route| route.source.starts_with(aws_quick::SOURCE_PREFIX)
+        && route.models.iter().any(|model| aws_quick::renamed(&model.id).is_some()));
     normalize_config(&mut config)?;
     let affinity_migrated = migrate_legacy_round_robin_affinity(&mut config)?;
     let legacy_migration = migrate_legacy_key_records(&mut config)?;
-    if affinity_migrated || legacy_migration.is_some() || removed_separated_gpt_accounts || legacy_openai || capacity_defaults_added {
+    if affinity_migrated || legacy_migration.is_some() || removed_separated_gpt_accounts || legacy_openai || capacity_defaults_added || aws_quick_renamed {
         // Normalize again because imported records came from older schemas.
         normalize_config(&mut config)?;
         save_config_file(&config)?;
@@ -827,6 +829,12 @@ fn normalize_config(config: &mut MultiModelApiConfig) -> Result<(), String> {
         for model in crate::modules::doubao_chat_api::base_models() {
             if !route.models.iter().any(|known| known.id == model.id) { route.models.push(model); }
         }
+    }
+    // AWS Quick routes saved by 1.1.57 get the real model names, limits and
+    // image support on load, not only on the next sync.
+    rename_aws_quick_models(config);
+    for route in config.accounts.iter_mut().filter(|route| route.source.starts_with(aws_quick::SOURCE_PREFIX)) {
+        merge_workbuddy_models(&mut route.models, aws_quick_models());
     }
     apply_model_capacity_defaults(config);
     if config.port == 0 {
@@ -6018,6 +6026,27 @@ pub async fn shutdown() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn aws_quick_routes_from_1_1_57_get_real_model_names_on_load() {
+        let mut config = super::default_config();
+        let old = |id: &str| super::MultiModelDefinition { id: id.into(), alias: if id.ends_with("/fast") { "quick-fast".into() } else { String::new() },
+            capabilities: vec!["text".into(), "reasoning".into()], max_input_tokens: None, max_output_tokens: None, enabled: !id.ends_with("/balanced") };
+        config.accounts.push(super::MultiModelAccount { id: "cle-aws-quick-ab".into(), name: "AWS Quick · a".into(), provider: "aws-quick".into(),
+            auth_mode: "api_key".into(), base_url: "http://127.0.0.1:1/v1".into(), api_key: "k".into(), cli_path: String::new(), cli_app: String::new(),
+            cli_profile: String::new(), credential_json: None, proxy_url: String::new(), prefix: String::new(), priority: 0,
+            headers: Default::default(), models: ["smart", "balanced", "fast", "auto"].iter().map(|m| old(&format!("aws-quick/{m}"))).collect(),
+            enabled: true, source: "cle:aws-quick:ab".into() });
+        config.api_keys[0].allowed_models = vec!["aws-quick/smart".into(), "aws-quick/auto".into(), "doubao-web/fast".into()];
+        super::normalize_config(&mut config).unwrap();
+        let route = config.accounts.iter().find(|route| route.id == "cle-aws-quick-ab").unwrap();
+        assert_eq!(route.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["aws-quick/claude-opus-5-5", "aws-quick/claude-sonnet-5-5", "aws-quick/claude-haiku-5-5"]);
+        let sonnet = &route.models[1];
+        assert!(!sonnet.enabled, "a model the user switched off stays off");
+        assert_eq!(route.models[2].alias, "quick-fast");
+        assert!(route.models.iter().all(|m| m.capabilities.iter().any(|c| c == "vision") && m.max_input_tokens == Some(900_000) && m.max_output_tokens == Some(128_000)));
+        assert_eq!(config.api_keys[0].allowed_models, ["aws-quick/claude-opus-5-5", "doubao-web/fast"]);
+    }
+
     #[test]
     fn blank_antigravity_project_id_keeps_the_previous_value() {
         let mut credential = serde_json::json!({
