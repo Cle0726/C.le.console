@@ -6,6 +6,7 @@
 
 - **修复**：1.1.57 的 AWS Quick 账号无法登录、本机网关和额度查询也都启动不了。原因是 C.le 调用 AWS Quick 组件时把参数顺序写反了（`--home <目录> login`，组件要求 `login --home <目录>`），组件只报用法错误就退出。现在按正确顺序调用；组件本身也改成两种顺序都接受。
 - AWS Quick 新增 **导入 JSON / Token**：可以粘贴或选择 account.json（C.le、magpie-AWS-Quick-bridge 导出的都行，`access_token` / `refresh_token` / `client_id` 等写法也认，多个账号放进 JSON 数组即可批量导入），也可以只粘贴 access token 加账号的 tenantUrl。导入前会先向 Amazon Quick 验证并读出账号邮箱；带 refresh token 和 clientId / clientSecret 的账号会自动续期，只有 access token 的到期后需要重新导入或登录。
+- AWS Quick 额度用完的账号不再把 “You've reached your usage limit” 当成模型回答返回：Amazon Quick 在额度用完时只回一句普通文字，不报错，所以以前账号池不会换号。现在每次请求前先查这个账号的额度（结果缓存几十秒），用完就返回 429 和恢复时间，账号池自动换到还有额度的账号。
 - AWS Quick 额度接入「API 服务」的统一 **刷新额度** 和额度显示，与其他账号一致：月度、会话（以及有的话月度超额）的 credits 剩余量和重置时间。网络偶尔断开导致的额度查询失败会自动重试。
 - AWS Quick 模型改用真实模型名：`aws-quick/claude-opus-5-5`、`aws-quick/claude-sonnet-5-5`、`aws-quick/claude-haiku-5-5`（在真实账号上核对过：Amazon Quick 的 Smart、Balanced、Fast 背后分别是这三个模型；Auto 也是 Opus，不再单列）。1.1.57 的 `aws-quick/smart` 等旧名会自动换成新名，API Key 里的模型限制一起更新。三个模型都是 100 万 token 上下文、最多 128K 输出；Amazon Quick 每轮自带约 7 万 token 的提示词，所以给客户端标 90 万上下文。支持图片输入和思考程度（请求里的 `reasoning_effort`：low / medium / high，思考过程放在 `reasoning_content`）。超过 64 KB 的长内容由桥接自动转成附件交给模型读取。
 

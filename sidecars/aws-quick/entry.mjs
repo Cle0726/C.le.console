@@ -69,13 +69,45 @@ async function login(flags) {
   setTimeout(() => process.exit(0), 300)
 }
 
+// Amazon Quick answers a turn on a used-up allowance with ordinary text
+// ("You've reached your usage limit…"), not an error, so the bridge would
+// pass it on as the model's answer and the console's account pool would not
+// move on to another account. Turns are checked against the allowance first
+// (the answer kept briefly) and refused with 429 and Retry-After, the way
+// the bridge answers a turn Quick refuses.
+const TURNS = new Set(["/v1/chat/completions", "/chat/completions", "/v1/messages", "/messages", "/v1/responses", "/responses"])
+const REST_MAX_SECS = 6 * 3600
+
+function quotaGuard(handle, account, apiKey) {
+  let known = { until: 0, spent: null }
+  const keyOf = (headers) => headers.get("x-api-key") || (headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "")
+  return async (request) => {
+    const path = new URL(request.url).pathname.replace(/\/+$/, "")
+    if (request.method !== "POST" || !TURNS.has(path) || keyOf(request.headers) !== apiKey) return handle(request)
+    if (Date.now() >= known.until) {
+      const auth = await account.get().catch(() => null)
+      const spent = auth ? await qbs.spent(auth) : null
+      known = { spent, until: Date.now() + (spent ? 60_000 : 20_000) }
+    }
+    const spent = known.spent
+    if (!spent) return handle(request)
+    const secs = Math.min(spent.secs > 0 ? spent.secs : REST_MAX_SECS, REST_MAX_SECS)
+    const message = `Amazon Quick's ${spent.name} allowance is used up${spent.secs > 0 ? `; it is back in ${Math.max(1, Math.round(spent.secs / 60))} minutes` : ""}`
+    const body = path.endsWith("/messages")
+      ? { type: "error", error: { type: "rate_limit_error", message } }
+      : { error: { message, type: "rate_limit_exceeded", code: "rate_limit_exceeded" } }
+    return Response.json(body, { status: 429, headers: { "retry-after": String(secs) } })
+  }
+}
+
 async function serve(flags) {
   const cfg = setup(flags)
   const port = flags.port ? Number(flags.port) : cfg.port
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port takes a number from 0 to 65535")
   const account = new store.Account()
   const log = (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`)
-  const running = await listen(createGateway({ apiKey: cfg.apiKey, account, options: cfg.options, log }), { port, host: "127.0.0.1" })
+  const gateway = quotaGuard(createGateway({ apiKey: cfg.apiKey, account, options: cfg.options, log }), account, cfg.apiKey)
+  const running = await listen(gateway, { port, host: "127.0.0.1" })
   emit({ event: "listening", port: running.port, apiKey: cfg.apiKey, accountId: account.peek()?.accountId ?? "" })
   const stop = () => {
     running.close()
