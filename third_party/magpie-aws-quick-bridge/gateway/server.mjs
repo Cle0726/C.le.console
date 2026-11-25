@@ -195,6 +195,12 @@ export function listen(handle, { port, host }) {
           server.close()
           server.closeAllConnections?.()
         },
+        // stops taking connections and closes the idle ones; a request still
+        // being answered is answered first
+        drain: () => {
+          server.close()
+          server.closeIdleConnections?.()
+        },
       }),
     )
   })

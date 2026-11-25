@@ -449,7 +449,86 @@ async function multi(flags) {
     const account = new store.Account(home)
     const plog = (line) => where.run(String(port), () => log(line))
     const gateway = quotaGuard(createGateway({ apiKey: cfg.apiKey, account, options: cfg.options, log: plog }), account, cfg.apiKey)
-    return { name, home, port, apiKey: cfg.apiKey, account, handle: (req) => where.run(String(port), async () => gateway(await onlyModel(req))), running: null, busy: 0, rest: 0, last: 0, missed: false }
+    const entry = { name, home, port, apiKey: cfg.apiKey, account, running: null, busy: 0, rest: 0, last: 0, missed: false, inflight: 0, released: false }
+    entry.handle = (req) => counted(entry, () => where.run(String(port), async () => gateway(await onlyModel(req))))
+    return entry
+  }
+
+  // Requests being answered, a streamed one until its body is done: a port
+  // is handed to a newer multi only while it has none.
+  async function counted(entry, answer) {
+    entry.inflight++
+    let res
+    try {
+      res = await answer()
+    } catch (e) {
+      entry.inflight--
+      throw e
+    }
+    if (!res.body) {
+      entry.inflight--
+      return res
+    }
+    let over = false
+    const finish = () => {
+      if (!over) (over = true), entry.inflight--
+    }
+    const reader = res.body.getReader()
+    const body = new ReadableStream({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read()
+          if (done) finish(), controller.close()
+          else controller.enqueue(value)
+        } catch (e) {
+          finish()
+          controller.error(e)
+        }
+      },
+      cancel(reason) {
+        finish()
+        return reader.cancel(reason)
+      },
+    })
+    return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers })
+  }
+
+  // Handing over to a newer multi without cutting a turn: a new worker names
+  // itself in <dir>/../multi-handoff.json when it starts; an older one then
+  // lets go of each port (and the pool) as soon as nothing is being answered
+  // there, the new one takes it within a second, and the old one ends once
+  // it holds nothing (exit code 75: its supervisor ends too).
+  let poolServer = null
+  const handoffFile = path.join(path.dirname(accountsDir), "multi-handoff.json")
+  const startedAt = Date.now()
+  try {
+    fs.writeFileSync(handoffFile, JSON.stringify({ worker: process.pid, at: new Date(startedAt).toISOString() }) + "\n")
+  } catch {}
+  const superseded = () => {
+    const h = readJSON(handoffFile)
+    return !!h && h.worker !== process.pid && Date.parse(h.at) > startedAt
+  }
+  let draining = false
+  function drain() {
+    if (!draining) log(`a newer multi started: handing the ports over as they go quiet`)
+    draining = true
+    for (const entry of accounts.values())
+      if (entry.running && entry.inflight === 0) {
+        entry.running.drain()
+        entry.running = null
+        entry.released = true
+        where.run(String(entry.port), () => log(`handed over`))
+      }
+    if (poolServer && pool.inflight === 0) {
+      poolServer.drain()
+      poolServer = null
+      log(`pool handed over`)
+    }
+    const held = [...accounts.values()].filter((e) => e.running || e.inflight > 0).length + (poolServer || pool.inflight > 0 ? 1 : 0)
+    if (!held) {
+      log(`everything handed over; this multi ends`)
+      setTimeout(() => process.exit(75), 1_000)
+    }
   }
 
   // pool.json "onlyModel" (e.g. "smart"): every turn, on every port and the
@@ -483,6 +562,7 @@ async function multi(flags) {
   }
 
   async function scan() {
+    if (draining || superseded()) return drain()
     let names = []
     try {
       names = fs.readdirSync(accountsDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)
@@ -614,12 +694,12 @@ async function multi(flags) {
     return answer
   }
 
+  pool.inflight = 0
   await scan()
-  let poolServer = null
   const openPool = async () => {
-    if (poolServer) return
+    if (poolServer || draining) return
     try {
-      poolServer = await listen((req) => where.run("pool", () => poolHandle(req)), { port: Number(pool.port) || 4400, host: "127.0.0.1" })
+      poolServer = await listen((req) => counted(pool, () => where.run("pool", () => poolHandle(req))), { port: Number(pool.port) || 4400, host: "127.0.0.1" })
       log(`pool on port ${poolServer.port}`)
     } catch (e) {
       log(`pool: cannot listen on ${pool.port}: ${e?.message ?? e}`)
@@ -650,6 +730,8 @@ function supervise(flags) {
     child.stderr.resume()
     child.on("exit", (code) => {
       if (stopping) return
+      // handed over to a newer multi (see drain)
+      if (code === 75) process.exit(0)
       fails = Date.now() - at > 60_000 ? 0 : fails + 1
       setTimeout(start, Math.min(30_000, 1000 * 2 ** Math.min(fails, 5)))
     })
