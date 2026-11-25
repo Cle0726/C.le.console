@@ -481,8 +481,8 @@ describe("a conversation over several requests", () => {
     const png = Buffer.from("89504e470d0a1a0a", "hex").toString("base64")
     await post({ model: "smart", messages: [{ role: "user", content: [{ type: "text", text: "what is this? " }, { type: "image_url", image_url: { url: `data:image/png;base64,${png}` } }] }] })
     const turn = mock.state.turns.at(-1)
-    expect(turn.text).toBe("what is this? [image: attached file image_1.png]")
-    expect(turn.attachments[0]).toMatchObject({ type: "image", name: "image_1.png", mimeType: "image/png", size: 8 })
+    expect(turn.text).toMatch(/^what is this\? \[image: attached file image_1_\w{6}\.png\]$/)
+    expect(turn.attachments[0]).toMatchObject({ type: "image", name: expect.stringMatching(/^image_1_\w{6}\.png$/), mimeType: "image/png", size: 8 })
   })
 })
 

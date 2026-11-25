@@ -42,7 +42,8 @@ export async function* turnEvents(response) {
       } catch {
         continue
       }
-      if (chunk.error) return void (yield { type: "error", message: String(chunk.error.message ?? "upstream error") })
+      if (chunk.error)
+        return void (yield { type: "error", message: String(chunk.error.message ?? "upstream error"), code: String(chunk.error.code ?? chunk.error.type ?? "") })
       if (chunk.usage) usage = usageOf(chunk.usage)
       const delta = chunk.choices?.[0]?.delta
       if (!delta) continue
@@ -52,7 +53,8 @@ export async function* turnEvents(response) {
         yield { type: "tool", call: { id: call.id, name: call.function?.name ?? "", arguments: call.function?.arguments || "{}" } }
     }
   } catch (e) {
-    return void (yield { type: "error", message: String(e?.message ?? e) })
+    // the answer's own stream broke off: worth asking again
+    return void (yield { type: "error", message: String(e?.message ?? e), code: "overloaded" })
   }
   yield { type: "done", usage }
 }

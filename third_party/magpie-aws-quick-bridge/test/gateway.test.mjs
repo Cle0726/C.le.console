@@ -211,6 +211,53 @@ describe("Anthropic Messages (Claude Code)", () => {
     expect(mock.state.turns.at(-1).text).toContain("sunny")
   })
 
+  test("images in a tool result reach Amazon Quick like those of a user message", async () => {
+    const png = (hex) => ({ type: "image", source: { type: "base64", media_type: "image/png", data: Buffer.from(hex, "hex").toString("base64") } })
+    const ask = (result, extra = []) => ({
+      model: "smart",
+      max_tokens: 100,
+      tools,
+      messages: [
+        { role: "user", content: "Read a.png" },
+        { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "a.png" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", ...result }, ...extra] },
+      ],
+    })
+    const sent = async (body, count) => {
+      const before = mock.state.uploads.length
+      expect((await call("/v1/messages", body)).status).toBe(200)
+      const uploads = mock.state.uploads.slice(before)
+      expect(uploads.length).toBe(count)
+      const turn = mock.state.turns.at(-1)
+      expect(turn.text).not.toMatch(/\[image\](?!:)/)
+      expect((turn.attachments ?? []).map((a) => a.name)).toEqual(uploads.map((u) => u.name))
+      for (const u of uploads) expect(turn.text).toContain(`attached file ${u.name}`)
+      return { turn, uploads }
+    }
+    // one image
+    let { turn, uploads } = await sent(ask({ content: [png("89504e470d0a1a0a")] }), 1)
+    expect(uploads[0]).toMatchObject({ contentType: "image/png" })
+    expect(turn.attachments[0]).toMatchObject({ type: "image", mimeType: "image/png", size: 8 })
+    expect(turn.text).toContain("Tool result (call_id=toolu_1, name=Read): [image: attached file image_1_")
+    // two images, with text between
+    ;({ turn } = await sent(ask({ content: [{ type: "text", text: "first" }, png("89504e47"), { type: "text", text: "second" }, png("89504e470d0a")] }), 2))
+    expect(turn.text).toMatch(/first\n\[image: attached file image_1_\w+\.png\]\nsecond\n\[image: attached file image_2_\w+\.png\]/)
+    // a failed result keeps its "Error:" lead; an image in the same message's text goes too
+    ;({ turn } = await sent(ask({ is_error: true, content: [{ type: "text", text: "bad" }, png("89504e47")] }, [{ type: "text", text: "look" }, png("ffd8ffe0")]), 2))
+    expect(turn.text).toMatch(/Tool result \(call_id=toolu_1, name=Read\): Error: bad\n\[image: attached file image_1_/)
+    expect(turn.text).toContain("User: look")
+    // text alone is the same as before
+    ;({ turn } = await sent(ask({ content: [{ type: "text", text: "plain" }] }), 0))
+    expect(turn.text).toContain("Tool result (call_id=toolu_1, name=Read): plain")
+    ;({ turn } = await sent(ask({ content: "a string", is_error: true }), 0))
+    expect(turn.text).toContain("Tool result (call_id=toolu_1, name=Read): Error: a string")
+    // streamed the same way
+    const before = mock.state.uploads.length
+    await events(await call("/v1/messages", { ...ask({ content: [png("89504e47")] }), stream: true }))
+    expect(mock.state.uploads.length).toBe(before + 1)
+    expect(mock.state.turns.at(-1).attachments).toHaveLength(1)
+  })
+
   test("thinking is a block of its own, when asked for", async () => {
     mock.state.script = thinking
     const body = { model: "smart", max_tokens: 100, messages: [{ role: "user", content: "think" }] }
@@ -220,6 +267,80 @@ describe("Anthropic Messages (Claude Code)", () => {
     expect(stream.filter(([name]) => name === "content_block_start").map(([, e]) => e.content_block.type)).toEqual(["thinking", "text"])
     const hidden = await (await call("/v1/messages", { ...body, thinking: { type: "adaptive", display: "omitted" } })).json()
     expect(hidden.content).toEqual([{ type: "text", text: "done" }])
+    mock.state.script = null
+  })
+
+  test("a token whose expiry is not known is renewed on first use", async () => {
+    const before = account.peek()
+    store.saveAccount({ ...before, expires: 0 })
+    const refreshes = mock.state.refreshes
+    const res = await call("/v1/messages", { model: "smart", max_tokens: 10, messages: [{ role: "user", content: "hi" }] })
+    expect(res.status).toBe(200)
+    expect(mock.state.refreshes).toBe(refreshes + 1)
+    expect(account.peek().expires).toBeGreaterThan(Date.now())
+    // known from then on: the next request renews nothing
+    await call("/v1/messages", { model: "smart", max_tokens: 10, messages: [{ role: "user", content: "hi" }] })
+    expect(mock.state.refreshes).toBe(refreshes + 1)
+  })
+
+  test("a reply the content filter cuts off midway is asked again, unseen", async () => {
+    const tools = [{ name: "Read", description: "Read a file", input_schema: { type: "object", properties: { file_path: { type: "string" } } } }]
+    const notice = "That content did not pass our automated check. Try asking again."
+    const ok = [
+      { type: "thinking_delta", payload: { delta: "again" } },
+      { type: "text_delta", payload: { delta: 'Reading. <client_tool_call>{"name":"Read","arguments":{"file_path":"a.txt"}}</client_tool_call>' } },
+      { type: "message_complete", payload: {} },
+      { type: "turn_completed", payload: {} },
+    ]
+    const body = { model: "smart", max_tokens: 100, stream: true, tools, thinking: { type: "adaptive" }, messages: [{ role: "user", content: "read a.txt" }] }
+    for (const failure of [
+      // the notice as text, then an error event
+      [{ type: "text_delta", payload: { delta: notice } }, { type: "stream_error", payload: { message: "content filter" } }],
+      // the notice as a whole, finished reply
+      [{ type: "text_delta", payload: { delta: notice } }, { type: "message_complete", payload: {} }, { type: "turn_completed", payload: {} }],
+    ]) {
+      let n = 0
+      mock.state.script = () => (n++ === 0 ? [{ type: "thinking_delta", payload: { delta: "first" } }, ...failure] : ok)
+      const stream = await events(await call("/v1/messages", body))
+      expect(n).toBe(2)
+      expect(JSON.stringify(stream)).not.toContain("automated check")
+      expect(stream.some(([name]) => name === "error")).toBe(false)
+      const texts = stream.filter(([, e]) => e.delta?.type === "text_delta").map(([, e]) => e.delta.text).join("")
+      expect(texts).toBe("Reading. ")
+      expect(stream.find(([, e]) => e.content_block?.type === "tool_use")[1].content_block.name).toBe("Read")
+      expect(stream.find(([name]) => name === "message_delta")[1].delta.stop_reason).toBe("tool_use")
+    }
+    // one that keeps failing ends as a retryable error, after four retries
+    let n = 0
+    mock.state.script = () => (n++, [{ type: "thinking_delta", payload: { delta: "x" } }, { type: "stream_error", payload: { message: "content filter" } }])
+    const stream = await events(await call("/v1/messages", body))
+    expect(n).toBe(5)
+    expect(stream.find(([name]) => name === "error")[1].error.type).toBe("overloaded_error")
+    mock.state.script = null
+  })
+
+  test("the filter's notice as a guardrail event is asked again; a real block is not", async () => {
+    const notice = "That content did not pass our automated check. Try asking again - a small rephrase usually helps."
+    const ok = [{ type: "text_delta", payload: { delta: "fine" } }, { type: "message_complete", payload: {} }, { type: "turn_completed", payload: {} }]
+    for (const stream of [false, true]) {
+      let n = 0
+      mock.state.script = () => (n++ < 2 ? [{ type: "guardrail_blocked", payload: { message: notice } }] : ok)
+      const res = await call("/v1/messages", { model: "smart", max_tokens: 10, stream, tools, messages: [{ role: "user", content: "hi" }] })
+      expect(res.status).toBe(200)
+      expect(await res.text()).toContain("fine")
+      expect(n).toBe(3)
+    }
+    // stopped every time: still the guardrail's 400
+    let n = 0
+    mock.state.script = () => (n++, [{ type: "guardrail_blocked", payload: { message: notice } }])
+    const res = await call("/v1/messages", { model: "smart", max_tokens: 10, stream: true, tools, messages: [{ role: "user", content: "hi" }] })
+    expect(res.status).toBe(400)
+    expect(n).toBe(5)
+    // a policy block is answered at once
+    n = 0
+    mock.state.script = () => (n++, [{ type: "guardrail_blocked", payload: { message: "blocked by policy" } }])
+    expect((await call("/v1/messages", { model: "smart", max_tokens: 10, stream: true, tools, messages: [{ role: "user", content: "bad" }] })).status).toBe(400)
+    expect(n).toBe(1)
     mock.state.script = null
   })
 

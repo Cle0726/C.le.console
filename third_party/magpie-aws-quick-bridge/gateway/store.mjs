@@ -11,6 +11,7 @@ import * as oauth from "../plugin/oauth.mjs"
 export const DEFAULT_PORT = 18765
 export const DEFAULT_HOST = "127.0.0.1"
 const REFRESH_LEAD_MS = 10 * 60_000
+const UNKNOWN_LIFETIME_MS = 50 * 60_000
 
 export const home = () => process.env.AWS_QUICK_BRIDGE_HOME || join(homedir(), ".aws-quick-bridge")
 const file = (name) => join(home(), name)
@@ -99,7 +100,19 @@ export class Account {
   // is signed in. A refused renewal is thrown with signIn: "expired".
   async get() {
     const auth = this.peek()
-    if (!auth || !auth.expires || auth.expires - Date.now() > REFRESH_LEAD_MS) return auth
+    if (!auth) return auth
+    // an imported token whose expiry nobody knows is renewed on first use:
+    // the renewal says when the new one expires, and it is renewed in time
+    // from then on (left as it was, it is used until Amazon Quick refuses it)
+    if (!auth.expires && auth.refresh && auth.refresh !== "none") {
+      try {
+        return await this.renew()
+      } catch (e) {
+        if (e?.signIn === "expired") throw e
+        return auth
+      }
+    }
+    if (!auth.expires || auth.expires - Date.now() > REFRESH_LEAD_MS) return auth
     try {
       return await this.renew()
     } catch (e) {
@@ -116,6 +129,9 @@ export class Account {
     if (!auth) return Promise.resolve(null)
     this.#renewing ??= (async () => {
       const next = { ...auth, ...(await oauth.refresh(auth)) }
+      // a renewal that names no expiry is taken to last as Amazon Quick's
+      // tokens do (an hour), less a margin, so it is renewed again in time
+      if (!next.expires) next.expires = Date.now() + UNKNOWN_LIFETIME_MS
       saveAccount(next)
       return next
     })().finally(() => (this.#renewing = null))

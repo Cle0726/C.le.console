@@ -6,7 +6,7 @@
 import { UPSTREAM_PROMPT_OVERRIDE, isSystemMessage, languageNote, lastUserText, promptBlocks, systemText, titleFor, uuid } from "./messages.mjs"
 import * as qbs from "./qbs.mjs"
 import { ThreadStore, digest, messageKey } from "./threads.mjs"
-import { BridgeStream, TOOL_DETAILS, TOOL_REMINDER, buildToolBridgePrompt, parseClientToolCalls, parseToolChoice, requestedToolNames } from "./toolbridge.mjs"
+import { BridgeStream, TOOL_DETAILS, TOOL_REMINDER, ToolCallError, buildToolBridgePrompt, parseClientToolCalls, parseToolChoice, requestedToolNames } from "./toolbridge.mjs"
 import { UpstreamError, chat, frameBytes, sessionFromAuth, userMessage } from "./upstream.mjs"
 import { isGatewayProvider } from "./wire.mjs"
 
@@ -64,6 +64,31 @@ const span = (secs) => (secs >= 5400 ? `${Math.round(secs / 3600)} hours` : `${M
 // does when an allowance is used up, in words that are not known.
 export const refused = (error) => error instanceof UpstreamError && (error.kind === "upstream" || (error.kind === "handshake" && error.status === 429))
 
+// A failure that the same request, sent again a moment later, is likely to
+// get past: the connection could not be made or was lost, Amazon Quick took
+// too long, or the model wrote a tool call that could not be read. It is
+// answered as "overloaded" (503 with Retry-After, 529 on the Anthropic
+// route), which agents retry by themselves, rather than as a failure that
+// ends their turn.
+export function retryable(error) {
+  if (error instanceof ToolCallError) return true
+  if (!(error instanceof UpstreamError)) return false
+  if (error.kind === "transport" || error.kind === "timeout" || error.kind === "empty") return true
+  // an error event of Amazon Quick's own, other than a limit it sets
+  if (error.kind === "upstream") return !THROTTLED.test(error.message)
+  return error.kind === "handshake" && (error.status === 0 || error.status >= 500)
+}
+
+// Dial failures are tried again here first, after these pauses: they were
+// seen to come in runs of a few seconds to a few minutes.
+const DIAL_RETRY_MS = [1_000, 2_000, 4_000, 8_000]
+const pause = (ms, signal) =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason)
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener("abort", () => (clearTimeout(timer), reject(signal.reason)), { once: true })
+  })
+
 // The answer for a turn that failed before anything was sent. `spent` is
 // the account's used-up allowance (qbs.spentAllowance), when it has one.
 export function failureResponse(error, spent = null) {
@@ -73,6 +98,7 @@ export function failureResponse(error, spent = null) {
       ...(spent.secs > 0 ? { "retry-after": String(Math.min(spent.secs, REST_MAX_SECS)) } : {}),
     })
   }
+  if (retryable(error)) return errorResponse(503, "overloaded", String(error?.message ?? error), { "retry-after": "2" })
   if (!(error instanceof UpstreamError)) return errorResponse(502, "upstream_error", String(error?.message ?? error))
   if (error.kind === "handshake" && error.status === 401)
     return errorResponse(401, "upstream_session_unavailable", `Amazon Quick refused the sign-in; sign in again (${error.message})`, {
@@ -233,7 +259,8 @@ export async function compose(turn, { auth, cfg, session, thread, threadId, sign
     if (!set()) blocks[0] = longestFit(blocks[0], (cut) => ((blocks[0] = cut), set()))
     set()
   }
-  for (const image of images.slice(0, 10)) {
+  // the newest ten: a picture just read matters more than old ones
+  for (const image of images.slice(-10)) {
     try {
       await attach(image.name, image.mimeType, Buffer.from(image.base64, "base64"))
     } catch (e) {
@@ -245,6 +272,23 @@ export async function compose(turn, { auth, cfg, session, thread, threadId, sign
   return { input, custom: instructed ? asked : thread?.custom ?? "" }
 }
 
+// Amazon Quick's content filter sometimes ends a reply with its notice as
+// the reply's own text rather than as an error. Asked again, the same turn
+// usually passes, so it is treated as a failure worth retrying.
+const FILTER_NOTICE = /did not pass our automated check|content filter stopped this reply/i
+export const filterNotice = (text) => text.trim().length < 400 && FILTER_NOTICE.test(text)
+
+// Worth asking again here, on a new thread: what retryable says, and the
+// content filter's notice when it comes as a guardrail event ("did not pass
+// our automated check"), which passes on a second try as often as the notice
+// as text does. Should every try be stopped, it is still answered as the
+// guardrail's 400, not as "overloaded": the agent would only ask again.
+const askAgain = (error) => retryable(error) || (error instanceof UpstreamError && error.kind === "blocked" && filterNotice(error.message))
+
+function filtered(text, calls) {
+  if (!calls.length && filterNotice(text)) throw new UpstreamError("upstream", `content filter: ${text.trim()}`)
+}
+
 async function complete(turn, run) {
   let reasoning = ""
   const res = await run((event) => {
@@ -252,11 +296,18 @@ async function complete(turn, run) {
   })
   let text = res.text
   let calls = []
-  if (turn.bridge) {
-    ;({ text, replies: calls } = parseClientToolCalls(text, turn.bridgeAllowed))
-    if (!turn.parallel) calls = calls.slice(0, 1)
+  try {
+    if (turn.bridge) {
+      ;({ text, replies: calls } = parseClientToolCalls(text, turn.bridgeAllowed))
+      if (!turn.parallel) calls = calls.slice(0, 1)
+    }
+    if (!text.trim() && !calls.length) throw new UpstreamError("empty", "upstream returned no text or tool calls")
+    filtered(text, calls)
+  } catch (e) {
+    // the thread holds the reply that failed: it is not continued
+    threads.drop({ id: res.threadId })
+    throw e
   }
-  if (!text.trim() && !calls.length) return errorResponse(502, "upstream_error", "upstream returned no text or tool calls")
   const message = { role: "assistant", content: text.trim() ? text : null }
   if (reasoning) message.reasoning_content = reasoning
   if (calls.length) message.tool_calls = calls.map((c) => wireToolCall(c))
@@ -270,13 +321,33 @@ async function complete(turn, run) {
   })
 }
 
+// How many times a streamed turn is asked again, on a new thread, when it
+// fails in a way worth retrying after its stream has started.
+// The content filter was seen to stop the same turn two or three times in a
+// row before letting it through; each stop comes within seconds.
+const STREAM_RETRIES = 4
+
+// A line on stderr (the gateway's log) for what happens inside a stream,
+// where no status is left to tell it.
+const note = (line) => {
+  try {
+    process.stderr.write(`${new Date().toISOString()} ${line}\n`)
+  } catch {}
+}
+
 // Streams a turn as SSE. The Response is returned once the first chunk is
 // ready, so a turn that fails before that is still answered with a status
 // (and magpie can move on to another account). A turn that has written
 // nothing after `headerWaitMs` is answered then, with an open stream: the
 // refusals come within seconds, and an agent left without an answer for
 // minutes gives the request up.
-function stream(turn, run, abort, headerWaitMs = 0) {
+//
+// With client tools (an agent's turn), the reply's text is held until the
+// turn is complete, the thinking still streaming as it comes. A turn that
+// fails partway (the content filter, a lost connection) is then asked again
+// by `again()` on a new thread, unseen by the client: once a stream has
+// started, an agent takes an error in it as the end of its turn.
+function stream(turn, run, abort, headerWaitMs = 0, again = null) {
   const encoder = new TextEncoder()
   let controller
   let started = false
@@ -315,37 +386,70 @@ function stream(turn, run, abort, headerWaitMs = 0) {
     closed = true
   }
 
-  let sawText = false
-  const text = (t) => {
-    sawText = true
-    chunk({ content: t })
-  }
-  const bridge = turn.bridge ? new BridgeStream(turn.bridgeAllowed, text) : null
-
-  run((event) => {
-    if (!event.text) return
-    if (event.type === "reasoning") return chunk({ reasoning_content: event.text })
-    if (event.type !== "text") return
-    if (bridge) bridge.push(event.text)
-    else text(event.text)
-  })
-    .then((res) => {
+  const hold = turn.bridge
+  const once = async (run) => {
+    let sawText = false
+    let held = ""
+    const text = (t) => {
+      sawText = true
+      if (hold) held += t
+      else chunk({ content: t })
+    }
+    const bridge = turn.bridge ? new BridgeStream(turn.bridgeAllowed, text) : null
+    let res
+    try {
+      res = await run((event) => {
+        if (!event.text) return
+        if (event.type === "reasoning") return chunk({ reasoning_content: event.text })
+        if (event.type !== "text") return
+        if (bridge) bridge.push(event.text)
+        else text(event.text)
+      })
       let calls = bridge ? bridge.finish() : []
       if (!turn.parallel) calls = calls.slice(0, 1)
-      if (!sawText && !calls.length) throw new UpstreamError("upstream", "upstream returned no text or tool calls")
+      if (!sawText && !calls.length) throw new UpstreamError("empty", "upstream returned no text or tool calls")
+      if (hold) filtered(held, calls)
+      if (held) chunk({ content: held })
       calls.forEach((c, i) => chunk({ tool_calls: [wireToolCall(c, i)] }))
       chunk({}, calls.length ? "tool_calls" : "stop")
       if (turn.includeUsage) {
         raw({ id: turn.id, object: "chat.completion.chunk", created: turn.created, model: turn.model, choices: [], usage: usageBody(res.usage) })
       }
       end()
-    })
-    .catch((error) => {
-      clearTimeout(waiting)
-      if (!started) return first.reject(error)
-      raw({ error: { message: String(error?.message ?? error), type: "upstream_error", code: "upstream_error" } })
-      end()
-    })
+    } catch (error) {
+      // the thread holds the reply that failed: it is not continued
+      if (res?.threadId) threads.drop({ id: res.threadId })
+      error.shown = sawText && !hold
+      throw error
+    }
+  }
+
+  ;(async () => {
+    let current = run
+    for (let tries = 0; ; tries++) {
+      try {
+        return await once(current)
+      } catch (error) {
+        const worth = again && askAgain(error) && !error.shown && tries < STREAM_RETRIES && !closed && !abort.signal.aborted
+        const why = String(error?.message ?? error).replace(/\s+/g, " ").slice(0, 200)
+        if (!closed && !abort.signal.aborted) note(`stream ${worth ? `retry ${tries + 1}` : "failed"}: ${why}`)
+        if (worth) {
+          try {
+            current = await again()
+            if (started) chunk({ reasoning_content: `\n[the reply did not come through (${error instanceof UpstreamError ? error.kind : "tool call"}); asking again]\n` })
+            continue
+          } catch (next) {
+            error = next
+          }
+        }
+        clearTimeout(waiting)
+        if (!started) return first.reject(error)
+        const code = retryable(error) ? "overloaded" : error instanceof UpstreamError && error.kind === "handshake" && error.status === 429 ? "rate_limit_exceeded" : "upstream_error"
+        raw({ error: { message: String(error?.message ?? error), type: code, code } })
+        return end()
+      }
+    }
+  })()
 
   return ready.then(
     () =>
@@ -381,7 +485,7 @@ export async function chatCompletions({ body, auth, cfg, signal, conversation = 
   // when the cell is not known or does not take the connection
   const tenantHost = session.wsHost
   if (isGatewayProvider(session.provider)) session.wsHost = (await qbs.cellHost(auth, abort.signal).catch(() => "")) || tenantHost
-  const send = (input, onEvent) =>
+  const dial = (input, onEvent) =>
     chat({ session, cfg, input, signal: abort.signal, onEvent }).catch((e) => {
       const refusedDial = e instanceof UpstreamError && e.kind === "handshake" && e.status !== 401 && e.status !== 403
       if (session.wsHost === tenantHost || !refusedDial || abort.signal.aborted) throw e
@@ -389,9 +493,22 @@ export async function chatCompletions({ body, auth, cfg, signal, conversation = 
       session.wsHost = tenantHost
       return chat({ session, cfg, input, signal: abort.signal, onEvent })
     })
+  // a connection that could not be made is made again before the caller
+  // hears of it; nothing reached Amazon Quick, so nothing is sent twice
+  const send = async (input, onEvent) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await dial(input, onEvent)
+      } catch (e) {
+        if (!(e?.dial && retryable(e)) || attempt >= DIAL_RETRY_MS.length || abort.signal.aborted) throw e
+        await pause(DIAL_RETRY_MS[attempt], abort.signal)
+      }
+    }
+  }
   const account = `${auth?.tenantUrl}|${auth?.accountId}`
   const keys = turn.convo.map(messageKey)
-  const attempt = async (thread) => {
+  // The turn, ready to run on `thread` (null: a new one).
+  const runFor = async (thread) => {
     const threadId = thread?.id ?? uuid()
     let composed
     try {
@@ -411,14 +528,32 @@ export async function chatCompletions({ body, auth, cfg, signal, conversation = 
           return send(composed.input, onEvent)
         })
         if (cfg.stateful) threads.commit({ id: threadId, account, session: conversation, custom: composed.custom }, keys)
-        settle()
-        return res
+        return { ...res, threadId }
       } catch (e) {
         threads.drop(thread)
         throw e
       }
     }
-    return turn.stream ? stream(turn, run, abort, cfg.headerWaitMs) : complete(turn, run)
+    return run
+  }
+  const attempt = async (thread) => {
+    const run = await runFor(thread)
+    if (turn.stream) {
+      const answer = await stream(turn, run, abort, cfg.headerWaitMs, () => runFor(null))
+      settle()
+      return answer
+    }
+    // a whole answer is asked again the same way, on a new thread
+    for (let tries = 0, current = run; ; tries++) {
+      try {
+        const answer = await complete(turn, current)
+        settle()
+        return answer
+      } catch (e) {
+        if (!askAgain(e) || tries >= STREAM_RETRIES || abort.signal.aborted) throw e
+        current = await runFor(null)
+      }
+    }
   }
 
   const thread = cfg.stateful ? threads.match(account, conversation, keys) : null

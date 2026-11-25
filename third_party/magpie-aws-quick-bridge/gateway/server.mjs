@@ -114,6 +114,11 @@ export function createGateway({ apiKey, account, options = {}, log = () => {} })
         return fail(401, `${e.message}; run: npx magpie-aws-quick-bridge login`)
       }
     }
+    // why a turn failed, for whoever reads the log later
+    if (!answer.ok) {
+      const said = await answer.clone().text().catch(() => "")
+      log(`${api} -> ${answer.status} ${said.replace(/\s+/g, " ").slice(0, 300)}`)
+    }
     if (api === "messages") return anthropic.fromChat(answer, req)
     if (api === "responses") return responses.fromChat(answer, req)
     return answer

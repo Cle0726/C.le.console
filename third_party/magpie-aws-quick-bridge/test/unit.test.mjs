@@ -83,13 +83,45 @@ describe("messages", () => {
 describe("tool bridge", () => {
   const allowed = new Set(["get_weather"])
 
-  test("markers become tool calls, unknown tools stay text", () => {
+  test("markers become tool calls, unknown tools too", () => {
     const { text, replies } = toolbridge.parseClientToolCalls('ok <client_tool_call>{"name":"get_weather","arguments":{"city":"Paris"}}</client_tool_call>', allowed)
     expect(text).toBe("ok")
     expect(replies).toHaveLength(1)
     expect(replies[0]).toMatchObject({ name: "get_weather", arguments: '{"city":"Paris"}' })
-    const unknown = '<client_tool_call>{"name":"rm","arguments":{}}</client_tool_call>'
-    expect(toolbridge.parseClientToolCalls(unknown, allowed)).toEqual({ text: unknown, replies: [] })
+    const unknown = toolbridge.parseClientToolCalls('<client_tool_call>{"name":"TaskStop","arguments":{"task_id":"x"}}</client_tool_call>', allowed)
+    expect(unknown.text).toBe("")
+    expect(unknown.replies[0]).toMatchObject({ name: "TaskStop", arguments: '{"task_id":"x"}' })
+  })
+
+  test("hand-written JSON is mended", () => {
+    const call = (payload) => toolbridge.parseClientToolCalls(`<client_tool_call>${payload}</client_tool_call>`, allowed).replies.map((r) => [r.name, JSON.parse(r.arguments)])
+    // a closing brace left out
+    expect(call('{"name":"Read","arguments":{"file_path":"F:\\\\Projects\\\\open-engines-1123.md"}')).toEqual([["Read", { file_path: "F:\\Projects\\open-engines-1123.md" }]])
+    // raw line breaks in a heredoc
+    expect(call('{"name":"Bash","arguments":{"command":"cat >> a.md <<\'EOF\'\nline one\n\tline two\nEOF"}}')).toEqual([["Bash", { command: "cat >> a.md <<'EOF'\nline one\n\tline two\nEOF" }]])
+    // quotes inside the command left unescaped
+    expect(call('{"name":"Bash","arguments":{"command":"gh pr create --title "fix: a, b" --body-file x.md","description":"open PR"}}')).toEqual([
+      ["Bash", { command: 'gh pr create --title "fix: a, b" --body-file x.md', description: "open PR" }],
+    ])
+    expect(call('{"name":"Bash","arguments":{"command":"grep \'[data-group="x"]\' a.html"}}')).toEqual([["Bash", { command: "grep '[data-group=\"x\"]' a.html" }]])
+    // a lone backslash in a Windows path, a trailing comma
+    expect(call('{"name":"Read","arguments":{"file_path":"C:\\Users\\a\\b.txt",}}')).toEqual([["Read", { file_path: "C:\\Users\\a\\b.txt" }]])
+    // arguments as a JSON string, itself broken
+    expect(call('{"name":"Bash","arguments":"{\\"command\\":\\"ls\\""}')).toEqual([["Bash", { command: "ls" }]])
+    // a marker left open at the end
+    expect(toolbridge.parseClientToolCalls('<client_tool_call>{"name":"get_weather","arguments":{"city":"Oslo"}}', allowed).replies[0].arguments).toBe('{"city":"Oslo"}')
+  })
+
+  test("a marker no call can be read from is an error, never text", () => {
+    expect(() => toolbridge.parseClientToolCalls("<client_tool_call>not json at all</client_tool_call>", allowed)).toThrow(toolbridge.ToolCallError)
+    expect(() => toolbridge.parseClientToolCalls('<client_tool_call>{"arguments":{}}</client_tool_call>', allowed)).toThrow(toolbridge.ToolCallError)
+    const s = new toolbridge.BridgeStream(allowed, () => {})
+    s.push("Let me look. <client_tool_call>{{{ nope")
+    expect(() => s.finish()).toThrow(toolbridge.ToolCallError)
+  })
+
+  test("valid JSON is left as it is", () => {
+    expect(toolbridge.repairJson('{"a":"x\\ny","b":[1,2]}')).toBe("")
   })
 
   test("bare and fenced JSON are accepted", () => {
@@ -128,9 +160,13 @@ describe("tool bridge", () => {
     for (const r of streamed('\n<client_tool_call>{"name":"get_weather","arguments":{}}</client_tool_call>\n')) expect(r).toEqual({ text: "", calls: ["get_weather{}"] })
   })
 
-  test("plain text, an unfinished marker and an unknown tool all arrive whole", () => {
-    for (const reply of ["a < b and <client_tool nothing", '<client_tool_call>{"name":"rm"}</client_tool_call> done', '{"not":"a tool"}', "`code` first"])
+  test("plain text and JSON that is not a call arrive whole", () => {
+    for (const reply of ["a < b and <client_tool nothing", '{"not":"a tool"}', "`code` first"])
       for (const r of streamed(reply)) expect(r).toEqual({ text: reply, calls: [] })
+  })
+
+  test("a marked call to an unlisted tool is still a call", () => {
+    for (const r of streamed('<client_tool_call>{"name":"rm"}</client_tool_call> done')) expect(r).toEqual({ text: "done", calls: ["rm{}"] })
   })
 
   test("bare JSON is held back and becomes a call", () => {
@@ -277,7 +313,7 @@ describe("requests", () => {
   })
 
   test("options have their defaults", () => {
-    expect(cfg).toMatchObject({ appVersion: "1.2.4660", surface: "QUICK_WORK_DESKTOP_WINDOWS", callbackPort: 18080, requestTimeoutMs: 300000, keepaliveMs: 25000, defaultModel: "smart" })
+    expect(cfg).toMatchObject({ appVersion: "1.2.4660", surface: "QUICK_WORK_DESKTOP_WINDOWS", callbackPort: 18080, requestTimeoutMs: 1800000, keepaliveMs: 25000, defaultModel: "smart" })
     expect(settings({ request_timeout: "90s", callback_port: 19000, thinking_effort: "HIGH", default_model: "fast" })).toMatchObject({
       requestTimeoutMs: 90000,
       callbackPort: 19000,

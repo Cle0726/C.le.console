@@ -39,7 +39,8 @@ export function settings(options = {}) {
     // what a message may weigh; Amazon Quick refuses one somewhat under 64 KB (see frameBytes). 0 sends any size
     maxFrameBytes: Number.isInteger(options.max_frame_bytes) && options.max_frame_bytes >= 0 ? options.max_frame_bytes : 63_000,
     defaultModel: mapModel(options.default_model, "smart"),
-    requestTimeoutMs: durationMs(options.request_timeout, 5 * 60_000),
+    // a whole turn; a long think is allowed for, silence is cut off sooner (READ_IDLE_MS)
+    requestTimeoutMs: durationMs(options.request_timeout, 30 * 60_000),
     // how often a ping message is sent while a reply is awaited; Amazon Quick drops a client silent for 95 seconds
     keepaliveMs: Math.min(durationMs(options.keepalive_interval, 25_000), 60_000),
     // a streamed request is answered once Amazon Quick writes or this long has passed, whichever is first; "off" waits for it to write

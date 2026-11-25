@@ -116,15 +116,102 @@ export function buildToolBridgePrompt(tools, functions, mode, name, parallel, de
 export const TOOL_REMINDER =
   '[Note from my agent: the files and the shell this is about are on my own machine. To reach them, write a client tool call as plain text, as my preferences describe: <client_tool_call>{"name":"TOOL_NAME","arguments":{...}}</client_tool_call>. Your built-in tools run on a remote service: they cannot see my machine, and a client tool called through them fails as an unknown tool.]'
 
-function parseEnvelopes(payload) {
-  const text = payload.trim()
-  if (!text) return []
-  let value
-  try {
-    value = JSON.parse(text)
-  } catch {
-    return []
+// A tool call the model wrote but that cannot be read back as one. The
+// turn is answered with a retryable error instead of the marker as text:
+// a client that gets the marker as the reply ends its turn there.
+export class ToolCallError extends Error {}
+
+// \b and \f are kept out: in JSON that already failed to parse they are a
+// path's backslash (C:\Users\a\b.txt), never a backspace or form feed
+const ESCAPES = new Set(['"', "\\", "/", "n", "r", "t", "u"])
+const CONTROL = { "\n": "\\n", "\r": "\\r", "\t": "\\t", "\b": "\\b", "\f": "\\f" }
+
+// Whether what follows a quote at `at` is JSON going on, given the bracket
+// that is open (`closer`, "}" or "]"): the end, that bracket closing, a
+// key's colon, or a comma before the next key (in an object) or value (in
+// an array).
+function closesString(source, at, closer) {
+  const rest = source.slice(at).trimStart()
+  if (!rest) return true
+  if (rest[0] === closer) return true
+  // a comma before the bracket closes (a trailing comma) or before nothing
+  if (rest[0] === "," && (!rest.slice(1).trim() || rest.slice(1).trimStart()[0] === closer)) return true
+  if (closer === "}") return rest[0] === ":" || /^,\s*"[^"\\\n]*"\s*:/.test(rest)
+  return /^,\s*["{[0-9tfn-]/.test(rest)
+}
+
+// Mends the JSON a model writes by hand: raw line breaks and tabs inside a
+// string (a multi-line shell command), quotes a command holds left
+// unescaped, a backslash that starts no escape (a Windows path), commas
+// before a closing bracket and closing brackets left out at the end.
+// Returns "" when there is nothing to mend.
+export function repairJson(source) {
+  let out = ""
+  const stack = []
+  let inString = false
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i]
+    if (inString) {
+      if (c === "\\") {
+        const next = source[i + 1]
+        if (next !== undefined && ESCAPES.has(next) && (next !== "u" || /^[0-9a-fA-F]{4}$/.test(source.slice(i + 2, i + 6)))) {
+          out += c + next
+          i++
+        } else out += "\\\\"
+      } else if (c === '"') {
+        // a quote ends the string only where JSON goes on after it; inside
+        // a shell command (--title "…") it is the command's own
+        if (closesString(source, i + 1, stack.at(-1))) {
+          inString = false
+          out += c
+        } else out += '\\"'
+      } else if (CONTROL[c]) out += CONTROL[c]
+      else if (c < " ") out += "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")
+      else out += c
+      continue
+    }
+    if (c === '"') {
+      inString = true
+      out += c
+    } else if (c === "{" || c === "[") {
+      stack.push(c === "{" ? "}" : "]")
+      out += c
+    } else if (c === "}" || c === "]") {
+      // a closer that closes nothing is dropped; one that skips an open
+      // bracket closes that bracket first
+      if (!stack.includes(c)) continue
+      out = out.replace(/,\s*$/, "")
+      while (stack.length && stack.at(-1) !== c) out += stack.pop()
+      out += stack.pop()
+    } else out += c
   }
+  if (inString) out += '"'
+  out = out.replace(/,\s*$/, "")
+  while (stack.length) out += stack.pop()
+  return out === source ? "" : out
+}
+
+function parseLoose(text) {
+  try {
+    return { value: JSON.parse(text) }
+  } catch {}
+  const mended = repairJson(text)
+  if (mended) {
+    try {
+      return { value: JSON.parse(mended) }
+    } catch {}
+  }
+  return null
+}
+
+function parseEnvelopes(payload) {
+  let text = payload.trim()
+  // a call wrapped in a Markdown fence inside the marker
+  if (text.startsWith("```")) text = text.replace(/^```[a-z]*\s*/i, "").replace(/```\s*$/, "").trim()
+  if (!text) return []
+  const parsed = parseLoose(text)
+  if (!parsed) return []
+  const value = parsed.value
   if (Array.isArray(value)) return value
   if (value && typeof value === "object") {
     if (Array.isArray(value.tool_calls) && value.tool_calls.length) return value.tool_calls
@@ -133,34 +220,51 @@ function parseEnvelopes(payload) {
   return []
 }
 
+// `allowed` null takes any tool name: a call the model marked as one is
+// passed on even when the request did not list that tool (a tool the
+// client loads later), and the client's "no such tool" puts it right.
 function repliesFrom(envelopes, allowed) {
   const out = []
   for (const env of envelopes) {
-    const name = typeof env?.name === "string" ? env.name.trim() : ""
-    if (!name || !allowed.has(name)) continue
-    out.push({ id: callId(), name, arguments: argumentString(env.arguments) })
+    const name = typeof (env?.name ?? env?.function?.name) === "string" ? (env.name ?? env.function.name).trim() : ""
+    if (!name || (allowed && !allowed.has(name))) continue
+    let args = env.arguments ?? env.input ?? env.parameters ?? env.function?.arguments
+    // arguments written as a JSON string are mended the same way
+    if (typeof args === "string" && args.trim()) {
+      const parsed = parseLoose(args.trim())
+      if (parsed && parsed.value && typeof parsed.value === "object") args = parsed.value
+    }
+    out.push({ id: callId(), name, arguments: argumentString(args) })
   }
   return out
 }
 
-// Removes valid markers from text and returns the remaining assistant text.
-// Markers naming unknown tools leave the text untouched.
+// Removes the markers from text and returns the remaining assistant text
+// and the calls they hold. `broken` counts the markers no call could be
+// read from; a marker left open at the end is read to the end.
 export function extractToolCalls(text, allowed) {
-  if (!allowed?.size) return { text, replies: [] }
+  if (!allowed?.size) return { text, replies: [], broken: 0 }
   let clean = ""
   let rest = text
   const replies = []
+  let found = 0
+  let broken = 0
   for (;;) {
     const start = rest.indexOf(TOOL_OPEN)
     if (start < 0) break
-    const end = rest.indexOf(TOOL_CLOSE, start + TOOL_OPEN.length)
-    if (end < 0) break
+    let end = rest.indexOf(TOOL_CLOSE, start + TOOL_OPEN.length)
+    const open = end < 0
+    if (open) end = rest.length
+    found++
     clean += rest.slice(0, start)
-    replies.push(...repliesFrom(parseEnvelopes(rest.slice(start + TOOL_OPEN.length, end)), allowed))
-    rest = rest.slice(end + TOOL_CLOSE.length)
+    const calls = repliesFrom(parseEnvelopes(rest.slice(start + TOOL_OPEN.length, end)), null)
+    if (!calls.length) broken++
+    replies.push(...calls)
+    rest = open ? "" : rest.slice(end + TOOL_CLOSE.length)
   }
-  if (!replies.length) return { text, replies: [] }
-  return { text: (clean + rest).trim(), replies }
+  if (!found) return { text, replies: [], broken: 0 }
+  // a stray closing tag is not shown either
+  return { text: (clean + rest).split(TOOL_CLOSE).join("").trim(), replies, broken }
 }
 
 // Handles a model that answers with a bare JSON object instead of the marker.
@@ -179,9 +283,18 @@ export function extractBareToolCall(text, allowed) {
   return replies.length ? { text: "", replies } : { text, replies: [] }
 }
 
+// Throws ToolCallError when the text holds markers and no call could be
+// read from any of them.
 export function parseClientToolCalls(text, allowed) {
   const marked = extractToolCalls(text, allowed)
+  if (marked.broken && !marked.replies.length) throw new ToolCallError(`the model wrote a tool call that could not be read: ${snippet(text)}`)
   return marked.replies.length ? marked : extractBareToolCall(text, allowed)
+}
+
+function snippet(text) {
+  const at = text.indexOf(TOOL_OPEN)
+  const s = (at >= 0 ? text.slice(at) : text).replace(/\s+/g, " ")
+  return s.length > 200 ? s.slice(0, 200) + "…" : s
 }
 
 // Streams assistant text while a tool-bridge turn is still running. Text is
@@ -245,7 +358,12 @@ export class BridgeStream {
   finish() {
     const rest = this.pending
     this.pending = ""
-    const { text, replies } = this.emitted ? extractToolCalls(rest, this.allowed) : parseClientToolCalls(rest, this.allowed)
+    let found
+    if (this.emitted) {
+      found = extractToolCalls(rest, this.allowed)
+      if (found.broken && !found.replies.length) throw new ToolCallError(`the model wrote a tool call that could not be read: ${snippet(rest)}`)
+    } else found = parseClientToolCalls(rest, this.allowed)
+    const { text, replies } = found
     if (replies.length) {
       if (text.trim()) {
         this.emitted = true

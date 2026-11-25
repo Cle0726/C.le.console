@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// C.le.控制台 driver for the unmodified magpie-AWS-Quick-bridge sources in
+// C.le.控制台 driver for the magpie-AWS-Quick-bridge sources (modified, see NOTICE.md) in
 // third_party/magpie-aws-quick-bridge (© DaBinBinah, GPL-3.0). The console
 // runs this as a separate process; it talks to it only through stdout JSON
 // lines and the local HTTP API. Each account lives in its own folder
@@ -17,6 +17,11 @@
 //       Amazon Quick and saves it; prints {"event":"success",...} or {"event":"error",...}
 
 import { createHash } from "node:crypto"
+import { spawn } from "node:child_process"
+import fs from "node:fs"
+import { createServer, request as httpRequest } from "node:http"
+import net from "node:net"
+import path from "node:path"
 import { createGateway, listen } from "../../third_party/magpie-aws-quick-bridge/gateway/server.mjs"
 import * as store from "../../third_party/magpie-aws-quick-bridge/gateway/store.mjs"
 import { browserSignIn } from "../../third_party/magpie-aws-quick-bridge/plugin/login.mjs"
@@ -100,10 +105,50 @@ function quotaGuard(handle, account, apiKey) {
   }
 }
 
+// Everything a gateway writes to stderr also goes to one log shared by all
+// accounts, each line led by the port: <accounts>/../logs/bridge.log
+// (~/.antigravity_cle/aws-quick/logs/bridge.log), moved to bridge.log.1 once
+// it passes LOG_MAX. The console discards the sidecar's stderr.
+const LOG_MAX = 20 * 1024 * 1024
+
+function logToFile(home, port) {
+  const dir = path.join(path.dirname(path.dirname(path.resolve(home))), "logs")
+  const file = path.join(dir, "bridge.log")
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+  } catch {
+    return
+  }
+  const write = process.stderr.write.bind(process.stderr)
+  let pending = ""
+  process.stderr.write = (chunk, ...rest) => {
+    try {
+      pending += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
+      const at = pending.lastIndexOf("\n")
+      if (at >= 0) {
+        const lines = pending.slice(0, at).split("\n").map((l) => `[${port}] ${l}\n`).join("")
+        pending = pending.slice(at + 1)
+        try {
+          if (fs.statSync(file).size > LOG_MAX) fs.renameSync(file, file + ".1")
+        } catch {}
+        fs.appendFileSync(file, lines)
+      }
+    } catch {}
+    try {
+      return write(chunk, ...rest)
+    } catch {
+      return true
+    }
+  }
+}
+
 async function serve(flags) {
   const cfg = setup(flags)
   const port = flags.port ? Number(flags.port) : cfg.port
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--port takes a number from 0 to 65535")
+  // started by `lazy` on a private port, its log lines name the account's own
+  logToFile(flags.home, flags["log-as"] || port)
+  process.stderr.write(`${new Date().toISOString()} started ${flags.home}\n`)
   const account = new store.Account()
   const log = (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`)
   const gateway = quotaGuard(createGateway({ apiKey: cfg.apiKey, account, options: cfg.options, log }), account, cfg.apiKey)
@@ -117,6 +162,230 @@ async function serve(flags) {
   process.stdin.on("end", stop)
   process.stdin.on("close", stop)
   process.stdin.resume()
+  process.on("SIGINT", stop)
+  process.on("SIGTERM", stop)
+}
+
+// cle-aws-quick lazy --accounts <dir> [--idle-minutes 30]
+// One process that stands in for every account whose port nobody serves:
+// it listens on that port, answers /health itself, starts the account's
+// gateway (serve, on a private port) on the first real request and passes
+// requests through, and stops the gateway again after it has been idle.
+// Accounts whose gateway already runs are left alone; the folder is looked
+// at again every minute for new accounts and gateways that went away.
+async function lazy(flags) {
+  const accountsDir = path.resolve(flags.accounts || "")
+  if (!flags.accounts || !fs.existsSync(accountsDir)) throw new Error("--accounts <dir> is required")
+  const idleMs = Math.max(1, Number(flags["idle-minutes"]) || 30) * 60_000
+  logToFile(path.join(accountsDir, "x"), "lazy")
+  const log = (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`)
+  const managed = new Map() // port -> { home, server, child, inner, starting, last, busy }
+
+  const freePort = () =>
+    new Promise((resolve, reject) => {
+      const s = net.createServer()
+      s.once("error", reject)
+      s.listen(0, "127.0.0.1", () => {
+        const { port } = s.address()
+        s.close(() => resolve(port))
+      })
+    })
+  const healthy = (port) =>
+    new Promise((resolve) => {
+      const req = httpRequest({ host: "127.0.0.1", port, path: "/health", timeout: 800 }, (res) => {
+        res.resume()
+        resolve(res.statusCode === 200)
+      })
+      req.on("error", () => resolve(false))
+      req.on("timeout", () => (req.destroy(), resolve(false)))
+      req.end()
+    })
+  // run from source, node runs this file again; packaged (pkg), starting the
+  // program's own executable runs the script it is given first, which is
+  // this one's own path inside the package, so it is the same call
+  const self = [process.execPath, [process.argv[1]]]
+
+  async function start(entry, port) {
+    entry.starting ??= (async () => {
+      const inner = await freePort()
+      const child = spawn(self[0], [...self[1], "serve", "--home", entry.home, "--port", String(inner), "--log-as", String(port)], {
+        // real pipes, drained: a gateway whose stdout is closed dies on its first line
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      })
+      child.stdout.resume()
+      child.stderr.resume()
+      child.on("exit", () => {
+        if (entry.child === child) entry.child = null
+      })
+      for (let i = 0; i < 100; i++) {
+        if (child.exitCode !== null) break
+        if (await healthy(inner)) {
+          entry.child = child
+          entry.inner = inner
+          log(`port ${port}: started its gateway (${Math.round((Date.now() - entry.asked) / 100) / 10}s)`)
+          return
+        }
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      child.kill()
+      throw new Error("the account's gateway did not start")
+    })().finally(() => (entry.starting = null))
+    return entry.starting
+  }
+
+  function serveFor(port, home) {
+    const entry = { home, server: null, child: null, inner: 0, starting: null, last: Date.now(), busy: 0, asked: 0 }
+    entry.server = createServer(async (req, res) => {
+      if (req.method === "GET" && (req.url === "/health" || req.url === "/")) {
+        res.writeHead(200, { "content-type": "application/json" })
+        return res.end(JSON.stringify({ ok: true, name: "magpie-aws-quick-bridge" }))
+      }
+      entry.busy++
+      entry.last = Date.now()
+      try {
+        if (!entry.child) {
+          entry.asked = Date.now()
+          await start(entry, port)
+        }
+        const up = httpRequest({ host: "127.0.0.1", port: entry.inner, method: req.method, path: req.url, headers: req.headers }, (answer) => {
+          res.writeHead(answer.statusCode, answer.headers)
+          answer.pipe(res)
+        })
+        up.on("error", (e) => {
+          if (!res.headersSent) {
+            res.writeHead(529, { "content-type": "application/json", "retry-after": "2" })
+            res.end(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: `local gateway: ${e.message}` } }))
+          } else res.destroy()
+        })
+        res.on("close", () => {
+          if (!res.writableFinished) up.destroy()
+        })
+        req.pipe(up)
+        await new Promise((r) => res.on("close", r))
+      } catch (e) {
+        if (!res.headersSent) {
+          res.writeHead(529, { "content-type": "application/json", "retry-after": "2" })
+          res.end(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: `local gateway: ${e?.message ?? e}` } }))
+        }
+      } finally {
+        entry.busy--
+        entry.last = Date.now()
+      }
+    })
+    return new Promise((resolve) => {
+      entry.server.once("error", () => resolve(false))
+      entry.server.listen(port, "127.0.0.1", () => {
+        managed.set(port, entry)
+        resolve(true)
+      })
+    })
+  }
+
+  async function scan() {
+    let dirs = []
+    try {
+      dirs = fs.readdirSync(accountsDir, { withFileTypes: true }).filter((d) => d.isDirectory())
+    } catch {}
+    for (const d of dirs) {
+      const home = path.join(accountsDir, d.name)
+      let port = 0
+      try {
+        if (!JSON.parse(fs.readFileSync(path.join(home, "account.json"), "utf8")).access) continue
+        port = Number(JSON.parse(fs.readFileSync(path.join(home, "cle.json"), "utf8")).port)
+      } catch {
+        continue
+      }
+      if (!port || managed.has(port)) continue
+      if (await healthy(port)) continue // its own gateway runs: left alone
+      if (await serveFor(port, home)) log(`port ${port}: waiting for requests`)
+    }
+  }
+
+  const reap = () => {
+    for (const [port, entry] of managed)
+      if (entry.child && !entry.busy && Date.now() - entry.last > idleMs) {
+        entry.child.kill()
+        entry.child = null
+        log(`port ${port}: stopped its gateway after ${Math.round(idleMs / 60_000)} idle minutes`)
+      }
+  }
+
+  // Every account's token, whether or not its gateway runs, renewed on a
+  // timer: a gateway renews only when a request comes, so an idle account's
+  // token would otherwise be renewed by nobody. Renewing does not change the
+  // refresh token (measured), so a gateway renewing the same account at the
+  // same time does no harm. Done here, in this process, one account at a time.
+  const statusFile = path.join(path.dirname(accountsDir), "logs", "renewal-status.json")
+  const renewal = {}
+  try {
+    Object.assign(renewal, JSON.parse(fs.readFileSync(statusFile, "utf8")))
+  } catch {}
+  const writeStatus = () => {
+    try {
+      fs.writeFileSync(statusFile, JSON.stringify(renewal, null, 2))
+    } catch {}
+  }
+  const RENEW_BEFORE_MS = 30 * 60_000 // half of the 60-minute token
+  const RETRY_MS = 60_000
+  let renewing = false
+  async function renewAll() {
+    if (renewing) return
+    renewing = true
+    try {
+      for (const d of fs.readdirSync(accountsDir, { withFileTypes: true })) {
+        if (!d.isDirectory()) continue
+        const home = path.join(accountsDir, d.name)
+        let auth, port
+        try {
+          auth = JSON.parse(fs.readFileSync(path.join(home, "account.json"), "utf8"))
+          port = String(JSON.parse(fs.readFileSync(path.join(home, "cle.json"), "utf8")).port)
+        } catch {
+          continue
+        }
+        if (!auth?.access || !auth.refresh || auth.refresh === "none") continue
+        const state = (renewal[port] ??= {})
+        if (auth.expires && auth.expires - Date.now() >= RENEW_BEFORE_MS) continue
+        // a failed renewal is tried again a minute later, after three in a row every five
+        const wait = (state.failures || 0) >= 3 ? 5 * RETRY_MS : RETRY_MS
+        if (state.failedAt && Date.now() - Date.parse(state.failedAt) < wait) continue
+        process.env.AWS_QUICK_BRIDGE_HOME = home
+        try {
+          let options = {}
+          try {
+            options = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8")).options ?? {}
+          } catch {}
+          oauth.setEndpoints({ oidcBase: options.oidc_base, discoveryUrl: options.discovery_url, dataPlaneUrl: options.data_plane_url })
+          const next = await new store.Account().renew()
+          state.renewedAt = new Date().toISOString()
+          state.expires = next?.expires ? new Date(next.expires).toISOString() : ""
+          state.failedAt = ""
+          state.lastError = ""
+          state.failures = 0
+          log(`port ${port}: token renewed, good until ${state.expires.slice(11, 19)}Z`)
+        } catch (e) {
+          state.failedAt = new Date().toISOString()
+          state.lastError = String(e?.message ?? e).slice(0, 300)
+          state.failures = (state.failures || 0) + 1
+          log(`port ${port}: RENEWAL FAILED (${state.failures}): ${state.lastError}`)
+        }
+        writeStatus()
+      }
+    } finally {
+      renewing = false
+    }
+  }
+
+  await scan()
+  emit({ event: "lazy", ports: [...managed.keys()].sort((a, b) => a - b) })
+  setInterval(() => void scan().catch(() => {}), 60_000)
+  setInterval(reap, 60_000)
+  void renewAll().catch(() => {})
+  setInterval(() => void renewAll().catch(() => {}), 60_000)
+  const stop = () => {
+    for (const entry of managed.values()) entry.child?.kill()
+    process.exit(0)
+  }
   process.on("SIGINT", stop)
   process.on("SIGTERM", stop)
 }
@@ -286,6 +555,7 @@ async function main() {
   if (command === "login") return login(flags)
   if (command === "serve") return serve(flags)
   if (command === "status") return status(flags)
+  if (command === "lazy") return lazy(flags)
   if (command === "import") return importAccount(flags)
   if (command === "version") return emit({ event: "version", version: "magpie-aws-quick-bridge 0.3.11 (5a8d414)" })
   throw new Error("usage: cle-aws-quick login|serve|status|import --home <dir>")

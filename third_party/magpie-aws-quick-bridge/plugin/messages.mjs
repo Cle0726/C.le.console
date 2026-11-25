@@ -63,7 +63,8 @@ export function contentText(content, images) {
         const data = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/is.exec(url)
         if (data && images && IMAGE_EXT[data[1].toLowerCase()]) {
           const mimeType = data[1].toLowerCase()
-          const name = `image_${images.length + 1}.${IMAGE_EXT[mimeType]}`
+          // named apart from those of earlier turns in the same thread
+          const name = `image_${images.length + 1}_${uuid().slice(0, 6)}.${IMAGE_EXT[mimeType]}`
           images.push({ name, mimeType, base64: data[2] })
           out += `[image: attached file ${name}]`
         } else out += url && !url.startsWith("data:") ? `[image: ${url}]` : "[image]"

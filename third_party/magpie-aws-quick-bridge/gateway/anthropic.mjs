@@ -8,7 +8,18 @@ import { eventStream, failure, textOf, turnEvents, turnResult } from "./sse.mjs"
 
 const TYPES = { 400: "invalid_request_error", 401: "authentication_error", 403: "permission_error", 404: "not_found_error", 413: "request_too_large", 429: "rate_limit_error", 529: "overloaded_error" }
 
-export const error = (status, message) => Response.json({ type: "error", error: { type: TYPES[status] ?? "api_error", message } }, { status })
+// callers that serve every API pass an OpenAI error code third; it is not used here
+export const error = (status, message, headers) =>
+  Response.json({ type: "error", error: { type: TYPES[status] ?? "api_error", message } }, { status, headers: headers && typeof headers === "object" ? headers : {} })
+
+// A turn worth asking again (plugin/chat.mjs retryable) is "overloaded": 529,
+// which Claude Code retries by itself, where a 502 ends its turn.
+const overloaded = (code) => code === "overloaded"
+const streamError = (code) => (overloaded(code) ? "overloaded_error" : code === "rate_limit_exceeded" ? "rate_limit_error" : "api_error")
+
+// How often an open stream says it is alive while Amazon Quick thinks
+// without writing.
+const PING_MS = 15_000
 
 // Claude Code's billing line and its "You are Claude Code" opening are
 // taken care of where every caller's instructions are read (agentNeutral).
@@ -21,15 +32,26 @@ function image(block) {
   return null
 }
 
-function resultText(block) {
-  const parts = typeof block.content === "string" ? [block.content] : []
+// A tool result as chat content: text alone stays a string; with images
+// (Claude Code's Read of a picture) it is a list of parts, the images as
+// image_url parts like those of a user message, so they reach Amazon Quick.
+function resultContent(block) {
+  const parts = typeof block.content === "string" ? [{ type: "text", text: block.content }] : []
   for (const p of Array.isArray(block.content) ? block.content : []) {
-    if (p?.type === "text" && typeof p.text === "string") parts.push(p.text)
-    else if (p?.type === "image") parts.push("[image]")
-    else if (p?.type === "tool_reference" && p.tool_name) parts.push(`Tool loaded: ${p.tool_name}`)
+    if (p?.type === "text" && typeof p.text === "string") parts.push({ type: "text", text: p.text })
+    else if (p?.type === "image") parts.push(image(p) ?? { type: "text", text: "[image]" })
+    else if (p?.type === "tool_reference" && p.tool_name) parts.push({ type: "text", text: `Tool loaded: ${p.tool_name}` })
   }
-  const text = parts.join("\n")
-  return block.is_error && !/^error/i.test(text) ? `Error: ${text}`.trim() : text
+  const text = parts.filter((p) => p.type === "text").map((p) => p.text).join("\n")
+  const failed = block.is_error && !/^error/i.test(text)
+  if (parts.every((p) => p.type === "text")) return failed ? `Error: ${text}`.trim() : text
+  // between parts, as the text alone is joined
+  const out = []
+  for (const p of parts) {
+    if (out.length) out.push({ type: "text", text: "\n" })
+    out.push(p)
+  }
+  return failed ? [{ type: "text", text: "Error: " }, ...out] : out
 }
 
 function messages(list) {
@@ -52,7 +74,7 @@ function messages(list) {
       continue
     }
     // a turn's tool results come before what the user wrote after them
-    for (const b of blocks) if (b?.type === "tool_result") out.push({ role: "tool", tool_call_id: String(b.tool_use_id ?? ""), content: resultText(b) })
+    for (const b of blocks) if (b?.type === "tool_result") out.push({ role: "tool", tool_call_id: String(b.tool_use_id ?? ""), content: resultContent(b) })
     const parts = []
     for (const b of blocks) {
       if (b?.type === "text" && typeof b.text === "string") parts.push({ type: "text", text: b.text })
@@ -120,8 +142,10 @@ function parsed(args) {
 // The chat completions answer as a Messages one.
 export async function fromChat(response, req) {
   if (!response.ok) {
+    const retryAfter = response.headers.get("retry-after")
     const f = await failure(response)
-    return error(f.status, f.message)
+    const headers = retryAfter ? { "retry-after": retryAfter } : {}
+    return error(overloaded(f.code) ? 529 : f.status, f.message, headers)
   }
   const id = "msg_" + randomUUID().replaceAll("-", "")
   const head = { id, type: "message", role: "assistant", model: req.model }
@@ -141,6 +165,18 @@ export async function fromChat(response, req) {
       message: { ...head, content: [], stop_reason: null, stop_sequence: null, usage: usage({ input: 0, output: 0, cached: 0 }) },
     })
     send("ping", { type: "ping" })
+    const alive = setInterval(() => send("ping", { type: "ping" }), PING_MS)
+    try {
+      await write(send)
+    } catch (e) {
+      // never a stream that just stops: the client would take it as an empty answer
+      send("error", { type: "error", error: { type: "overloaded_error", message: `the answer broke off: ${e?.message ?? e}` } })
+    } finally {
+      clearInterval(alive)
+    }
+  })
+
+  async function write(send) {
     let index = -1
     let open = ""
     let calls = 0
@@ -170,14 +206,14 @@ export async function fromChat(response, req) {
         send("content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(parsed(event.call.arguments)) } })
       } else if (event.type === "error") {
         close()
-        return send("error", { type: "error", error: { type: "api_error", message: event.message } })
+        return send("error", { type: "error", error: { type: streamError(event.code), message: event.message } })
       } else if (event.type === "done") {
         close()
         send("message_delta", { type: "message_delta", delta: { stop_reason: calls ? "tool_use" : "end_turn", stop_sequence: null }, usage: usage(event.usage) })
         send("message_stop", { type: "message_stop" })
       }
     }
-  })
+  }
 }
 
 // POST /v1/messages/count_tokens. Amazon Quick counts nothing ahead of a

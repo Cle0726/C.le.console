@@ -210,7 +210,9 @@ export function chat({ session, cfg, input, signal, onEvent }) {
     try {
       ws = new WebSocket(url, options)
     } catch (e) {
-      reject(new UpstreamError("transport", `upstream WebSocket dial failed: ${e.message}`))
+      const error = new UpstreamError("transport", `upstream WebSocket dial failed: ${e.message}`)
+      error.dial = true
+      reject(error)
       return
     }
     ws.binaryType = "arraybuffer"
@@ -279,12 +281,18 @@ export function chat({ session, cfg, input, signal, onEvent }) {
     const fail = (error) => {
       if (settled) return
       settled = true
+      // nothing reached Amazon Quick: the turn can be dialed again as it is
+      if (!opened && error instanceof UpstreamError) error.dial = true
       cleanup()
       reject(error)
     }
 
-    // A dropped connection after the reply started still counts as a reply.
-    const dropped = (error) => (text || tools.size ? succeed() : fail(error))
+    // A dropped connection still counts as a reply once Amazon Quick said
+    // the reply is complete. Cut off before that, the reply is a part of
+    // one: an agent would take it as the whole answer and stop, so the turn
+    // fails and is asked again.
+    let finished = false
+    const dropped = (error) => (finished && (text || tools.size) ? succeed() : fail(error))
 
     function onAbort() {
       fail(signal.reason instanceof Error ? signal.reason : new DOMException("The request was aborted", "AbortError"))
@@ -368,6 +376,7 @@ export function chat({ session, cfg, input, signal, onEvent }) {
           return
         }
         case "text_complete":
+          finished = true
           if (!text && typeof p.text === "string" && p.text) {
             text = p.text
             emit({ type: "text", text: p.text })
@@ -447,6 +456,7 @@ export function chat({ session, cfg, input, signal, onEvent }) {
             emitTool(tc)
           }
           clearTimeout(completeTimer)
+          if (!p.continuation_expected) finished = true
           completeTimer = p.continuation_expected ? null : setTimeout(succeed, AFTER_COMPLETE_MS)
           live = !!p.continuation_expected
           return
@@ -556,7 +566,9 @@ export function chat({ session, cfg, input, signal, onEvent }) {
         const dialFailed = (status) =>
           fail(new UpstreamError("handshake", `upstream WebSocket dial failed${status ? ` HTTP ${status}` : ""}: ${message}`, status))
         const status = Number(/status code: (\d{3})/.exec(message)?.[1]) || 0
-        if (status || !/Expected 101/.test(message)) return dialFailed(status)
+        // Bun says "Expected 101", Node's WebSocket "non-101 status code":
+        // the status itself (a 401 for a refused token) is asked for again
+        if (status || !/Expected 101|non-101/i.test(message)) return dialFailed(status)
         refused = true
         return void upgradeStatus(url, headers, cfg.proxy).then(dialFailed)
       }
