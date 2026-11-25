@@ -449,7 +449,30 @@ async function multi(flags) {
     const account = new store.Account(home)
     const plog = (line) => where.run(String(port), () => log(line))
     const gateway = quotaGuard(createGateway({ apiKey: cfg.apiKey, account, options: cfg.options, log: plog }), account, cfg.apiKey)
-    return { name, home, port, apiKey: cfg.apiKey, account, handle: (req) => where.run(String(port), () => gateway(req)), running: null, busy: 0, rest: 0, last: 0, missed: false }
+    return { name, home, port, apiKey: cfg.apiKey, account, handle: (req) => where.run(String(port), async () => gateway(await onlyModel(req))), running: null, busy: 0, rest: 0, last: 0, missed: false }
+  }
+
+  // pool.json "onlyModel" (e.g. "smart"): every turn, on every port and the
+  // pool, is asked of that one model, whatever the client named (an agent's
+  // background model included). Unset, the client's model is used.
+  let only = { at: 0, model: "" }
+  async function onlyModel(req) {
+    if (Date.now() - only.at > 2_000) only = { at: Date.now(), model: String(readJSON(poolFile)?.onlyModel ?? "").trim() }
+    if (!only.model || req.method !== "POST" || !TURNS.has(new URL(req.url).pathname.replace(/\/+$/, ""))) return req
+    const text = await req.text()
+    let body
+    try {
+      body = JSON.parse(text)
+    } catch {
+      return new Request(req.url, { method: req.method, headers: req.headers, body: text, signal: req.signal })
+    }
+    if (body && typeof body === "object" && body.model !== only.model) {
+      where.run(where.getStore(), () => log(`model ${String(body.model ?? "").slice(0, 40)} asked as ${only.model} (onlyModel)`))
+      body.model = only.model
+    }
+    const headers = new Headers(req.headers)
+    headers.delete("content-length")
+    return new Request(req.url, { method: req.method, headers, body: JSON.stringify(body), signal: req.signal })
   }
 
   async function scan() {
