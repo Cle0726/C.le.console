@@ -457,8 +457,8 @@ async function multi(flags) {
   // background model included). Unset, the client's model is used.
   let only = { at: 0, model: "" }
   async function onlyModel(req) {
-    if (Date.now() - only.at > 2_000) only = { at: Date.now(), model: String(readJSON(poolFile)?.onlyModel ?? "").trim() }
-    if (!only.model || req.method !== "POST" || !TURNS.has(new URL(req.url).pathname.replace(/\/+$/, ""))) return req
+    if (Date.now() - only.at > 2_000) only = { at: Date.now(), model: String(readJSON(poolFile)?.onlyModel ?? "").trim(), effort: String(readJSON(poolFile)?.onlyEffort ?? "").trim().toLowerCase() }
+    if ((!only.model && !only.effort) || req.method !== "POST" || !TURNS.has(new URL(req.url).pathname.replace(/\/+$/, ""))) return req
     const text = await req.text()
     let body
     try {
@@ -466,9 +466,16 @@ async function multi(flags) {
     } catch {
       return new Request(req.url, { method: req.method, headers: req.headers, body: text, signal: req.signal })
     }
-    if (body && typeof body === "object" && body.model !== only.model) {
+    if (body && typeof body === "object" && only.model && body.model !== only.model) {
       where.run(where.getStore(), () => log(`model ${String(body.model ?? "").slice(0, 40)} asked as ${only.model} (onlyModel)`))
       body.model = only.model
+    }
+    // "onlyEffort" (e.g. "high"): every turn thinks at that effort, asked or not
+    if (body && typeof body === "object" && only.effort) {
+      const route = new URL(req.url).pathname.replace(/\/+$/, "")
+      if (route.endsWith("/messages")) body.output_config = { ...(body.output_config ?? {}), effort: only.effort === "high" ? "max" : only.effort }
+      else if (route.endsWith("/responses")) body.reasoning = { ...(body.reasoning ?? {}), effort: only.effort }
+      else body.reasoning_effort = only.effort
     }
     const headers = new Headers(req.headers)
     headers.delete("content-length")
