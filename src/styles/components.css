@@ -379,32 +379,6 @@
   -webkit-backdrop-filter: blur(10px);
 }
 
-.filter-tab {
-  padding: 8px 16px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.filter-tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-
-.filter-tab.active {
-  color: var(--text-primary);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-}
-
 .filter-tab .count {
   background: rgba(15, 23, 42, 0.08);
   padding: 2px 8px;
@@ -554,18 +528,6 @@
 .page-tabs-row-with-leading .page-tabs {
   grid-column: 2;
   justify-self: center;
-}
-
-.page-tabs-leading .platform-group-switcher-trigger {
-  height: 42px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: var(--page-tab-item-radius, 16px);
-  background: rgba(29, 78, 216, 0.08);
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  color: var(--primary);
 }
 
 .page-tabs-leading .platform-group-switcher-trigger:hover {
@@ -896,11 +858,6 @@
     justify-self: center;
   }
 
-  .page-tabs-leading .platform-group-switcher-trigger {
-    height: 42px;
-    padding: 0 14px;
-  }
-
   .platform-group-switcher-trigger {
     height: 34px;
     padding: 0 10px;
@@ -972,112 +929,133 @@
    Buttons
    ============================================ */
 
-.btn {
+/* Shared buttons: aliases let legacy account toolbars and rows use the same
+   controls without needing per-provider styles or wrapping their handlers. */
+:is(.btn, .btn-icon, .action-btn, .card-action-btn, .folder-icon-btn,
+  .sort-direction-btn, .view-btn, .filter-tab, .page-tab, .tag-filter-btn,
+  .platform-group-switcher-trigger) {
+  --button-height: 36px;
+  --button-padding: var(--space-2) var(--space-3);
+  --button-fill: var(--app-panel);
+  --button-text: var(--app-ink);
+  --button-edge: var(--app-line-strong);
+  --button-hover: var(--app-hover);
+  --button-pressed: var(--app-pressed);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-radius: var(--radius-md);
-  font-size: 14px;
-  font-weight: 500;
+  gap: var(--space-2);
+  min-block-size: var(--button-height);
+  max-inline-size: 100%;
+  padding: var(--button-padding);
+  border: 1px solid var(--button-edge) !important;
+  border-radius: 8px !important;
+  background: var(--button-fill) !important;
+  color: var(--button-text) !important;
+  box-shadow: none !important;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
   cursor: pointer;
-  transition: all 0.2s;
-  border: 1px solid transparent;
-  white-space: nowrap;
-}
-
-.btn.icon-only {
-  width: 32px;
-  padding: 0;
-  justify-content: center;
-}
-
-.btn.icon-only svg {
-  width: 14px;
-  height: 14px;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
 .btn-primary {
-  background: var(--gradient-primary);
-  color: white;
-  box-shadow: 0 12px 20px rgba(29, 78, 216, 0.24);
-  border-color: rgba(255, 255, 255, 0.35);
+  --button-fill: var(--app-accent);
+  --button-text: var(--app-panel);
+  --button-edge: transparent;
+  --button-hover: color-mix(in srgb, var(--app-accent) 88%, var(--app-ink));
+  --button-pressed: color-mix(in srgb, var(--app-accent) 76%, var(--app-ink));
 }
 
-.btn-primary:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 16px 28px rgba(29, 78, 216, 0.32);
+:is(.btn-ghost, .filter-tab, .page-tab, .view-btn, .action-btn, .card-action-btn) {
+  --button-fill: transparent;
+  --button-text: var(--app-copy);
+  --button-edge: transparent;
 }
 
-.btn-secondary {
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  border-color: var(--border);
-  box-shadow: var(--shadow-sm);
+:is(.btn-danger, .action-btn.is-danger, .card-action-btn.is-danger, .card-action-btn.danger, .folder-delete-btn) {
+  --button-fill: var(--lg-danger-fill);
+  --button-text: var(--app-negative);
+  --button-edge: var(--lg-danger-edge);
+  --button-hover: var(--lg-danger-fill-hover);
+  --button-pressed: color-mix(in srgb, var(--app-negative) 23%, var(--app-panel));
 }
 
-.btn-secondary:hover:not(:disabled) {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+:is(.btn-success, .action-btn.is-success, .card-action-btn.is-success, .card-action-btn.success) {
+  --button-fill: var(--lg-success-fill);
+  --button-text: var(--app-positive);
+  --button-edge: var(--lg-success-edge);
+  --button-hover: color-mix(in srgb, var(--app-positive) 17%, var(--app-panel));
+  --button-pressed: color-mix(in srgb, var(--app-positive) 22%, var(--app-panel));
 }
 
-.btn-success {
-  background: var(--success);
-  color: #052e16;
+.btn-warning {
+  --button-fill: var(--lg-warning-fill);
+  --button-text: var(--app-caution);
+  --button-edge: var(--lg-warning-edge);
+  --button-hover: color-mix(in srgb, var(--app-caution) 18%, var(--app-panel));
+  --button-pressed: color-mix(in srgb, var(--app-caution) 23%, var(--app-panel));
 }
 
-.btn-success:hover:not(:disabled) {
-  background: #22c55e;
+:is(.btn-sm, .btn.compact, .action-btn, .card-action-btn, .folder-icon-btn, .view-btn) {
+  --button-height: 32px;
+  --button-padding: var(--space-1) var(--space-2);
 }
 
-.btn-danger {
-  background: var(--danger);
-  color: white;
-  border-color: rgba(239, 68, 68, 0.4);
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: #ef4444;
-}
-
-.btn-icon {
-  width: 40px;
-  height: 40px;
+:is(.btn.icon-only, .btn-icon, .action-btn, .card-action-btn, .folder-icon-btn, .sort-direction-btn, .view-btn) {
+  inline-size: var(--button-height);
+  block-size: var(--button-height);
+  flex: 0 0 auto;
   padding: 0;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  border-radius: var(--radius-md);
+  --button-padding: 0;
 }
 
-.btn-icon:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+:is(.btn, .btn-icon, .action-btn, .card-action-btn, .folder-icon-btn,
+  .sort-direction-btn, .view-btn, .filter-tab, .page-tab, .tag-filter-btn,
+  .platform-group-switcher-trigger) > svg {
+  inline-size: 16px;
+  block-size: 16px;
+  flex: 0 0 auto;
 }
 
-.btn-sm {
-  padding: 6px 12px;
-  font-size: 13px;
+:is(.filter-tab, .page-tab, .view-btn, .tag-filter-btn, .btn-ghost):is(.active, [aria-current='page'], [aria-selected='true'], [aria-pressed='true'], [aria-expanded='true']) {
+  --button-fill: var(--app-selected);
+  --button-text: var(--app-accent);
+  --button-edge: color-mix(in srgb, var(--app-accent) 28%, var(--app-line));
+  --button-hover: color-mix(in srgb, var(--app-selected) 90%, var(--app-accent));
 }
 
-.btn-ghost {
-  background: transparent;
-  border-color: var(--border);
-  color: var(--text-secondary);
+:is(.btn, .btn-icon, .action-btn, .card-action-btn, .folder-icon-btn,
+  .sort-direction-btn, .view-btn, .filter-tab, .page-tab, .tag-filter-btn,
+  .platform-group-switcher-trigger):hover:not(:disabled, [aria-disabled='true']) {
+  background: var(--button-hover) !important;
 }
 
-.btn-ghost:hover:not(:disabled) {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+:is(.btn, .btn-icon, .action-btn, .card-action-btn, .folder-icon-btn,
+  .sort-direction-btn, .view-btn, .filter-tab, .page-tab, .tag-filter-btn,
+  .platform-group-switcher-trigger):active:not(:disabled, [aria-disabled='true']) {
+  background: var(--button-pressed) !important;
 }
 
+:is(.btn, .btn-icon, .action-btn, .card-action-btn, .folder-icon-btn,
+  .sort-direction-btn, .view-btn, .filter-tab, .page-tab, .tag-filter-btn,
+  .platform-group-switcher-trigger):is(:disabled, [aria-disabled='true']) {
+  background: var(--app-inset) !important;
+  color: var(--app-muted) !important;
+  border-color: var(--app-line) !important;
+  opacity: 1 !important;
+  cursor: not-allowed;
+}
 
+:where(button, [role='button'], a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 2px;
+}
 
 /* ============================================
    Account Table
@@ -1518,53 +1496,6 @@
 .action-buttons {
   display: flex;
   gap: 4px;
-}
-
-.action-btn {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.action-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.action-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.action-btn:disabled:hover {
-  background: transparent;
-  color: var(--text-secondary);
-}
-
-.action-btn.is-danger {
-  color: var(--danger);
-}
-
-.action-btn.is-danger:hover {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--danger);
-}
-
-.action-btn.is-success {
-  color: var(--success);
-}
-
-.action-btn.is-success:hover {
-  background: rgba(34, 197, 94, 0.1);
-  color: var(--success);
 }
 
 /* ============================================

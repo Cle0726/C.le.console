@@ -840,7 +840,7 @@ export function SideNav({
     return (
       <button
         key={entry.id}
-        className={`spatial-nav-item${active ? ' active' : ''}`}
+        className={`btn btn-ghost icon-only spatial-nav-item${active ? ' active' : ''}`}
         onClick={() => {
           closeSpatialNavigation(true);
           navigateToEntry(entry);
@@ -871,7 +871,7 @@ export function SideNav({
             <>
               <div className="spatial-nav-wing spatial-nav-wing-left">
                 <button
-                  className={`spatial-nav-item${page === 'jimeng-infinite-canvas' ? ' active' : ''}`}
+                  className={`btn btn-ghost icon-only spatial-nav-item${page === 'jimeng-infinite-canvas' ? ' active' : ''}`}
                   onClick={() => {
                     closeSpatialNavigation(true);
                     setPage('jimeng-infinite-canvas');
@@ -883,7 +883,7 @@ export function SideNav({
                   <span className="spatial-nav-tooltip">{t('nav.jimengInfiniteCanvas', '无限画布')}</span>
                 </button>
                 <button
-                  className={`spatial-nav-item${page === 'jimeng-api-service' ? ' active' : ''}`}
+                  className={`btn btn-ghost icon-only spatial-nav-item${page === 'jimeng-api-service' ? ' active' : ''}`}
                   onClick={() => {
                     closeSpatialNavigation(true);
                     setPage('jimeng-api-service');
@@ -896,7 +896,7 @@ export function SideNav({
                 </button>
                 <button
                   ref={spatialFirstActionRef}
-                  className={`spatial-nav-item${page === 'dashboard' ? ' active' : ''}`}
+                  className={`btn btn-ghost icon-only spatial-nav-item${page === 'dashboard' ? ' active' : ''}`}
                   onClick={() => {
                     closeSpatialNavigation(true);
                     setPage('dashboard');
@@ -909,7 +909,7 @@ export function SideNav({
                 </button>
                 {spatialLeftEntries.map(renderSpatialEntry)}
                 <button
-                  className="spatial-nav-item"
+                  className="btn btn-ghost icon-only spatial-nav-item"
                   onClick={() => {
                     closeSpatialNavigation(true);
                     onOpenLogViewer();
@@ -924,7 +924,7 @@ export function SideNav({
               <div className="spatial-nav-wing spatial-nav-wing-right">
                 {spatialRightEntries.map(renderSpatialEntry)}
                 <button
-                  className={`spatial-nav-item${page === 'multi-model-api-service' ? ' active' : ''}`}
+                  className={`btn btn-ghost icon-only spatial-nav-item${page === 'multi-model-api-service' ? ' active' : ''}`}
                   onClick={() => {
                     closeSpatialNavigation(true);
                     setPage('multi-model-api-service');
@@ -936,7 +936,7 @@ export function SideNav({
                   <span className="spatial-nav-tooltip">{t('nav.multiModelApiService', '多模型 API 代理')}</span>
                 </button>
                 <button
-                  className={`spatial-nav-item${page === '2fa' ? ' active' : ''}`}
+                  className={`btn btn-ghost icon-only spatial-nav-item${page === '2fa' ? ' active' : ''}`}
                   onClick={() => {
                     closeSpatialNavigation(true);
                     setPage('2fa');
@@ -948,7 +948,7 @@ export function SideNav({
                   <span className="spatial-nav-tooltip">2FA</span>
                 </button>
                 <button
-                  className={`spatial-nav-item${page === 'settings' ? ' active' : ''}`}
+                  className={`btn btn-ghost icon-only spatial-nav-item${page === 'settings' ? ' active' : ''}`}
                   onClick={() => {
                     closeSpatialNavigation(true);
                     setPage('settings');
@@ -961,7 +961,7 @@ export function SideNav({
                 </button>
                 <button
                   ref={moreButtonRef}
-                  className={`spatial-nav-item${showMore || isMoreActive ? ' active' : ''}`}
+                  className={`btn btn-ghost icon-only spatial-nav-item${showMore || isMoreActive ? ' active' : ''}`}
                   onClick={() => setShowMore((value) => !value)}
                   title={t('nav.morePlatforms', '更多平台')}
                   aria-expanded={showMore}
@@ -981,7 +981,7 @@ export function SideNav({
           <span className="spatial-floating-brand">C.le.</span>
           <button
             ref={spatialAvatarRef}
-            className="spatial-nav-avatar"
+            className="btn btn-secondary spatial-nav-avatar"
             onClick={handleSpatialAvatarClick}
             aria-label={spatialNavExpanded ? '收起导航' : '展开导航'}
             aria-expanded={spatialNavExpanded}
@@ -1002,6 +1002,7 @@ export function SideNav({
             {moreMenuEntries.map((entry) => (
               <button
                 key={entry.id}
+                className="btn btn-ghost"
                 onClick={() => {
                   closeSpatialNavigation(true);
                   navigateToEntry(entry);
@@ -1013,6 +1014,7 @@ export function SideNav({
               </button>
             ))}
             <button
+              className="btn btn-ghost"
               onClick={() => {
                 closeSpatialNavigation(true);
                 onOpenPlatformLayout();

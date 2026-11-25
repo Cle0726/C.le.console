@@ -1,7 +1,7 @@
 /*
  * Unified UI layer
  *
- * This file is intentionally loaded last. It consolidates the older spatial,
+ * Shared workspace sizing and heading hierarchy. It consolidates the older spatial,
  * industrial and liquid-glass layers into one predictable visual hierarchy:
  * floating navigation, calm content surfaces and high-contrast state feedback.
  */
@@ -96,61 +96,51 @@ body {
   scroll-behavior: smooth;
 }
 
-/* A compact, consistent page identity bar replaces the oversized dead zone. */
+/* Page titles and tabs share a baseline without phantom centre columns. */
 .page-top-strip {
-  min-height: 46px !important;
-  padding: 0 4px 10px !important;
-  border: 0 !important;
-  border-bottom: 1px solid var(--ui-line) !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  min-height: auto;
+  padding: 0 0 var(--space-2);
+  color: var(--app-ink);
 }
 
-.page-top-strip::after {
-  width: 52px !important;
-  height: 3px !important;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--ui-accent), color-mix(in srgb, var(--ui-accent) 24%, transparent)) !important;
-  box-shadow: 0 0 16px color-mix(in srgb, var(--ui-accent) 24%, transparent);
+.page-top-strip-left,
+.page-top-strip-right,
+.page-tabs-label {
+  position: static;
+  min-width: 0;
+  max-width: 100%;
 }
 
-.page-top-strip-label {
-  color: var(--text-primary) !important;
+:is(.page-top-strip-label, .page-tabs-label, .page-title) {
+  color: var(--app-ink) !important;
+  background: none !important;
   -webkit-text-fill-color: currentColor !important;
-  font-size: clamp(20px, 2.2vw, 28px) !important;
-  font-weight: 760 !important;
-  letter-spacing: -.035em !important;
-  text-transform: none !important;
+  font-size: var(--text-size-page) !important;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: var(--leading-title);
+  text-transform: none;
+  overflow-wrap: anywhere;
 }
 
 .page-tabs-row {
-  box-sizing: border-box;
   min-width: 0;
-  padding: 8px !important;
-  gap: 8px !important;
-  border: 1px solid var(--ui-line) !important;
-  border-radius: var(--ui-radius-lg) !important;
+  min-height: 0 !important;
+  gap: var(--space-2);
+  padding: 0;
+  flex-wrap: wrap;
 }
 
-.page-tabs,
-.filter-tabs {
+.page-tabs.filter-tabs {
   min-width: 0;
-  gap: 6px !important;
-}
-
-.filter-tab,
-.page-tabs-leading .platform-group-switcher-trigger {
-  min-height: 40px;
-  border-radius: var(--ui-radius-sm) !important;
-  font-weight: 650;
-}
-
-.filter-tab {
-  min-width: 0;
-  padding-inline: 14px !important;
+  max-width: 100%;
+  padding: 0;
+  gap: var(--space-1);
+  flex-wrap: wrap;
 }
 
 .page-tabs-leading,
@@ -159,43 +149,19 @@ body {
   max-width: 100%;
 }
 
-.page-tabs-leading .platform-group-switcher-trigger {
-  max-width: min(100%, 300px);
-  padding-inline: 13px !important;
-  border: 1px solid color-mix(in srgb, var(--ui-accent) 18%, var(--ui-line)) !important;
-  background: var(--ui-accent-soft) !important;
-  box-shadow: inset 0 1px rgba(255, 255, 255, .2);
-}
-
-.btn,
-.folder-icon-btn,
 .modal-close,
 .qs-close,
 .single-select-dropdown-trigger {
   border-radius: var(--ui-radius-sm) !important;
 }
 
-.btn,
 button,
 [role='button'] {
   -webkit-tap-highlight-color: transparent;
 }
 
-.btn:not(:disabled),
-.folder-icon-btn:not(:disabled),
-.filter-tab:not(:disabled),
 .single-select-dropdown-trigger:not(:disabled) {
   will-change: transform;
-}
-
-.btn:hover:not(:disabled),
-.folder-icon-btn:hover:not(:disabled) {
-  transform: translateY(-1px) scale(1.008);
-}
-
-.btn:active:not(:disabled),
-.folder-icon-btn:active:not(:disabled) {
-  transform: translateY(0) scale(.97);
 }
 
 .modal,
@@ -425,9 +391,6 @@ html[data-ui-scale-band='xlarge'] .codex-api-service-hero-actions .btn {
 }
 
 @media (hover: none), (pointer: coarse) {
-  .btn:hover:not(:disabled),
-  .folder-icon-btn:hover:not(:disabled),
-  .filter-tab:hover:not(:disabled),
   .nav-item:hover:not(:disabled) {
     transform: none !important;
   }

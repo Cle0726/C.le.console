@@ -150,11 +150,7 @@
 }
 
 .ghcp-accounts-page .toolbar-filters .btn.icon-only {
-  width: 34px;
-  min-height: 34px;
-  padding: 0;
   justify-content: center;
-  border-radius: 10px;
 }
 
 .ghcp-accounts-page .toolbar-filters .btn.icon-only svg {
@@ -1833,11 +1829,7 @@
 }
 
 .ghcp-accounts-page .toolbar .btn.icon-only {
-  width: 32px;
-  min-height: 32px;
-  padding: 0;
   justify-content: center;
-  border-radius: 10px;
 }
 
 .ghcp-accounts-page .toolbar .btn.icon-only svg {
@@ -1851,28 +1843,9 @@
 }
 
 .ghcp-accounts-page .tag-filter-btn {
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   cursor: pointer;
-}
-
-.ghcp-accounts-page .tag-filter-btn.active {
-  border-color: rgba(59, 130, 246, 0.4);
-  background: linear-gradient(
-    135deg,
-    rgba(191, 219, 254, 0.45),
-    rgba(153, 246, 228, 0.4)
-  );
-  color: #0f172a;
 }
 
 .ghcp-accounts-page .tag-filter-panel {
@@ -2067,18 +2040,6 @@
   gap: 4px;
   height: 32px;
   border-radius: 10px;
-}
-
-.ghcp-accounts-page .view-btn {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-}
-
-.ghcp-accounts-page .view-btn.active {
-  background: var(--gradient-primary);
-  color: white;
-  box-shadow: 0 6px 14px rgba(29, 78, 216, 0.3);
 }
 
 .ghcp-accounts-page .search-box {
@@ -2292,31 +2253,12 @@
 }
 
 .ghcp-accounts-page .sort-direction-btn {
-  width: 32px;
-  height: 32px;
   margin-left: 6px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 16px;
   cursor: pointer;
-  transition: all 0.2s ease;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-}
-
-.ghcp-accounts-page .sort-direction-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  border-color: var(--border-hover);
-  transform: scale(1.05);
-}
-
-.ghcp-accounts-page .sort-direction-btn:active {
-  transform: scale(0.95);
 }
 
 /* 通用 modal-content 样式 */

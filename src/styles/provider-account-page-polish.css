@@ -1,113 +1,38 @@
-/* Provider account workspaces
-   --------------------------------------------------------------------------
-   Non-Codex account pages share the same editorial / technical-drawing
-   language as the dashboard without inheriting Codex-specific layout rules.
+/* Shared account workspace geometry; provider-specific rows inherit the app palette. */
 
-   Important: the application can keep the legacy `data-theme="dark"` flag
-   mounted while the visible canvas is in day mode. Theme-critical surfaces
-   therefore key off `data-visual-theme` and use deliberate late overrides.
-   Every selector is scoped to a mounted provider account workspace. */
-
-/* Theme contract --------------------------------------------------------- */
-
-html:not([data-visual-theme='night']) :is(
+:is(
   .ghcp-accounts-page:not(.codex-accounts-page),
   .accounts-page:not(.codex-accounts-page)
 ) {
-  --provider-canvas: #c5cdd2;
-  --provider-paper: rgba(224, 230, 233, 0.94);
-  --provider-paper-raised: rgba(235, 239, 241, 0.97);
-  --provider-paper-recessed: rgba(205, 214, 219, 0.94);
-  --provider-row-odd: rgba(222, 229, 232, 0.98);
-  --provider-row-even: rgba(214, 222, 226, 0.98);
-  --provider-row-hover: rgba(198, 209, 215, 0.99);
-  --provider-row-current: rgba(190, 203, 209, 0.99);
-  --provider-action-surface: #cbd5da;
-  --provider-action-hover: #b9c6cc;
-  --provider-ink: #11191e;
-  --provider-ink-secondary: #44535c;
-  --provider-ink-muted: #617079;
-  --provider-line: rgba(17, 25, 30, 0.42);
-  --provider-line-soft: rgba(17, 25, 30, 0.16);
-  --provider-shadow: 4px 5px 0 rgba(17, 25, 30, 0.085);
-  --provider-shadow-raised: 7px 8px 0 rgba(17, 25, 30, 0.11);
-  --provider-inverse: #f2f5f6;
-  --provider-success: #055239;
-  --provider-success-soft: rgba(13, 126, 89, 0.12);
-  --provider-warning: #8a5608;
-  --provider-warning-soft: rgba(180, 111, 9, 0.13);
-  --provider-danger: #8f2f35;
-  --provider-danger-soft: rgba(181, 48, 57, 0.12);
-  --provider-track: rgba(17, 25, 30, 0.16);
+  --provider-canvas: var(--app-canvas);
+  --provider-paper: var(--app-panel);
+  --provider-paper-raised: var(--app-panel);
+  --provider-paper-recessed: var(--app-inset);
+  --provider-row-odd: var(--app-panel);
+  --provider-row-even: var(--app-inset);
+  --provider-row-hover: var(--app-hover);
+  --provider-row-current: var(--app-selected);
+  --provider-action-surface: var(--app-panel);
+  --provider-action-hover: var(--app-hover);
+  --provider-ink: var(--app-ink);
+  --provider-ink-secondary: var(--app-copy);
+  --provider-ink-muted: var(--app-muted);
+  --provider-line: var(--app-line-strong);
+  --provider-line-soft: var(--app-line);
+  --provider-shadow: var(--app-shadow);
+  --provider-shadow-raised: var(--app-float-shadow);
+  --provider-inverse: var(--app-panel);
+  --provider-success: var(--app-positive);
+  --provider-success-soft: var(--lg-success-fill);
+  --provider-warning: var(--app-caution);
+  --provider-warning-soft: var(--lg-warning-fill);
+  --provider-danger: var(--app-negative);
+  --provider-danger-soft: var(--lg-danger-fill);
+  --provider-track: var(--app-line);
   color: var(--provider-ink);
-  color-scheme: light;
 }
 
-html[data-visual-theme='night'] :is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) {
-  --provider-canvas: #1b2226;
-  --provider-paper: rgba(31, 39, 43, 0.96);
-  --provider-paper-raised: rgba(40, 49, 54, 0.98);
-  --provider-paper-recessed: rgba(22, 29, 33, 0.96);
-  --provider-row-odd: rgba(29, 37, 41, 0.98);
-  --provider-row-even: rgba(25, 32, 36, 0.98);
-  --provider-row-hover: rgba(43, 53, 58, 0.99);
-  --provider-row-current: rgba(51, 62, 67, 0.99);
-  --provider-action-surface: #273137;
-  --provider-action-hover: #364349;
-  --provider-ink: #eef2f3;
-  --provider-ink-secondary: #b8c2c6;
-  --provider-ink-muted: #909ca2;
-  --provider-line: rgba(226, 233, 236, 0.21);
-  --provider-line-soft: rgba(226, 233, 236, 0.105);
-  --provider-shadow: 4px 5px 0 rgba(0, 0, 0, 0.3);
-  --provider-shadow-raised: 7px 8px 0 rgba(0, 0, 0, 0.38);
-  --provider-inverse: #11181c;
-  --provider-success: #8ee8bc;
-  --provider-success-soft: rgba(52, 211, 153, 0.14);
-  --provider-warning: #f2ca68;
-  --provider-warning-soft: rgba(245, 181, 53, 0.14);
-  --provider-danger: #ffb4b8;
-  --provider-danger-soft: rgba(239, 68, 68, 0.15);
-  --provider-track: rgba(229, 235, 238, 0.14);
-  color: var(--provider-ink);
-  color-scheme: dark;
-}
-
-/* Fixed date/navigation safety lane. It is intentionally opaque enough that
-   a scrolled table never becomes illegible beneath the floating cat control. */
-.app-container:has(.ghcp-accounts-page:not(.codex-accounts-page))::before,
-.app-container:has(.accounts-page:not(.codex-accounts-page))::before {
-  content: '';
-  position: fixed;
-  inset: 0 0 auto;
-  z-index: 1200;
-  height: 110px;
-  pointer-events: none;
-  border-bottom: 1px solid rgba(17, 25, 30, 0.15);
-  background:
-    linear-gradient(90deg, transparent 0 49.96%, rgba(17, 25, 30, 0.055) 50%, transparent 50.04%),
-    linear-gradient(180deg, rgba(193, 201, 206, 0.985), rgba(185, 194, 199, 0.95) 76%, rgba(185, 194, 199, 0));
-  -webkit-backdrop-filter: blur(18px) saturate(0.72);
-  backdrop-filter: blur(18px) saturate(0.72);
-}
-
-html[data-visual-theme='night'] .app-container:has(.ghcp-accounts-page:not(.codex-accounts-page))::before,
-html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-accounts-page))::before {
-  border-bottom-color: rgba(226, 233, 236, 0.1);
-  background:
-    linear-gradient(90deg, transparent 0 49.96%, rgba(226, 233, 236, 0.035) 50%, transparent 50.04%),
-    linear-gradient(180deg, rgba(29, 36, 40, 0.99), rgba(24, 31, 35, 0.96) 76%, rgba(24, 31, 35, 0));
-}
-
-.main-wrapper:has(.ghcp-accounts-page:not(.codex-accounts-page)),
-.main-wrapper:has(.accounts-page:not(.codex-accounts-page)) {
-  scroll-padding-top: 122px;
-}
-
-/* Workspace frame and quiet geometric matrix --------------------------- */
+/* Workspace frame ------------------------------------------------------- */
 
 :is(
   .ghcp-accounts-page:not(.codex-accounts-page),
@@ -119,25 +44,6 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
   font-variant-numeric: tabular-nums;
 }
 
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-)::after {
-  content: '';
-  position: absolute;
-  inset: -20px -24px;
-  z-index: -1;
-  pointer-events: none;
-  opacity: 0.46;
-  background:
-    radial-gradient(circle at 78% 7%, transparent 0 120px, var(--provider-line-soft) 121px 122px, transparent 123px 178px, var(--provider-line-soft) 179px 180px, transparent 181px),
-    linear-gradient(var(--provider-line-soft) 1px, transparent 1px),
-    linear-gradient(90deg, var(--provider-line-soft) 1px, transparent 1px);
-  background-size: auto, 88px 88px, 88px 88px;
-  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.56), transparent 68%);
-  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.56), transparent 68%);
-}
-
 /* Editorial header and route tabs -------------------------------------- */
 
 :is(
@@ -146,15 +52,6 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
 ) > .page-top-strip {
   min-height: 54px;
   border-bottom: 1px solid var(--provider-line) !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) > .page-top-strip::after {
-  width: 64px;
-  height: 3px;
-  background: var(--provider-ink) !important;
 }
 
 :is(
@@ -198,7 +95,7 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
   align-items: flex-start;
   gap: 2px;
   min-width: 0;
-  line-height: 1;
+  line-height: var(--leading-title);
 }
 
 :is(
@@ -208,8 +105,8 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
   color: inherit;
   font-size: 12px;
   font-weight: 720;
-  letter-spacing: -0.015em;
-  white-space: nowrap;
+  letter-spacing: normal;
+  white-space: normal;
 }
 
 :is(
@@ -217,11 +114,10 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
   .accounts-page:not(.codex-accounts-page)
 ) .account-bilingual-label-en {
   color: currentColor;
-  font: 650 7px/1 ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
-  letter-spacing: 0.13em;
-  opacity: 0.56;
+  font: 500 var(--text-size-meta)/var(--leading-title) var(--font-sans);
+  letter-spacing: normal;
   text-transform: uppercase;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 :is(
@@ -253,18 +149,6 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
 :is(
   .ghcp-accounts-page:not(.codex-accounts-page),
   .accounts-page:not(.codex-accounts-page)
-) .platform-group-switcher-trigger {
-  min-height: 42px;
-  border: 1px solid var(--provider-line) !important;
-  border-radius: 5px !important;
-  color: var(--provider-ink) !important;
-  background: var(--provider-paper) !important;
-  box-shadow: 3px 4px 0 color-mix(in srgb, var(--provider-ink) 8%, transparent) !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
 ) .page-tabs.filter-tabs {
   grid-column: 2;
   justify-self: center;
@@ -274,37 +158,6 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
   border-radius: 5px !important;
   background: color-mix(in srgb, var(--provider-paper-recessed) 88%, transparent) !important;
   box-shadow: var(--provider-shadow) !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) .page-tabs.filter-tabs .filter-tab {
-  min-height: 42px;
-  padding: 8px 18px;
-  border: 0 !important;
-  border-radius: 3px !important;
-  color: var(--provider-ink-secondary) !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  font-weight: 680;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) .page-tabs.filter-tabs .filter-tab:hover:not(.active) {
-  color: var(--provider-ink) !important;
-  background: color-mix(in srgb, var(--provider-ink) 7%, transparent) !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) .page-tabs.filter-tabs .filter-tab.active {
-  color: var(--provider-inverse) !important;
-  background: var(--provider-ink) !important;
-  box-shadow: 3px 3px 0 color-mix(in srgb, var(--provider-ink) 18%, transparent) !important;
 }
 
 :is(
@@ -381,28 +234,6 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
 :is(
   .ghcp-accounts-page:not(.codex-accounts-page),
   .accounts-page:not(.codex-accounts-page)
-) > .toolbar,
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) .toolbar-block {
-  position: sticky;
-  top: 114px;
-  z-index: 80;
-  padding: 10px 12px !important;
-  border: 1px solid var(--provider-line) !important;
-  border-radius: 5px !important;
-  color: var(--provider-ink) !important;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--provider-paper-raised) 95%, transparent), color-mix(in srgb, var(--provider-paper-recessed) 96%, transparent)) !important;
-  box-shadow: var(--provider-shadow), inset 0 1px color-mix(in srgb, white 30%, transparent) !important;
-  -webkit-backdrop-filter: blur(18px) saturate(0.72);
-  backdrop-filter: blur(18px) saturate(0.72);
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
 ) :is(.toolbar-left, .toolbar-right, .toolbar-main, .toolbar-filters) {
   align-items: center;
   gap: 7px;
@@ -458,36 +289,6 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
 :is(
   .ghcp-accounts-page:not(.codex-accounts-page),
   .accounts-page:not(.codex-accounts-page)
-) :is(.view-btn, .tag-filter-btn, .sort-direction-btn, .toolbar .btn, .toolbar-filters .btn) {
-  border: 1px solid var(--provider-line-soft) !important;
-  border-radius: 3px !important;
-  color: var(--provider-ink-secondary) !important;
-  background: color-mix(in srgb, var(--provider-paper-raised) 72%, transparent) !important;
-  box-shadow: inset 0 1px color-mix(in srgb, white 24%, transparent) !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) :is(.view-btn, .tag-filter-btn, .sort-direction-btn, .toolbar .btn, .toolbar-filters .btn):hover:not(:disabled) {
-  border-color: var(--provider-ink) !important;
-  color: var(--provider-inverse) !important;
-  background: var(--provider-ink) !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) :is(.view-btn.active, .tag-filter-btn.active, .toolbar .btn-primary) {
-  border-color: var(--provider-ink) !important;
-  color: var(--provider-inverse) !important;
-  background: var(--provider-ink) !important;
-  box-shadow: 2px 3px 0 color-mix(in srgb, var(--provider-ink) 16%, transparent) !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
 ) :is(.account-selection-toolbar, .selection-bar, .codex-overview-selection-bar, .folder-breadcrumb) {
   border: 1px solid var(--provider-line-soft) !important;
   border-radius: 5px !important;
@@ -523,21 +324,6 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
   box-shadow: var(--provider-shadow), inset 0 1px color-mix(in srgb, white 28%, transparent) !important;
   -webkit-backdrop-filter: blur(12px) saturate(0.72);
   backdrop-filter: blur(12px) saturate(0.72);
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page) .ghcp-account-card,
-  .accounts-page:not(.codex-accounts-page) .account-card
-)::after {
-  content: counter(provider-account-card, decimal-leading-zero);
-  position: absolute;
-  right: 10px;
-  bottom: 8px;
-  pointer-events: none;
-  color: var(--provider-ink-muted);
-  font: 700 10px/1 var(--font-mono, monospace);
-  letter-spacing: 0.08em;
-  opacity: 0.7;
 }
 
 :is(
@@ -882,45 +668,6 @@ html[data-visual-theme='night'] .app-container:has(.accounts-page:not(.codex-acc
 :is(
   .ghcp-accounts-page:not(.codex-accounts-page),
   .accounts-page:not(.codex-accounts-page)
-) :is(.card-action-btn, .action-btn, .folder-icon-btn, .group-action-btn) {
-  border: 1px solid var(--provider-line) !important;
-  border-radius: 3px !important;
-  color: var(--provider-ink) !important;
-  background: color-mix(in srgb, var(--provider-paper-raised) 78%, transparent) !important;
-  box-shadow: inset 0 1px color-mix(in srgb, white 24%, transparent) !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) :is(.card-action-btn, .action-btn, .folder-icon-btn, .group-action-btn):hover:not(:disabled) {
-  border-color: var(--provider-ink) !important;
-  color: var(--provider-inverse) !important;
-  background: var(--provider-ink) !important;
-  transform: translateY(-1px);
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) :is(.card-action-btn.success, .action-btn.success, .action-btn.is-success):hover:not(:disabled) {
-  border-color: var(--provider-success) !important;
-  color: var(--provider-inverse) !important;
-  background: var(--provider-success) !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) :is(.card-action-btn.danger, .action-btn.danger, .action-btn.is-danger):hover:not(:disabled) {
-  border-color: var(--provider-danger) !important;
-  color: var(--provider-inverse) !important;
-  background: var(--provider-danger) !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
 ) :is(button:disabled, [aria-disabled='true']) {
   border-color: var(--provider-line-soft) !important;
   color: var(--provider-ink-muted) !important;
@@ -1087,16 +834,6 @@ html[data-performance-mode='lite'] :is(
   display: none;
 }
 
-html[data-performance-mode='lite'] :is(
-  .ghcp-accounts-page:not(.codex-accounts-page) .ghcp-account-card,
-  .accounts-page:not(.codex-accounts-page) .account-card,
-  .ghcp-accounts-page:not(.codex-accounts-page) > .toolbar,
-  .accounts-page:not(.codex-accounts-page) > .toolbar
-) {
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-}
-
 /* Responsive preservation ------------------------------------------------ */
 
 @media (max-width: 1100px) {
@@ -1120,15 +857,10 @@ html[data-performance-mode='lite'] :is(
     .accounts-page:not(.codex-accounts-page)
   ) .page-tabs.filter-tabs .filter-tab {
     flex: 0 0 auto;
-    padding-inline: 13px;
   }
 }
 
 @media (max-width: 760px) {
-  .app-container:has(.ghcp-accounts-page:not(.codex-accounts-page))::before,
-  .app-container:has(.accounts-page:not(.codex-accounts-page))::before {
-    height: 96px;
-  }
 
   :is(
     .ghcp-accounts-page:not(.codex-accounts-page),
@@ -1145,17 +877,6 @@ html[data-performance-mode='lite'] :is(
     .accounts-page:not(.codex-accounts-page)
   ) .page-tabs-leading {
     align-self: flex-start;
-  }
-
-  :is(
-    .ghcp-accounts-page:not(.codex-accounts-page),
-    .accounts-page:not(.codex-accounts-page)
-  ) > .toolbar,
-  :is(
-    .ghcp-accounts-page:not(.codex-accounts-page),
-    .accounts-page:not(.codex-accounts-page)
-  ) .toolbar-block {
-    top: 98px;
   }
 
   :is(
@@ -1205,80 +926,155 @@ html[data-performance-mode='lite'] :is(
    Provider pages share the same non-obstructive behavior as the Codex
    workspace: account controls belong to the page flow and must never cover
    scrolled records at high Windows scaling factors. */
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) > .toolbar,
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) .toolbar-block {
-  position: relative !important;
-  inset: auto !important;
-  z-index: 40;
+
+/* Shared account workspaces: the filters and actions wrap as complete controls
+   rather than scrolling a second horizontal strip at WebView zoom levels. */
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) {
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .page-top-strip {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) .account-workspace-kicker > small {
+  font: 500 var(--text-size-meta)/var(--leading-body) var(--font-sans);
+  letter-spacing: .04em;
+}
+
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .page-tabs-row.page-tabs-row-with-leading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  gap: var(--space-2);
+}
+
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .page-tabs-row .page-tabs.filter-tabs {
+  width: auto;
+  min-width: 0;
+  padding: 0;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  overflow: visible;
+  gap: var(--space-1);
+}
+
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .toolbar {
+  position: relative;
+  top: auto;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 0 !important;
+  gap: var(--space-2) var(--space-4);
   overflow: visible;
 }
 
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) > .toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .toolbar :is(.toolbar-left, .toolbar-right, .toolbar-main, .toolbar-filters, .toolbar-block) {
+  display: flex;
   align-items: center;
-  gap: 10px 14px;
-  margin-block: 12px 16px;
-  padding: 10px 11px !important;
-  border-radius: 6px !important;
-}
-
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) > .toolbar :is(.toolbar-left, .toolbar-main, .toolbar-filters) {
-  min-width: 0;
   flex-wrap: wrap;
-  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--space-2);
 }
 
-:is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) > .toolbar .toolbar-right {
-  flex: 0 0 auto;
-  flex-wrap: nowrap;
-  gap: 6px;
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .toolbar .toolbar-left { flex: 1 1 560px; }
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .toolbar .toolbar-right { flex: 0 1 auto; margin: 0; padding: 0; border: 0; }
+
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .toolbar .search-box {
+  flex: 1 1 220px;
+  width: min(100%, 256px);
+  min-width: min(100%, 200px);
+  max-width: 256px;
+  border: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
 }
 
-@media (max-width: 1280px) {
-  :is(
-    .ghcp-accounts-page:not(.codex-accounts-page),
-    .accounts-page:not(.codex-accounts-page)
-  ) > .toolbar {
-    grid-template-columns: minmax(0, 1fr);
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .toolbar .search-box input {
+  min-height: 36px;
+  padding-block: var(--space-2);
+  padding-inline-start: var(--space-6);
+  font-size: 13px;
+}
+
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .toolbar .view-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px;
+  border: 1px solid var(--app-line) !important;
+  border-radius: 8px !important;
+  background: var(--app-inset) !important;
+  box-shadow: none !important;
+}
+
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) :is(.account-email, .account-email-text, .codex-compact-email, .account-main-line) {
+  min-width: 0;
+  max-width: none;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+:is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) :is(.account-grid, .accounts-grid, .tag-group-grid) {
+  gap: var(--space-4);
+}
+
+@media (max-width: 960px) {
+  :is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .toolbar .toolbar-left {
+    flex-basis: 100%;
   }
 
-  :is(
-    .ghcp-accounts-page:not(.codex-accounts-page),
-    .accounts-page:not(.codex-accounts-page)
-  ) > .toolbar .toolbar-right {
-    width: 100%;
-    margin-left: 0;
-    padding-top: 9px;
+  :is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) > .toolbar .toolbar-right {
     justify-content: flex-end;
-    border-top: 1px solid var(--provider-line-soft);
+    margin-inline-start: auto;
   }
-}
 
-html[data-performance-mode='lite'] :is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) > .toolbar,
-html[data-performance-mode='lite'] :is(
-  .ghcp-accounts-page:not(.codex-accounts-page),
-  .accounts-page:not(.codex-accounts-page)
-) .toolbar-block {
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-  box-shadow: 2px 3px 0 color-mix(in srgb, var(--provider-ink) 8%, transparent) !important;
+  /* Keep actual table semantics and every column. Narrower cells and wrapped
+     row actions replace fixed 200+px columns; group colspans still work. */
+  :is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) .account-table {
+    width: 100%;
+    min-width: 0 !important;
+    table-layout: fixed;
+  }
+
+  :is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) .account-table :is(th, td) {
+    min-width: 0 !important;
+    max-width: none;
+    padding-inline: var(--space-2);
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
+  :is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) .account-table th:not(:first-child) { width: auto !important; }
+  :is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) .account-table th:nth-child(2) { width: 24% !important; }
+  :is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) .account-table th:is(.sticky-action-header, .table-action-header) { width: 19% !important; }
+  :is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) .account-table :is(.sticky-action-cell, .table-action-cell) {
+    width: auto;
+    max-width: none;
+  }
+
+  :is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) .account-table :is(.action-buttons, .account-cell-main, .account-identity) {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  :is(.accounts-page:not(.wakeup-page), .codex-accounts-page, .ghcp-accounts-page) .account-table :is(.quota-columns, .ghcp-quota-section, .gemini-quota-columns) {
+    min-width: 0;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 104px), 1fr));
+  }
 }

@@ -1,16 +1,15 @@
 .mm-api-page {
-  --mm-surface: color-mix(in srgb, var(--bg-card) 92%, rgba(255, 255, 255, 0.54));
-  --mm-surface-strong: color-mix(in srgb, var(--bg-card) 96%, rgba(255, 255, 255, 0.72));
-  --mm-border: color-mix(in srgb, var(--border) 78%, rgba(148, 163, 184, 0.14));
-  --mm-border-soft: color-mix(in srgb, var(--border-light) 82%, rgba(148, 163, 184, 0.12));
-  --mm-shadow: 0 10px 24px -22px rgba(15, 23, 42, 0.42);
+  --mm-surface: var(--app-panel);
+  --mm-surface-strong: var(--app-panel);
+  --mm-border: var(--app-line);
+  --mm-border-soft: var(--app-line);
+  --mm-shadow: var(--app-shadow);
   display: flex;
   flex-direction: column;
   width: 100%;
   min-width: 0;
   min-height: 100%;
   gap: 12px;
-  animation: fadeUp 0.45s ease;
 }
 
 .mm-api-page * { box-sizing: border-box; }
@@ -105,7 +104,7 @@ html body #root .mm-api-page .mm-menu-panel > button::before,
 html body #root .mm-api-page .mm-menu-panel > button::after {
   content: none !important;
 }
-.mm-icon-btn { width: 32px; padding: 0 !important; justify-content: center; }
+.mm-icon-btn { justify-content: center; }
 
 .mm-extension-host { display: grid; gap: 16px; min-width: 0; }
 .mm-extension-providers, .mm-extension-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
@@ -130,7 +129,7 @@ html body #root .mm-api-page .mm-menu-panel > button::after {
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
-  background: var(--bg-primary);
+  background: var(--app-canvas);
 }
 
 /* The standalone macOS WebView must own the scroll container. The shared app
@@ -166,22 +165,22 @@ html[data-platform='windows'] .mm-api-window-drag-region {
   display: none;
 }
 
-html[data-platform='windows'] .mm-extension-fields {
+.mm-extension-fields {
   display: grid;
   align-items: stretch;
   justify-items: start;
 }
 
-html[data-platform='windows'] .mm-extension-fields label {
+.mm-extension-fields label {
   display: grid;
   justify-items: start;
   width: min(100%, 440px);
   gap: 6px;
 }
 
-html[data-platform='windows'] .mm-extension-fields select,
-html[data-platform='windows'] .mm-extension-fields input:not([type='checkbox']),
-html[data-platform='windows'] .mm-extension-host textarea {
+.mm-extension-fields select,
+.mm-extension-fields input:not([type='checkbox']),
+.mm-extension-host textarea {
   width: 100%;
   background: var(--bg-tertiary, #1e2229);
   color: var(--text-primary);
@@ -210,8 +209,6 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
   padding-bottom: 32px;
 }
 
-.mm-api-top-tabs .page-tabs-leading { min-width: 174px; }
-
 .mm-api-context-label {
   display: inline-flex;
   align-items: center;
@@ -239,11 +236,7 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
   padding: 9px 11px;
   border: 1px solid var(--mm-border);
   border-radius: 12px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, transparent), transparent 42%),
-    var(--mm-surface);
   box-shadow: var(--mm-shadow);
-  backdrop-filter: blur(18px);
 }
 
 .mm-api-hero-main { display: flex; align-items: center; gap: 9px; min-width: 0; }
@@ -256,7 +249,6 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
   height: 32px;
   border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--border-light));
   border-radius: 9px;
-  background: color-mix(in srgb, var(--primary) 10%, rgba(255,255,255,.6));
   color: var(--primary);
 }
 
@@ -285,16 +277,12 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 @keyframes mm-self-heal-pulse { 50% { opacity: .58; transform: translateY(-1px); } }
 
 .mm-api-endpoint { display: flex; align-items: center; gap: 5px; margin-top: 3px; min-width: 0; }
-.mm-api-endpoint code { overflow: hidden; max-width: min(500px, 58vw); color: var(--text-secondary); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
-.mm-api-endpoint button { display: grid; place-items: center; padding: 1px; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
-.mm-api-endpoint button:hover { color: var(--primary); }
+.mm-api-endpoint code { color: var(--text-secondary); font-size: 10.5px; }
 .mm-api-endpoint svg { width: 12px; height: 12px; }
 
 .mm-api-hero-actions,
 .mm-inline-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .mm-api-hero-actions { flex-wrap: nowrap; }
-.mm-api-hero-actions .btn,
-.mm-inline-actions .btn { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 10px; border-radius: 9px; font-size: 12px; white-space: nowrap; }
 .mm-api-hero-actions svg,
 .mm-inline-actions svg,
 .mm-api-panel-head .btn svg { width: 13px; height: 13px; }
@@ -353,9 +341,9 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-provider-strip > button.active,
 .mm-provider-more > button.active { border-color: color-mix(in srgb, var(--primary) 28%, var(--mm-border)); background: color-mix(in srgb, var(--primary) 10%, var(--mm-surface)); color: var(--primary); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 7%, transparent); }
 .mm-provider-strip b,
-.mm-provider-more > button > b { align-self: end; overflow: hidden; font-size: 11px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
+.mm-provider-more > button > b { align-self: end; font-size: 11px; line-height: 1.15; overflow-wrap: anywhere; }
 .mm-provider-strip small,
-.mm-provider-more > button > small { align-self: start; overflow: hidden; color: var(--text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.mm-provider-more > button > small { align-self: start; color: var(--text-secondary); font-size: var(--text-size-meta); overflow-wrap: anywhere; }
 
 .mm-provider-icon {
   grid-row: 1 / 3;
@@ -392,7 +380,6 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-api-panel-head > div { min-width: 0; }
 .mm-api-panel-head h2 { margin: 0 0 3px; color: var(--text-primary); font-size: 13px; font-weight: 730; }
 .mm-api-panel-head p { margin: 0; color: var(--text-secondary); font-size: 10.5px; line-height: 1.45; }
-.mm-api-panel-head .btn { min-height: 30px; padding: 0 10px; font-size: 11px; white-space: nowrap; }
 .mm-model-sync-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .mm-model-sync-state { max-width: 260px; overflow: hidden; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .mm-model-sync-state.success { color: var(--success); }
@@ -409,7 +396,6 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-doubao-work-brand h1 { margin: 0; color: var(--text-primary); font-size: clamp(18px, 2vw, 25px); line-height: 1.15; }
 .mm-doubao-work-brand p { margin: 5px 0 0; color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
 .mm-doubao-work-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px; }
-.mm-doubao-work-actions .btn { min-height: 34px; }
 .mm-doubao-state { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 10px; white-space: nowrap; }
 .mm-doubao-state i { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; box-shadow: 0 0 0 3px color-mix(in srgb, #94a3b8 13%, transparent); }
 .mm-doubao-state.connected { color: var(--success); }
@@ -431,8 +417,6 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-doubao-account-copy strong { color: var(--text-primary); font-size: 10px; }
 .mm-doubao-account-copy small { color: var(--text-secondary); font-size: 9px; }
 .mm-doubao-state.compact { margin: 0 4px; font-size: 9px; }
-.mm-doubao-account > .btn { min-height: 27px; padding: 0 8px; font-size: 9px; }
-.mm-doubao-account > .btn svg { width: 12px; height: 12px; }
 .mm-doubao-empty { display: grid; justify-items: center; gap: 8px; min-height: 185px; align-content: center; padding: 18px; text-align: center; }
 .mm-doubao-empty-icon { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--mm-border); border-radius: 13px; background: var(--mm-surface-strong); color: var(--text-secondary); }
 .mm-doubao-empty-icon svg { width: 20px; height: 20px; }
@@ -443,7 +427,7 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-api-grid { display: grid; gap: 10px; min-width: 0; }
 .mm-api-grid.two { grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); }
 
-.mm-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.mm-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
 .mm-form-grid label,
 .mm-modal-form label,
 .mm-test-panel > label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
@@ -485,7 +469,7 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-test-panel { display: flex; flex-direction: column; gap: 9px; }
 .mm-test-panel .mm-api-panel-head { margin-bottom: 0; }
 .mm-test-panel textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-.mm-test-panel > .btn { align-self: flex-start; min-height: 30px; font-size: 11px; }
+.mm-test-panel > .btn { align-self: flex-start; }
 .mm-test-result { padding: 8px; border: 1px solid var(--mm-border); border-radius: 8px; font-size: 10px; }
 .mm-test-result.success { border-color: color-mix(in srgb, var(--success) 28%, transparent); background: color-mix(in srgb, var(--success) 7%, transparent); }
 .mm-test-result.error { border-color: color-mix(in srgb, var(--danger) 28%, transparent); background: color-mix(in srgb, var(--danger) 7%, transparent); }
@@ -498,7 +482,7 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-account.disabled { opacity: .64; }
 .mm-account-top { display: flex; align-items: center; gap: 8px; }
 .mm-account-top > div { min-width: 0; flex: 1; }
-.mm-account-top h3 { overflow: hidden; margin: 0; color: var(--text-primary); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.mm-account-top h3 { margin: 0; color: var(--text-primary); font-size: 11.5px; }
 .mm-account-top p { margin: 2px 0 0; color: var(--text-secondary); font-size: 9px; }
 .mm-account-state { padding: 2px 6px; border: 1px solid var(--mm-border); border-radius: 999px; background: transparent; color: var(--text-secondary); font-size: 9px; cursor: pointer; }
 .mm-account-state.enabled { border-color: color-mix(in srgb, var(--success) 24%, transparent); background: color-mix(in srgb, var(--success) 10%, transparent); color: #16a34a; }
@@ -507,14 +491,12 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-account-models span { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; }
 .mm-account-models em,
 .caps i { display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px; border-radius: 5px; background: color-mix(in srgb, var(--primary) 8%, transparent); color: var(--primary); font-size: 8px; font-style: normal; }
-.mm-account > code { display: block; overflow: hidden; padding: 6px 7px; border-radius: 6px; background: color-mix(in srgb, var(--bg-card) 76%, transparent); color: var(--text-secondary); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.mm-account > code { display: block; overflow: hidden; padding: 6px 7px; border-radius: 6px; background: color-mix(in srgb, var(--bg-card) 76%, transparent); color: var(--text-secondary); font-size: var(--text-size-meta); text-overflow: ellipsis; white-space: nowrap; }
 .mm-account footer { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
-.mm-account footer span { flex: 1; color: var(--text-secondary); font-size: 8.5px; }
-.mm-account footer button { border: 0; background: transparent; color: var(--primary); font-size: 9.5px; cursor: pointer; }
-.mm-account footer button.trash { display: grid; place-items: center; color: var(--danger); }
+.mm-account footer span { flex: 1; color: var(--text-secondary); font-size: var(--text-size-meta); }
 .mm-account footer svg { width: 13px; height: 13px; }
-.mm-account-routing-stat { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; color: var(--text-secondary); font-size: 8.5px; }
-.mm-account-routing-stat b { color: var(--primary); font-size: 10px; }
+.mm-account-routing-stat { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; color: var(--text-secondary); font-size: var(--text-size-meta); }
+.mm-account-routing-stat b { color: var(--primary); font-size: var(--text-size-meta); }
 .mm-account-routing-stat em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; }
 .mm-xai-quota { display: grid; gap: 6px; margin: 9px 0 7px; padding: 8px; border: 1px solid var(--mm-border-soft); border-radius: 8px; background: color-mix(in srgb, var(--bg-card) 72%, transparent); }
 .mm-xai-quota-row { display: grid; gap: 3px; }
@@ -532,7 +514,6 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-empty > svg { width: 30px; height: 30px; opacity: .52; }
 .mm-empty h3 { margin: 8px 0 3px; color: var(--text-primary); font-size: 12px; }
 .mm-empty p { max-width: 440px; margin: 0 0 10px; font-size: 10px; }
-.mm-empty .btn { min-height: 30px; font-size: 11px; }
 
 .mm-model-table { overflow: hidden; border: 1px solid var(--mm-border); border-radius: 9px; }
 .mm-model-table .head,
@@ -593,7 +574,7 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-modal-auth-tabs > button:hover:not(:disabled) { color: var(--text-primary); background: color-mix(in srgb, var(--primary) 6%, transparent); }
 .mm-modal-auth-tabs > button.active { background: color-mix(in srgb, var(--primary) 14%, var(--bg-card)); color: var(--text-primary); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--text-primary) 72%, transparent); }
 .mm-modal-auth-tabs svg { width: 14px; height: 14px; }
-.mm-modal-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; min-height: 0; overflow-y: auto; padding: 12px 15px; }
+.mm-modal-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); min-height: 0; overflow-y: auto; padding: var(--space-3) var(--space-4); }
 .mm-modal-form textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.45; }
 .mm-account-add-modal { width: min(850px, calc(100vw - 32px)); }
 .mm-xai-device-code { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--mm-border)); border-radius: 10px; background: color-mix(in srgb, var(--primary) 8%, transparent); }
@@ -607,7 +588,6 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-add-section .btn-full { width: 100%; justify-content: center; min-height: 38px; }
 .mm-oauth-draft-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 9px; padding: 10px; border: 1px solid var(--mm-border); border-radius: 10px; }
 .mm-oauth-draft-card > p { align-self: center; margin: 0; }
-.mm-oauth-draft-card .btn { min-height: 34px; white-space: nowrap; }
 .mm-generic-oauth-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .mm-oauth-url-section { display: grid; gap: 10px; }
 .mm-oauth-url-box,
@@ -625,7 +605,6 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-add-status.loading,
 .mm-add-status.info { background: color-mix(in srgb, var(--primary) 7%, transparent); color: var(--text-secondary); }
 .mm-modal > footer { display: flex; justify-content: flex-end; gap: 7px; flex: 0 0 auto; padding: 10px 15px; border-top: 1px solid var(--mm-border); }
-.mm-modal > footer .btn { min-height: 31px; font-size: 11px; }
 
 .mm-api-loading { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 60vh; color: var(--text-secondary); font-size: 12px; }
 .mm-api-loading svg { width: 16px; height: 16px; }
@@ -633,7 +612,6 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 .mm-api-load-error > div { max-width: min(620px, 72vw); }
 .mm-api-load-error strong { display: block; color: var(--text-primary); font-size: 13px; }
 .mm-api-load-error p { margin: 4px 0 0; color: var(--text-secondary); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
-.mm-api-load-error .btn { min-height: 30px; padding: 0 12px; font-size: 11px; }
 .mm-api-content, .mm-api-panel, .mm-provider-strip, .page-tabs.filter-tabs { overflow: visible; }
 .mm-repair-report {
   overflow: hidden;
@@ -690,7 +668,6 @@ html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-
 
 @media (max-width: 720px) {
   .mm-api-top-tabs { align-items: stretch; flex-direction: column; }
-  .mm-api-top-tabs .page-tabs-leading { min-width: 0; }
   .mm-provider-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mm-menu-panel, .mm-menu-panel-end { right: auto; left: 0; }
   .mm-api-summary-grid,
@@ -789,199 +766,10 @@ html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
   -webkit-app-region: no-drag;
 }
 
-html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone .page-top-strip-label {
-  font-size: clamp(20px, 1.8vw, 25px) !important;
-  line-height: 1.2 !important;
-  letter-spacing: -.025em !important;
-}
-
-html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
-  .mm-api-context-label,
-  .mm-api-title-line h1,
-  .mm-api-panel-head h2,
-  .mm-modal h2,
-  .mm-empty h3
-) {
-  font-size: 14px;
-  line-height: 1.3;
-}
-
-html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
-  .mm-provider-strip b,
-  .mm-api-summary-card span,
-  .mm-api-panel-head p,
-  .mm-test-panel label > span,
-  .mm-form-grid label,
-  .mm-modal-provider-grid b,
-  .mm-add-section .oauth-hint,
-  .mm-add-status,
-  .mm-api-message,
-  .mm-api-loading
-) {
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
-  .mm-provider-strip small,
-  .mm-api-summary-card small,
-  .mm-account-top p,
-  .mm-account footer span,
-  .mm-account-routing-stat,
-  .mm-xai-quota p,
-  .mm-xai-quota > small,
-  .mm-model-table .head,
-  .mm-model-actions em,
-  .mm-key small,
-  .mm-key code,
-  .mm-route header code,
-  .mm-route > button,
-  .mm-modal header p,
-  .mm-repair-report header p,
-  .mm-repair-check p
-) {
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone :is(
-  .mm-account-top h3,
-  .mm-account-models strong,
-  .mm-xai-quota-row b,
-  .mm-model-table .row code,
-  .mm-key strong,
-  .mm-route h3
-) {
-  font-size: 12px;
-}
-
-/* --------------------------------------------------------------------------
- * Liquid Glass material bridge
- *
- * This page is also mounted in its own Tauri window, where its feature sheet
- * is injected after the shared material sheets.  Keep the page-specific
- * surfaces on the same three tiers as the dashboard instead of allowing the
- * legacy `--mm-surface` colours to paint an opaque panel over the wallpaper.
- * The extra root scope intentionally wins over lazy-loaded feature styles.
- * -------------------------------------------------------------------------- */
-html[data-mm-api-standalone='true'],
-html[data-mm-api-standalone='true'] body,
-html[data-mm-api-standalone='true'] body #root,
-html[data-mm-api-standalone='true'] body #root .mm-api-standalone-window,
-html[data-mm-api-standalone='true'] body #root .mm-api-page-standalone {
-  background: transparent !important;
-  background-color: transparent !important;
-  background-image: none !important;
-}
-
-html body #root .mm-api-page {
-  --mm-surface: var(--lg-1-fill, rgba(16, 20, 26, 0.2));
-  --mm-surface-strong: color-mix(in srgb, var(--lg-2-fill, rgba(16, 20, 26, 0.24)) 72%, transparent);
-  --mm-border: var(--lg-1-edge, rgba(255, 255, 255, 0.2));
-  --mm-border-soft: color-mix(in srgb, var(--mm-border) 62%, transparent);
-  --mm-shadow: var(--lg-1-shadow, 0 12px 34px rgba(0, 0, 0, 0.2));
-  background: transparent !important;
-  background-color: transparent !important;
-  background-image: none !important;
-}
-
-html body #root .mm-api-page :is(
-  .mm-api-hero,
-  .mm-api-panel,
-  .mm-api-summary-card,
-  .mm-provider-strip,
-  .mm-repair-report
-) {
-  background-color: var(--lg-1-fill, rgba(16, 20, 26, 0.2)) !important;
-  background-image: var(--lg-1-sheen, linear-gradient(145deg, rgba(255, 255, 255, 0.09), transparent 34%)) !important;
-  border-color: var(--lg-1-edge, rgba(255, 255, 255, 0.2)) !important;
-  border-radius: var(--lg-r-panel, 24px) !important;
-  box-shadow: var(--lg-1-shadow, 0 12px 34px rgba(0, 0, 0, 0.2)) !important;
-  -webkit-backdrop-filter: var(--lg-1-blur, blur(12px) saturate(120%)) !important;
-  backdrop-filter: var(--lg-1-blur, blur(12px) saturate(120%)) !important;
-}
-
-html body #root .mm-api-page :is(
-  .mm-account,
-  .mm-model-table,
-  .mm-key,
-  .mm-route,
-  .mm-add-section,
-  .mm-xai-quota,
-  .mm-empty,
-  .mm-oauth-draft-card,
-  .mm-test-result,
-  .mm-api-message,
-  .mm-repair-check
-) {
-  background-color: var(--lg-recess-soft, rgba(4, 6, 9, 0.16)) !important;
-  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.055), transparent 42%) !important;
-  border-color: var(--lg-recess-edge, rgba(255, 255, 255, 0.14)) !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-}
-
-html body #root .mm-api-page :is(.mm-model-table .head, .mm-route pre) {
-  background-color: var(--lg-recess, rgba(4, 6, 9, 0.3)) !important;
-}
-
-html body #root .mm-api-page .mm-modal {
-  background-color: var(--lg-3-fill, rgba(14, 15, 18, 0.88)) !important;
-  background-image: var(--lg-3-specular, linear-gradient(145deg, rgba(255, 255, 255, 0.12), transparent 34%)) !important;
-  border-color: var(--lg-3-edge, rgba(255, 255, 255, 0.34)) !important;
-  border-radius: var(--lg-r-panel, 26px) !important;
-  box-shadow: var(--lg-3-shadow, 0 36px 88px rgba(0, 0, 0, 0.45)) !important;
-  -webkit-backdrop-filter: var(--lg-3-blur, blur(28px) saturate(145%)) !important;
-  backdrop-filter: var(--lg-3-blur, blur(28px) saturate(145%)) !important;
-}
-
-/* Inputs remain recessed glass, including the standalone console window. */
-html body #root .mm-api-page :is(input, textarea, select) {
-  background-color: var(--lg-recess, rgba(4, 6, 9, 0.3)) !important;
-  border-color: var(--lg-recess-edge, rgba(255, 255, 255, 0.14)) !important;
-  color: var(--lg-ink, var(--text-primary)) !important;
-}
-
-/* On macOS the NSVisualEffectView already blurs the desktop once for the whole
- * window. The shared glass theme also blurs every control and its decorative
- * pseudo-elements; an account grid can otherwise create hundreds of live
- * backdrop layers. Keep their translucent fills, borders and highlights, but
- * let the native material supply the blur. Other platforms retain their CSS
- * glass treatment. */
-html[data-mm-native-compositor='true'][data-mm-api-standalone='true'][data-native-liquid-glass='true'] body #root#root .mm-api-page-standalone,
-html[data-mm-native-compositor='true'][data-mm-api-standalone='true'][data-native-liquid-glass='true'] body #root#root .mm-api-page-standalone *,
-html[data-mm-native-compositor='true'][data-mm-api-standalone='true'][data-native-liquid-glass='true'] body #root#root .mm-api-page-standalone *::before,
-html[data-mm-native-compositor='true'][data-mm-api-standalone='true'][data-native-liquid-glass='true'] body #root#root .mm-api-page-standalone *::after {
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-}
-
-/* The radial field is already soft; its previous full-window 42px CSS blur
- * added another expensive pass above the native window material. */
-html[data-mm-native-compositor='true'][data-native-liquid-glass='true'] body::after {
-  filter: none !important;
-}
-
-/* A moving background-position and blurred shadow on every selected control
- * keeps WebKit resolving and painting styles even while the page is idle.
- * Keep the static glass highlights, and leave the separate SVG spinner and
- * status indicators animated when a real operation is in progress. */
-html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone button,
-html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone button::before,
-html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone button::after {
-  animation: none !important;
-}
-
-/* Dense account grids can contain hundreds of small controls. A thin inset
- * edge gives them the same glass separation without repainting large shadows. */
-html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone .mm-account button {
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.14) !important;
-}
-
-/* The card and button fills already have a static highlight. The shared
- * decorative overlay adds another gradient and inset shadow to each one. */
-html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone .mm-account::before,
-html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root#root .mm-api-page-standalone .mm-account button::before {
-  content: none !important;
+/* The standalone window has the same canvas and material roles as the main
+   workspace; only the native title-bar hit area differs by platform. */
+html[data-mm-api-standalone='true'] .mm-api-standalone-window {
+  background: var(--app-canvas);
 }
 
 /* WorkBuddy stays inside the independent API console so account management and
@@ -1017,125 +805,7 @@ html[data-mm-native-compositor='true'][data-mm-api-standalone='true'] body #root
   gap: 14px;
 }
 
-/* Windows 11 Fluent fallback: solid layers, 8px cards, 4px controls.
- * Acrylic stays off this scrolling page. Mac keeps the glass sheet above. */
-html[data-platform='windows'][data-mm-api-standalone='true'] body,
-html[data-platform='windows'][data-mm-api-standalone='true'] body #root,
-html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-standalone-window,
-html[data-platform='windows'][data-mm-api-standalone='true'] body #root .mm-api-page-standalone,
-html[data-platform='windows'] body #root .mm-api-page {
-  background: #0c0e12 !important;
-  background-color: #0c0e12 !important;
-  background-image: none !important;
-  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif !important;
-}
-
-html[data-platform='windows'] body #root .mm-api-page {
-  --mm-surface: #1b1f26;
-  --mm-surface-strong: #232830;
-  --mm-border: rgba(255, 255, 255, 0.1);
-  --mm-border-soft: rgba(255, 255, 255, 0.08);
-  --lg-1-fill: #1b1f26;
-  --lg-2-fill: #232830;
-  --lg-3-fill: #16191e;
-  --lg-recess: #12151a;
-  --lg-recess-soft: #12151a;
-  --lg-1-edge: rgba(255, 255, 255, 0.1);
-  --lg-1-sheen: none;
-  --lg-1-shadow: none;
-  --lg-3-specular: none;
-  --lg-r-panel: 8px;
-  gap: 16px;
-}
-
-html[data-platform='windows'] body #root .mm-api-page :is(
-  .mm-api-hero,
-  .mm-api-panel,
-  .mm-api-summary-card,
-  .mm-provider-strip,
-  .mm-repair-report,
-  .mm-workbuddy-host,
-  .mm-extension-host .mm-api-panel,
-  .mm-extension-hero
-) {
-  background-color: #1b1f26 !important;
-  background-image: none !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  border-radius: 8px !important;
-  box-shadow: none !important;
-}
-
-html[data-platform='windows'] body #root .mm-api-page :is(
-  .mm-account,
-  .mm-model-table,
-  .mm-key,
-  .mm-route,
-  .mm-add-section,
-  .mm-xai-quota,
-  .mm-empty,
-  .mm-oauth-draft-card,
-  .mm-test-result,
-  .mm-api-message,
-  .mm-repair-check,
-  .mm-model-table .head,
-  .mm-route pre
-) {
-  background-color: #12151a !important;
-  background-image: none !important;
-  border-radius: 8px !important;
-  box-shadow: none !important;
-}
-
-html[data-platform='windows'] body #root .mm-api-page :is(input, textarea, select),
-html[data-platform='windows'] .mm-extension-fields select,
-html[data-platform='windows'] .mm-extension-fields input:not([type='checkbox']),
-html[data-platform='windows'] .mm-extension-host textarea {
-  background-color: #12151a !important;
-  background-image: none !important;
-  border: 1px solid rgba(255, 255, 255, 0.14) !important;
-  border-radius: 4px !important;
-  box-shadow: none !important;
-  min-height: 32px;
-  font-size: 14px;
-}
-
-html[data-platform='windows'] body #root .mm-api-page .mm-modal {
-  background-color: #16191e !important;
-  background-image: none !important;
-  border-radius: 8px !important;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45) !important;
-}
-
-html[data-platform='windows'] body #root .mm-api-page :is(.btn, .btn.btn-primary, .btn.btn-secondary) {
-  min-height: 32px;
-  padding: 0 12px;
-  border-radius: 4px !important;
-  font-size: 14px;
-  font-weight: 600;
-  box-shadow: none !important;
-  background-image: none !important;
-  animation: none !important;
-  backdrop-filter: none !important;
-}
-
-html[data-platform='windows'] body #root .mm-api-page .btn.btn-primary {
-  background-color: #4f8cff !important;
-  border-color: #4f8cff !important;
-  color: #ffffff !important;
-}
-
-html[data-platform='windows'] body #root .mm-api-page .btn.btn-primary:hover:not(:disabled) {
-  background-color: #6ba0ff !important;
-  border-color: #6ba0ff !important;
-}
-
-html[data-platform='windows'] body #root .mm-api-page .btn.btn-secondary {
-  background-color: #232830 !important;
-  border: 1px solid rgba(255, 255, 255, 0.14) !important;
-  color: #f3f4f6 !important;
-}
-
-html[data-platform='windows'] .mm-extension-hero {
+.mm-extension-hero {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1147,12 +817,12 @@ html[data-platform='windows'] .mm-extension-hero {
   box-sizing: border-box;
 }
 
-html[data-platform='windows'] .mm-extension-hero > div {
+.mm-extension-hero > div {
   flex: 1 1 280px;
   min-width: 0;
 }
 
-html[data-platform='windows'] .mm-extension-hero .mm-inline-actions {
+.mm-extension-hero .mm-inline-actions {
   display: flex;
   flex: 0 1 auto;
   flex-wrap: wrap;
@@ -1161,82 +831,82 @@ html[data-platform='windows'] .mm-extension-hero .mm-inline-actions {
   max-width: 100%;
 }
 
-html[data-platform='windows'] .mm-extension-hero h1 {
+.mm-extension-hero h1 {
   margin: 0;
-  color: #f3f4f6;
+  color: var(--app-ink);
   font-size: 20px;
   font-weight: 600;
   line-height: 1.3;
 }
 
-html[data-platform='windows'] .mm-extension-hero p,
-html[data-platform='windows'] .mm-extension-host .mm-api-panel p,
-html[data-platform='windows'] .mm-extension-empty p {
+.mm-extension-hero p,
+.mm-extension-host .mm-api-panel p,
+.mm-extension-empty p {
   max-width: 68ch;
   margin: 6px 0 0;
-  color: #a7b0bd !important;
+  color: var(--app-copy) !important;
   font-size: 14px !important;
   line-height: 1.5 !important;
 }
 
-html[data-platform='windows'] .mm-extension-host {
+.mm-extension-host {
   gap: 12px;
 }
 
-html[data-platform='windows'] .mm-extension-host .mm-api-panel {
+.mm-extension-host .mm-api-panel {
   padding: 16px 18px;
 }
 
-html[data-platform='windows'] .mm-extension-host h2 {
+.mm-extension-host h2 {
   margin: 0 0 12px;
-  color: #f3f4f6;
+  color: var(--app-ink);
   font-size: 16px;
   font-weight: 600;
 }
 
-html[data-platform='windows'] .mm-extension-fields {
+.mm-extension-fields {
   display: grid;
   justify-items: stretch;
   gap: 12px;
   width: min(100%, 480px);
 }
 
-html[data-platform='windows'] .mm-extension-fields label {
+.mm-extension-fields label {
   display: grid;
   gap: 6px;
   width: 100%;
-  color: #d5dbe3;
+  color: var(--app-copy);
   font-size: 13px;
   font-weight: 600;
 }
 
-html[data-platform='windows'] .mm-extension-login .mm-extension-fields {
+.mm-extension-login .mm-extension-fields {
   margin-bottom: 12px;
 }
 
-html[data-platform='windows'] .mm-extension-empty {
+.mm-extension-empty {
   display: grid;
   align-content: start;
   min-height: 112px;
 }
 
-html[data-platform='windows'] .mm-extension-empty h2 {
+.mm-extension-empty h2 {
   margin-bottom: 4px;
 }
 
-html[data-platform='windows'] .mm-extension-host details {
+.mm-extension-host details {
   margin-top: 14px;
-  color: #d5dbe3;
+  color: var(--app-copy);
   font-size: 14px;
 }
 
-html[data-platform='windows'] .mm-extension-host summary {
+.mm-extension-host summary {
   cursor: pointer;
 }
 
 html[data-platform='windows'] .mm-api-message {
   padding: 10px 12px;
-  color: #f3f4f6 !important;
+  color: var(--app-ink) !important;
   font-size: 13px;
 }
 
@@ -1262,8 +932,6 @@ html[data-platform='windows'] .mm-api-message {
 }
 
 .mm-account footer { flex-wrap: wrap; }
-.mm-account footer button { display: inline-flex; align-items: center; gap: 3px; min-height: 26px; }
-.mm-account footer button:disabled { opacity: .5; cursor: default; }
 
 .mm-quota-error {
   margin: 4px 0;
@@ -1291,3 +959,60 @@ html[data-platform='windows'] .mm-api-message {
 .mm-doubao-web-row > em { font-style: normal; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: rgba(127,127,127,.15); }
 .mm-doubao-web-row > em.online { background: rgba(34,197,94,.15); color: #16a34a; }
 .mm-doubao-web-row > .mm-inline-actions { grid-column: 1 / -1; flex-wrap: wrap; }
+
+/* A shared spacing rhythm for the standalone account pool and embedded pages. */
+.mm-api-page,
+.mm-api-content { gap: var(--space-4); }
+
+/* The window itself scrolls; do not shrink the tab bar when content is tall. */
+.mm-api-page > :is(.page-top-strip, .mm-api-top-tabs, .mm-api-content) { flex-shrink: 0; }
+.mm-api-page-standalone { padding: var(--space-5) var(--space-5) var(--space-6); }
+.mm-api-top-tabs.page-tabs-row-with-leading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mm-api-top-tabs .page-tabs { width: auto; justify-content: flex-start; }
+.mm-api-context-label { font-size: var(--text-size-body); gap: var(--space-2); }
+.mm-api-hero,
+.mm-api-panel { padding: var(--space-4); }
+
+.mm-api-hero-actions,
+.mm-inline-actions { flex-wrap: wrap; gap: var(--space-2); }
+.mm-api-panel-head { flex-wrap: wrap; gap: var(--space-3); }
+.mm-api-panel-head > div:first-child { flex: 1 1 240px; }
+.mm-api-title-line h1,
+.mm-api-panel-head h2,
+.mm-modal h2 { font-size: var(--text-size-section); line-height: var(--leading-title); }
+.mm-api-panel-head p,
+.mm-route p { font-size: var(--text-size-body); line-height: var(--leading-body); }
+.mm-api-endpoint { flex-wrap: wrap; gap: var(--space-1); }
+.mm-api-endpoint code { overflow-wrap: anywhere; font-size: var(--text-size-meta); }
+.mm-provider-strip { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: var(--space-2); padding: var(--space-2); }
+.mm-provider-strip :is(b, small),
+.mm-api-summary-card :is(span, small),
+.mm-account-top p { font-size: var(--text-size-meta); line-height: var(--leading-body); }
+.mm-api-summary-grid,
+.mm-account-grid { gap: var(--space-3); }
+.mm-api-summary-card,
+.mm-account { padding: var(--space-3); }
+.mm-account-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); }
+.mm-account-top h3 { font-size: var(--text-size-body); overflow-wrap: anywhere; }
+.mm-account footer { flex-wrap: wrap; gap: var(--space-2); }
+.mm-api-status.running { color: var(--app-positive); }
+.mm-api-status.stopped { color: var(--app-caution); }
+.mm-account > code,
+.mm-model-table code { white-space: normal; overflow-wrap: anywhere; }
+
+@media (max-width: 960px) {
+  .mm-api-page-standalone { padding-inline: var(--space-4); }
+}
+
+@media (max-width: 720px) {
+  .mm-api-hero { grid-template-columns: minmax(0, 1fr); }
+  .mm-api-hero-actions,
+  .mm-inline-actions { justify-content: flex-start; }
+}

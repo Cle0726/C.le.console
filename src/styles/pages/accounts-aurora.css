@@ -98,23 +98,16 @@
 
 .accounts-page .toolbar-left {
   display: flex;
-  align-items: center;
-  gap: 12px;
   flex: 1;
   min-width: 0;
-  flex-wrap: nowrap;
 }
 
 .accounts-page .toolbar-right {
   display: flex;
-  align-items: center;
-  gap: 8px;
   flex-shrink: 0;
-  flex-wrap: nowrap;
 }
 
 .accounts-page .search-box {
-  width: clamp(120px, 11vw, 160px);
   flex-shrink: 0;
 }
 
@@ -142,18 +135,6 @@
   border-radius: 10px;
 }
 
-.accounts-page .view-btn {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-}
-
-.accounts-page .view-btn.active {
-  background: var(--gradient-primary);
-  color: white;
-  box-shadow: 0 6px 14px rgba(29, 78, 216, 0.3);
-}
-
 .accounts-page .filter-tabs:not(.page-tabs) {
   background: rgba(15, 23, 42, 0.05);
   border: 1px solid rgba(15, 23, 42, 0.08);
@@ -173,10 +154,7 @@
 }
 
 .accounts-page .filter-tabs:not(.page-tabs) .filter-tab {
-  font-size: 12px;
-  font-weight: 600;
   letter-spacing: 0.02em;
-  border-radius: 10px;
   flex-shrink: 0;
 }
 
@@ -219,24 +197,9 @@
 }
 
 .accounts-page .tag-filter-btn {
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   cursor: pointer;
-}
-
-.accounts-page .tag-filter-btn.active {
-  border-color: rgba(59, 130, 246, 0.4);
-  background: linear-gradient(135deg, rgba(191, 219, 254, 0.45), rgba(153, 246, 228, 0.4));
-  color: #0f172a;
 }
 
 .accounts-page .tag-filter-panel {
@@ -441,74 +404,12 @@
 
 /* Sort Direction Toggle Button */
 .accounts-page .sort-direction-btn {
-  width: 32px;
-  height: 32px;
   margin-left: 6px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 16px;
   cursor: pointer;
-  transition: all 0.2s ease;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-}
-
-.accounts-page .sort-direction-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  border-color: var(--border-hover);
-  transform: scale(1.05);
-}
-
-.accounts-page .sort-direction-btn:active {
-  transform: scale(0.95);
-}
-
-
-.accounts-page .filter-tabs:not(.page-tabs) .filter-tab.active {
-  background: var(--gradient-primary);
-  color: white;
-  border-color: transparent;
-  box-shadow: 0 8px 16px rgba(29, 78, 216, 0.24);
-}
-
-.accounts-page .filter-tabs:not(.page-tabs) .filter-tab.active .count {
-  background: rgba(255, 255, 255, 0.25);
-  color: white;
-}
-
-.accounts-page .btn-secondary {
-  background: var(--bg-secondary);
-  border-color: var(--border);
-  color: var(--text-secondary);
-}
-
-.accounts-page .btn-secondary:hover:not(:disabled) {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.accounts-page .btn.export-btn {
-  background: var(--bg-secondary);
-  border-color: var(--border);
-  color: var(--text-secondary);
-  box-shadow: var(--shadow-sm);
-}
-
-.accounts-page .btn.export-btn:hover:not(:disabled) {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.accounts-page .toolbar .btn {
-  min-height: 32px;
-  padding: 0 10px;
-  font-size: 12px;
-  border-radius: 10px;
 }
 
 .accounts-page .toolbar .btn svg {
@@ -517,8 +418,6 @@
 }
 
 .accounts-page .toolbar .btn.icon-only {
-  width: 32px;
-  padding: 0;
   justify-content: center;
 }
 
@@ -872,44 +771,8 @@
   gap: 2px;
 }
 
-.accounts-page .card-action-btn {
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  color: var(--text-secondary);
-  border: 1px solid transparent;
-}
-
-.accounts-page .card-action-btn.export-btn {
-  color: var(--accounts-accent);
-}
-
 .accounts-page .card-action-btn:disabled {
-  opacity: 0.45;
   cursor: not-allowed;
-}
-
-.accounts-page .card-action-btn:hover:not(:disabled) {
-  background: rgba(29, 78, 216, 0.12);
-  color: var(--accounts-primary);
-}
-
-.accounts-page .card-action-btn.is-success {
-  color: var(--success);
-}
-
-.accounts-page .card-action-btn.is-success:hover:not(:disabled) {
-  background: rgba(34, 197, 94, 0.15);
-  color: var(--success);
-}
-
-.accounts-page .card-action-btn.is-danger {
-  color: var(--danger);
-}
-
-.accounts-page .card-action-btn.is-danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--danger);
 }
 
 .accounts-page .account-table-container {
@@ -999,23 +862,6 @@
     rgba(148, 163, 184, 0.14) 90%,
     transparent 100%
   );
-}
-
-[data-theme="dark"] .accounts-page .pagination-container .tag-filter-btn.single-filter-btn {
-  background: rgba(15, 23, 42, 0.58);
-  border-color: rgba(96, 165, 250, 0.26);
-  color: rgba(226, 232, 240, 0.88);
-}
-
-[data-theme="dark"] .accounts-page .pagination-container .tag-filter-btn.single-filter-btn:hover:not(:disabled),
-[data-theme="dark"] .accounts-page .pagination-container .tag-filter-btn.single-filter-btn.active {
-  background: linear-gradient(
-    135deg,
-    rgba(37, 99, 235, 0.24),
-    rgba(20, 184, 166, 0.12)
-  );
-  border-color: rgba(96, 165, 250, 0.44);
-  color: rgba(248, 250, 252, 0.96);
 }
 
 [data-theme="dark"] .accounts-page .pagination-container .single-filter-icon {

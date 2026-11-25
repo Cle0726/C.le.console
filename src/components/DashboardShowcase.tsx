@@ -1,8 +1,7 @@
-import { useEffect, useState, type FocusEvent as ReactFocusEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useState, type FocusEvent as ReactFocusEvent, type ReactNode } from 'react';
 import { ArrowLeft, ArrowUpRight, GaugeCircle, Network, Shuffle } from 'lucide-react';
 import type { PlatformId } from '../types/platform';
 import { ModelGeometricEmblem, type ModelEmblemKind } from './ModelGeometricEmblem';
-import { WebGLGeometricCore } from './WebGLGeometricCore';
 import { useModelRotation } from '../hooks/useModelRotation';
 
 export type DashboardScene = 'landing' | 'models' | 'studio' | 'data' | 'egress';
@@ -17,83 +16,32 @@ export const SHOWCASE_MODELS: Array<{ id: ModelEmblemKind; label: string; platfo
 ];
 const SHOWCASE_MODEL_IDS = SHOWCASE_MODELS.map((model) => model.id);
 
-function handleModelCardPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
-  if (
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
-    document.documentElement.dataset.performanceMode === 'lite'
-  ) return;
-
-  const card = event.currentTarget;
-  const bounds = card.getBoundingClientRect();
-  const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
-  const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
-
-  card.style.setProperty('--tilt-x', `${(0.5 - y) * 1.2}deg`);
-  card.style.setProperty('--tilt-y', `${(x - 0.5) * 1.5}deg`);
-  card.style.setProperty('--parallax-x', `${(x - 0.5) * 4}px`);
-  card.style.setProperty('--parallax-y', `${(y - 0.5) * 3}px`);
-  card.style.setProperty('--pointer-x', `${x * 100}%`);
-  card.style.setProperty('--pointer-y', `${y * 100}%`);
-}
-
-function resetModelCardPointer(event: ReactPointerEvent<HTMLButtonElement>) {
-  const card = event.currentTarget;
-  card.style.setProperty('--tilt-x', '0deg');
-  card.style.setProperty('--tilt-y', '0deg');
-  card.style.setProperty('--parallax-x', '0px');
-  card.style.setProperty('--parallax-y', '0px');
-  card.style.setProperty('--pointer-x', '50%');
-  card.style.setProperty('--pointer-y', '50%');
-}
-
-function handleLaunchpadPointerMove(event: ReactPointerEvent<HTMLElement>) {
-  if (
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
-    document.documentElement.dataset.performanceMode === 'lite'
-  ) return;
-  const card = event.currentTarget;
-  const bounds = card.getBoundingClientRect();
-  const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
-  const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
-  card.style.setProperty('--launch-tilt-x', `${(0.5 - y) * 0.7}deg`);
-  card.style.setProperty('--launch-tilt-y', `${(x - 0.5) * 0.9}deg`);
-  card.style.setProperty('--launch-shift-x', `${(x - 0.5) * 5}px`);
-  card.style.setProperty('--launch-shift-y', `${(y - 0.5) * 4}px`);
-  card.style.setProperty('--launch-pointer-x', `${x * 100}%`);
-  card.style.setProperty('--launch-pointer-y', `${y * 100}%`);
-}
-
-function resetLaunchpadPointer(event: ReactPointerEvent<HTMLElement>) {
-  const card = event.currentTarget;
-  card.style.setProperty('--launch-tilt-x', '0deg');
-  card.style.setProperty('--launch-tilt-y', '0deg');
-  card.style.setProperty('--launch-shift-x', '0px');
-  card.style.setProperty('--launch-shift-y', '0px');
-  card.style.setProperty('--launch-pointer-x', '56%');
-  card.style.setProperty('--launch-pointer-y', '48%');
-}
-
 export function DashboardSceneHeader({
   title,
   englishTitle,
   index,
   onBack,
+  actions,
 }: {
   title: string;
   englishTitle?: string;
   index: string;
   onBack?: () => void;
+  actions?: ReactNode;
 }) {
   return (
     <header className="scene-header">
       <div className="scene-header-title">
-        {onBack ? <button type="button" onClick={onBack} aria-label="返回上一页 / Back" title="返回 / Back"><ArrowLeft size={16} /></button> : <span />}
+        {onBack && <button type="button" className="btn-icon" onClick={onBack} aria-label="返回上一页 / Back" title="返回 / Back"><ArrowLeft size={16} /></button>}
         <div>
           <small>SECTION / {index}</small>
-          <strong><span>{title}</span>{englishTitle && <em>{englishTitle}</em>}</strong>
+          <h1><span>{title}</span>{englishTitle && <em>{englishTitle}</em>}</h1>
         </div>
       </div>
-      <span className="scene-header-index">{index}</span>
+      <div className="scene-header-actions">
+        {actions}
+        <span className="scene-header-index">{index}</span>
+      </div>
     </header>
   );
 }
@@ -134,11 +82,6 @@ export function DashboardLaunchpad({
     onModelChange?.(activeItem);
   }, [activeItem, onModelChange]);
 
-  const handlePrimaryPointerLeave = (event: ReactPointerEvent<HTMLElement>) => {
-    resetLaunchpadPointer(event);
-    setInteractionPaused(false);
-  };
-
   const handlePrimaryBlur = (event: ReactFocusEvent<HTMLElement>) => {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
       setInteractionPaused(false);
@@ -151,10 +94,10 @@ export function DashboardLaunchpad({
       <div className="launchpad-grid">
         <section
           className="launchpad-primary"
-          onPointerMove={handleLaunchpadPointerMove}
+
           onPointerEnter={() => setInteractionPaused(true)}
-          onPointerLeave={handlePrimaryPointerLeave}
-          onPointerCancel={handlePrimaryPointerLeave}
+          onPointerLeave={() => setInteractionPaused(false)}
+          onPointerCancel={() => setInteractionPaused(false)}
           onFocusCapture={() => setInteractionPaused(true)}
           onBlurCapture={handlePrimaryBlur}
           data-model-variant={activeModel.id}
@@ -170,13 +113,7 @@ export function DashboardLaunchpad({
             <small><b>选择 · 浏览 · 控制</b><em>SELECT · VIEW · CONTROL</em></small>
           </div>
           <div className="launchpad-object" aria-hidden="true">
-            <WebGLGeometricCore
-              variant={activeModel.id}
-              mode="texture"
-              intensity={58}
-              shadow={0}
-              rotationSpeed={0.86}
-            />
+            <ModelGeometricEmblem kind={activeModel.id} />
           </div>
           <div className="launchpad-model-switcher" aria-label="几何模型选择 / Geometry model selector">
             <div className="launchpad-model-readout" aria-live="polite">
@@ -190,7 +127,7 @@ export function DashboardLaunchpad({
                   type="button"
                   role="tab"
                   key={model.id}
-                  className={model.id === activeItem ? 'active' : ''}
+                  className={`btn btn-ghost btn-sm icon-only${model.id === activeItem ? ' active' : ''}`}
                   aria-selected={model.id === activeItem}
                   aria-label={`${model.label} 几何模型 / ${model.label} geometry`}
                   title={model.label}
@@ -201,7 +138,7 @@ export function DashboardLaunchpad({
               ))}
               <button
                 type="button"
-                className="launchpad-shuffle-button"
+                className="btn btn-ghost btn-sm icon-only"
                 onClick={shuffleNow}
                 aria-label="随机切换模型 / Shuffle model"
                 title="随机切换 / Shuffle"
@@ -265,9 +202,9 @@ export function DashboardModelGallery({
             key={model.id}
             className={`model-gallery-card gallery-${model.id}`}
             onClick={() => onSelect(model.id)}
-            onPointerMove={handleModelCardPointerMove}
-            onPointerLeave={resetModelCardPointer}
-            onPointerCancel={resetModelCardPointer}
+
+
+
             aria-label={`打开 ${model.label} 模型 / Open ${model.label}`}
           >
             <span className="model-gallery-number">{model.index}</span>

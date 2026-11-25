@@ -491,22 +491,15 @@
 .egress-history-empty { min-height: 300px; display: grid; place-items: center; color: var(--egress-muted); font: 650 8px var(--font-mono); letter-spacing: .1em; }
 
 /* The dashboard entry uses a route diagram instead of the retired automation clock. */
-.launchpad-egress {
-  color: #181c1f !important;
-  background:
-    radial-gradient(ellipse at 67% 42%, rgba(224,229,231,.12), transparent 55%),
-    linear-gradient(180deg, rgba(255,255,255,.025), rgba(29,38,44,.02)) !important;
-}
-.launchpad-egress > small { color: #687075; }
-.launchpad-egress-visual { display: grid !important; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; max-width: 230px; min-height: 86px; padding: 12px 13px; border: 1px solid rgba(18,24,27,.28); background: rgba(220,225,227,.35); box-shadow: 8px 9px 0 rgba(18,22,25,.07); }
+.launchpad-egress-visual { display: grid !important; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; max-width: 230px; min-height: 86px; padding: 12px 13px; border: 1px solid var(--app-line); background: var(--app-inset); }
 .launchpad-egress-visual svg { width: 100%; min-width: 0; overflow: visible; }
-.launchpad-egress-visual path { fill: none; stroke: #172025; stroke-width: 1; stroke-dasharray: 4 5; animation: egressRouteFlow 4s linear infinite; }
+.launchpad-egress-visual path { fill: none; stroke: #172025; stroke-width: 1; stroke-dasharray: 4 5; }
 .launchpad-egress-visual circle,
 .launchpad-egress-visual rect { fill: #121719; stroke: #e5e9ea; stroke-width: 1; }
-.launchpad-egress-visual circle.launchpad-egress-node { fill: none; stroke: #172025; animation: egressCardNode 2.8s ease-in-out infinite; transform-origin: 108px 35px; }
+.launchpad-egress-visual circle.launchpad-egress-node { fill: none; stroke: #172025; transform-origin: 108px 35px; }
 .launchpad-egress-visual > span { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .launchpad-egress-visual b { font: 700 10px var(--font-mono); letter-spacing: .08em; }
-.launchpad-egress-visual small { color: #687075; font: 650 6px var(--font-mono); letter-spacing: .1em; white-space: nowrap; }
+.launchpad-egress-visual small { color: var(--app-copy); font: 600 var(--text-size-meta)/var(--leading-body) var(--font-sans); letter-spacing: .1em; white-space: nowrap; }
 
 html[data-visual-theme='night'] .egress-monitor-page {
   --egress-panel: var(--monitor-panel);
@@ -533,16 +526,7 @@ html[data-visual-theme='night'] .egress-history-panel {
     linear-gradient(90deg, rgba(230,236,238,.035) 1px, transparent 1px),
     linear-gradient(180deg, rgba(255,255,255,.012), rgba(0,0,0,.03));
 }
-
-html[data-visual-theme='night'] .launchpad-egress {
-  color: #edf0f1 !important;
-  background:
-    radial-gradient(ellipse at 67% 42%, rgba(216,224,227,.05), transparent 55%),
-    linear-gradient(180deg, rgba(255,255,255,.014), rgba(0,0,0,.025)) !important;
-}
-html[data-visual-theme='night'] .launchpad-egress > small,
-html[data-visual-theme='night'] .launchpad-egress-visual small { color: #8d989e; }
-html[data-visual-theme='night'] .launchpad-egress-visual { border-color: rgba(229,235,237,.18); background: rgba(16,21,24,.48); box-shadow: 8px 9px 0 rgba(0,0,0,.26); }
+html[data-visual-theme='night'] .launchpad-egress-visual { border-color: var(--app-line); background: var(--app-inset); }
 html[data-visual-theme='night'] .launchpad-egress-visual path { stroke: #e3e9ea; }
 html[data-visual-theme='night'] .launchpad-egress-visual circle,
 html[data-visual-theme='night'] .launchpad-egress-visual rect { fill: #e7ebec; stroke: #111619; }
@@ -556,7 +540,6 @@ html[data-performance-mode='lite'] .egress-mismatch-alert,
 html[data-performance-mode='lite'] .egress-view-switch,
 html[data-performance-mode='lite'] .launchpad-egress-visual {
   backdrop-filter: none !important;
-  box-shadow: none !important;
   background-image: none !important;
 }
 
@@ -566,7 +549,6 @@ html[data-performance-mode='lite'] .egress-exit-pulse,
 html[data-performance-mode='lite'] .egress-status-primary i,
 html[data-performance-mode='lite'] .launchpad-egress-visual path,
 html[data-performance-mode='lite'] .launchpad-egress-node {
-  animation: none !important;
 }
 
 @keyframes egressAlertEnter { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Moon, Sun } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Page } from '../../types/navigation';
 import {
@@ -130,7 +131,7 @@ export function IndustrialChrome({ page }: IndustrialChromeProps) {
       <div className="industrial-chrome-year">
         <button
           type="button"
-          className="industrial-lite-toggle"
+          className="btn btn-ghost btn-sm industrial-lite-toggle"
           data-active={performanceMode === 'lite'}
           aria-label={performanceMode === 'lite' ? '退出简洁模式 / Restore full effects' : '启用简洁模式 / Reduce memory usage'}
           aria-pressed={performanceMode === 'lite'}
@@ -142,17 +143,14 @@ export function IndustrialChrome({ page }: IndustrialChromeProps) {
         </button>
         <button
           type="button"
-          className="industrial-theme-toggle"
+          className="btn btn-ghost btn-sm icon-only industrial-theme-toggle"
           data-mode={visualTheme}
           aria-label={visualTheme === 'night' ? '切换到日间模式 / Switch to day mode' : '切换到黑夜模式 / Switch to night mode'}
           aria-pressed={visualTheme === 'night'}
           title={visualTheme === 'night' ? '日间模式 / Day' : '黑夜模式 / Night'}
           onClick={toggleVisualTheme}
         >
-          <span className="industrial-theme-track" aria-hidden="true">
-            <span className="industrial-theme-stars" />
-            <span className="industrial-theme-core" />
-          </span>
+          {visualTheme === 'night' ? <Moon /> : <Sun />}
         </button>
         <span className="industrial-chrome-year-time">{dateParts.time}</span>
         <span className="industrial-chrome-year-rule" />

@@ -83,36 +83,20 @@
 
 /* ---- Palette follows the app theme -------------------------------------- */
 
+.sg {
+  --sg-canvas: var(--app-canvas);
+  --sg-ink: var(--app-ink, #f0f4f8);
+  --sg-ink-2: var(--app-copy, #c4ceda);
+  --sg-ink-3: var(--app-muted, #a6b4c5);
+}
+
 html[data-visual-theme='day'] .sg {
-  --sg-canvas: #141f33;
-  --sg-ink: #f3f7fc;
-  --sg-ink-2: #9db0cd;
-  --sg-ink-3: #6f83a3;
-  --sg-veil:
-    radial-gradient(48% 40% at 62% 34%, rgba(202, 218, 242, 0.22), transparent 66%),
-    radial-gradient(56% 46% at 24% 76%, rgba(58, 90, 138, 0.4), transparent 68%),
-    linear-gradient(158deg, #33507c 0%, #2a4370 34%, #1d2e4c 68%, #141f33 100%);
+  --sg-ink: var(--app-ink, #182333);
+  --sg-ink-2: var(--app-copy, #425268);
+  --sg-ink-3: var(--app-muted, #53647a);
 }
 
-html[data-visual-theme='night'] .sg,
-html:not([data-visual-theme]) .sg {
-  --sg-canvas: #0b0c0e;
-  --sg-ink: #f0f1f3;
-  --sg-ink-2: #a9aeb6;
-  --sg-ink-3: #757b84;
-  --sg-veil:
-    radial-gradient(48% 40% at 62% 34%, rgba(226, 229, 233, 0.16), transparent 66%),
-    radial-gradient(56% 46% at 24% 76%, rgba(70, 75, 82, 0.46), transparent 68%),
-    linear-gradient(158deg, #3a3e44 0%, #2c3035 34%, #1a1d21 68%, #0b0c0e 100%);
-}
-
-/* ---- The typographic event -------------------------------------------------
- * Large and only lightly tracked, because CJK at generous size does not need
- * extra spacing to breathe — it needs room around it, which the empty screen
- * provides. Weight stays at a real face; nothing is synthesised.
- * -------------------------------------------------------------------------- */
-
-.sg .sg-title {
+.sg-title {
   margin: 0;
   font-size: clamp(34px, 4.6vw, 60px);
   font-weight: 400;

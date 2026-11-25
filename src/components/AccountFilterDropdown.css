@@ -3,32 +3,6 @@
   flex-shrink: 0;
 }
 
-.account-filter-surface .tag-filter-btn {
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-
-.account-filter-surface .tag-filter-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.account-filter-surface .tag-filter-btn.active {
-  border-color: rgba(59, 130, 246, 0.4);
-  background: linear-gradient(135deg, rgba(191, 219, 254, 0.45), rgba(153, 246, 228, 0.4));
-  color: #0f172a;
-}
-
 .account-filter-surface .tag-filter-panel {
   position: absolute;
   top: calc(100% + 8px);
@@ -68,9 +42,7 @@
 
 .account-filter-surface .single-filter-label {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .account-filter-surface .single-filter-panel {

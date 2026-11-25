@@ -14,9 +14,8 @@ import './App.css';
    legacy page styles without relying on invalid late CSS @import rules. */
 import './styles/ui-unified-2026.css';
 import './styles/liquid-glass-26.css';
-/* Authoritative material system — tiered glass, canvas, motion and cost
-   control. Must stay last: it corrects the page stylesheets that lazily-loaded
-   pages inject at runtime. */
+/* Adapt older feature styles to the shared palette before platform-specific
+   WebView geometry and performance rules are applied. */
 import './styles/liquid-glass-system.css';
 import './styles/macos-native-liquid-glass.css';
 import './styles/windows-solid-surface.css';
@@ -31,7 +30,6 @@ import { useTranslation } from 'react-i18next';
 import { FileText, FolderOpen, RefreshCw, X } from 'lucide-react';
 import { SideNav } from './components/layout/SideNav';
 import { IndustrialChrome } from './components/layout/IndustrialChrome';
-import { AmbientInteractionLayer } from './components/AmbientInteractionLayer';
 import { PetFishCursorLayer } from './components/PetFishCursorLayer';
 import { SignatureCursorLayer } from './components/SignatureCursorLayer';
 import { StartupPerformanceProvider } from './contexts/StartupPerformanceContext';
@@ -1902,7 +1900,6 @@ function MainApp({ startupReady }: { startupReady: boolean }) {
       <div
         className={`app-container${isWindowsPlatform() ? ' app-container-windows' : ''}${isMacOSPlatform() ? ' app-container-macos' : ''}${sideNavLayoutMode === 'classic' ? ' app-container-side-nav-classic' : ''}${sideNavLayoutMode === 'classic' && sideNavClassicCollapsed ? ' app-container-side-nav-classic-collapsed' : ''}`}
       >
-      <AmbientInteractionLayer enabled={startupReady} />
       <PetFishCursorLayer enabled={startupReady} />
       <GlobalModal />
 

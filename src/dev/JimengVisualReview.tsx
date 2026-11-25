@@ -3,7 +3,6 @@ import "../styles/ui-unified-2026.css";
 import "../styles/liquid-glass-26.css";
 import "../styles/liquid-glass-system.css";
 import "../styles/responsive-text-safety.css";
-import { AmbientInteractionLayer } from "../components/AmbientInteractionLayer";
 import { SignatureCursorLayer } from "../components/SignatureCursorLayer";
 import { StartupGreeting } from "../components/StartupGreeting";
 import { JimengApiServicePage } from "../pages/JimengApiServicePage";
@@ -18,7 +17,6 @@ import { JimengApiServicePage } from "../pages/JimengApiServicePage";
 export function JimengVisualReview() {
   return (
     <div className="jimeng-visual-review-shell">
-      <AmbientInteractionLayer />
       <SignatureCursorLayer />
       <StartupGreeting />
       <main className="jimeng-visual-review-content">

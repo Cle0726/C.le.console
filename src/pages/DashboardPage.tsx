@@ -3481,12 +3481,17 @@ export function DashboardPage({
 
   return (
     <main className="main-content dashboard-page fade-in">
-      <div className="dashboard-data-scene-header">
-        <DashboardSceneHeader title="账号总览" englishTitle="ACCOUNT OVERVIEW" index="03" onBack={() => setDashboardScene('landing')} />
-        <button className="scene-layout-button" onClick={onOpenPlatformLayout}>
-          <span>{t('platformLayout.title', '平台布局')}</span><small>PLATFORM LAYOUT</small>
-        </button>
-      </div>
+      <DashboardSceneHeader
+        title="账号总览"
+        englishTitle="ACCOUNT OVERVIEW"
+        index="03"
+        onBack={() => setDashboardScene('landing')}
+        actions={(
+          <button type="button" className="btn btn-secondary scene-layout-button" onClick={onOpenPlatformLayout}>
+            <span>{t('platformLayout.title', '平台布局')}</span><small>PLATFORM LAYOUT</small>
+          </button>
+        )}
+      />
 
       {/* Top Stats */}
       <div className="stats-row">

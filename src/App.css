@@ -24,8 +24,6 @@
 
 /* A transparent utility window can expose the main window behind it. Hold
  * decorative animations in that unfocused window until it is active again. */
-html[data-window-unfocused='true'] body::before,
-html[data-window-unfocused='true'] body::after,
 html[data-window-unfocused='true'] body #root#root *,
 html[data-window-unfocused='true'] body #root#root *::before,
 html[data-window-unfocused='true'] body #root#root *::after {
@@ -333,12 +331,6 @@ html[data-window-unfocused='true'] body #root#root *::after {
 
 .codex-batch-import-footer {
   border-top: 1px solid var(--border-color);
-}
-
-.btn.compact {
-  height: 30px;
-  padding: 0 10px;
-  font-size: 12px;
 }
 
 @media (max-width: 720px) {

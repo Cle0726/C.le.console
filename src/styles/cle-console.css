@@ -50,12 +50,8 @@ html[data-theme="dark"] body {
 }
 
 /* Structural frame */
-.app-container {
-  background: transparent;
-}
 .drag-region {
   height: 36px;
-  border-bottom: 1px solid rgba(23, 23, 23, 0.13);
   background: rgba(230, 231, 228, 0.84);
   backdrop-filter: blur(12px);
 }
@@ -138,50 +134,14 @@ html[data-theme="dark"] body {
   border-radius: 0;
   background: rgba(244,244,241,.68);
 }
-.filter-tab {
-  min-height: 34px;
-  border-radius: 0 !important;
-  color: var(--text-secondary);
-  font-weight: 650;
-}
-.filter-tab.active {
-  color: #f7f7f4 !important;
-  background: #171717 !important;
-  box-shadow: none !important;
-}
 
 /* Systematically flatten controls without changing their event wiring. */
-.btn,
-button.btn,
 .single-select-dropdown-trigger,
 input,
 textarea,
 select {
   border-radius: 0 !important;
 }
-.btn {
-  min-height: 32px;
-  border: 1px solid var(--border) !important;
-  background: transparent !important;
-  color: var(--text-primary) !important;
-  box-shadow: none !important;
-  font-weight: 650;
-  letter-spacing: .02em;
-}
-.btn:hover:not(:disabled) {
-  background: #171717 !important;
-  border-color: #171717 !important;
-  color: #f7f7f4 !important;
-  transform: none !important;
-}
-.btn-primary,
-.btn-danger {
-  background: #171717 !important;
-  border-color: #171717 !important;
-  color: #f7f7f4 !important;
-}
-.btn-danger { background: #7c2929 !important; border-color: #7c2929 !important; }
-.btn:disabled { opacity: .45; }
 
 /* Core API-service page: editorial blocks, hairline geometry, strong data hierarchy. */
 .codex-api-service-page {
@@ -620,7 +580,6 @@ html[data-theme="dark"] body {
 /* Window frame and measured whitespace. */
 .drag-region {
   height: 38px;
-  border-bottom: 1px solid var(--industrial-line-soft);
   background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset;
   -webkit-backdrop-filter: blur(14px) saturate(0.7);
@@ -804,35 +763,6 @@ html[data-theme="dark"] body {
   backdrop-filter: blur(10px) saturate(0.6);
 }
 
-.filter-tab,
-.page-tabs.filter-tabs .filter-tab {
-  min-height: 34px;
-  border: 1px solid transparent;
-  border-radius: 2px !important;
-  color: var(--text-secondary);
-  font-weight: 650;
-  letter-spacing: 0.025em;
-  transition:
-    color 160ms ease,
-    background-color 160ms ease,
-    transform 180ms var(--industrial-ease);
-}
-
-.filter-tab:hover,
-.page-tabs.filter-tabs .filter-tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-  transform: translateY(-1px) !important;
-}
-
-.filter-tab.active,
-.page-tabs.filter-tabs .filter-tab.active {
-  border-color: var(--industrial-ink) !important;
-  background: var(--industrial-ink) !important;
-  color: var(--industrial-inverse) !important;
-  box-shadow: 2px 2px 0 var(--industrial-line-soft) !important;
-}
-
 .filter-tab .count,
 .pill,
 .badge,
@@ -848,14 +778,8 @@ html[data-theme="dark"] body {
 }
 
 /* Buttons: subtle breathing at rest, lift on hover, mechanical travel on press. */
-.btn,
-.action-btn,
-.card-action-btn,
 .header-action-btn,
 .icon-button,
-.view-btn,
-.folder-icon-btn,
-.sort-direction-btn,
 .qs-btn,
 .group-action-btn,
 .codex-local-access-toolbar-btn {
@@ -877,8 +801,6 @@ html[data-theme="dark"] body {
     box-shadow 190ms var(--industrial-ease) !important;
 }
 
-.btn::after,
-.action-btn::after,
 .header-action-btn::after,
 .qs-btn::after {
   content: "";
@@ -891,14 +813,8 @@ html[data-theme="dark"] body {
   transition: transform 520ms var(--industrial-ease);
 }
 
-.btn:hover:not(:disabled),
-.action-btn:hover:not(:disabled),
-.card-action-btn:hover:not(:disabled),
 .header-action-btn:hover:not(:disabled),
 .icon-button:hover:not(:disabled),
-.view-btn:hover:not(:disabled),
-.folder-icon-btn:hover:not(:disabled),
-.sort-direction-btn:hover:not(:disabled),
 .qs-btn:hover:not(:disabled),
 .group-action-btn:hover:not(:disabled),
 .codex-local-access-toolbar-btn:hover:not(:disabled) {
@@ -909,21 +825,13 @@ html[data-theme="dark"] body {
   transform: translate(-1px, -1px) !important;
 }
 
-.btn:hover:not(:disabled)::after,
-.action-btn:hover:not(:disabled)::after,
 .header-action-btn:hover:not(:disabled)::after,
 .qs-btn:hover:not(:disabled)::after {
   transform: translateX(130%);
 }
 
-.btn:active:not(:disabled),
-.action-btn:active:not(:disabled),
-.card-action-btn:active:not(:disabled),
 .header-action-btn:active:not(:disabled),
 .icon-button:active:not(:disabled),
-.view-btn:active:not(:disabled),
-.folder-icon-btn:active:not(:disabled),
-.sort-direction-btn:active:not(:disabled),
 .qs-btn:active:not(:disabled),
 .group-action-btn:active:not(:disabled),
 .codex-local-access-toolbar-btn:active:not(:disabled) {
@@ -932,8 +840,6 @@ html[data-theme="dark"] body {
   transition-duration: 70ms !important;
 }
 
-.btn-primary,
-.btn-success,
 .update-quick-action-btn.is-ready {
   border-color: var(--industrial-ink) !important;
   background: var(--industrial-ink) !important;
@@ -941,15 +847,6 @@ html[data-theme="dark"] body {
   animation: cle-control-breathe var(--breathe-medium) ease-in-out infinite;
 }
 
-.btn-danger {
-  border-color: color-mix(in srgb, var(--danger) 78%, black) !important;
-  background: var(--danger) !important;
-  color: #fff !important;
-}
-
-.btn:disabled,
-.action-btn:disabled,
-.card-action-btn:disabled,
 .header-action-btn:disabled,
 button:disabled {
   animation: none !important;
@@ -1339,12 +1236,6 @@ label,
   color: var(--text-primary);
 }
 
-.btn-danger:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--danger) 68%, black) !important;
-  background: color-mix(in srgb, var(--danger) 82%, black) !important;
-  color: #fff !important;
-}
-
 /* Keyboard focus stays visible regardless of the feature stylesheet. */
 :where(
   button,
@@ -1412,14 +1303,12 @@ label,
     transition-delay: 0ms !important;
   }
 
-  .btn-primary,
-  .btn-success,
   .side-nav:not(.side-nav-classic) .nav-item.active,
-  .status-dot,
-  .installed-version-dot::before,
-  .codex-api-service-status.running::before,
-  .dashboard-page .glass-card__highlight,
-  .dashboard-page .breathing-halo {
+.status-dot,
+.installed-version-dot::before,
+.codex-api-service-status.running::before,
+.dashboard-page .glass-card__highlight,
+.dashboard-page .breathing-halo {
     animation: none !important;
   }
 

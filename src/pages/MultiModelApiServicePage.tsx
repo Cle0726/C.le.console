@@ -843,14 +843,14 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
               </div>
               <div className="mm-api-endpoint">
                 <code>{baseUrl}/v1</code>
-                <button type="button" onClick={() => void copy(`${baseUrl}/v1`, 'url')} aria-label="复制 Base URL">
+                <button type="button" className="btn btn-ghost btn-sm icon-only" onClick={() => void copy(`${baseUrl}/v1`, 'url')} aria-label="复制 Base URL">
                   {copied === 'url' ? <Check /> : <Copy />}
                 </button>
               </div>
             </div>
           </div>
           <div className="mm-api-hero-actions">
-            <button type="button" className="btn btn-secondary mm-icon-btn" onClick={() => void load()} disabled={busy} aria-label="刷新状态" title="刷新状态">
+            <button type="button" className="btn btn-secondary icon-only" onClick={() => void load()} disabled={busy} aria-label="刷新状态" title="刷新状态">
               <RefreshCw className={operation === 'load' ? 'spin' : ''} />
             </button>
             <div className={`mm-menu${openMenu === 'maintain' ? ' open' : ''}`}>
@@ -946,7 +946,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
               <div className="mm-inline-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => void refreshQuotas()} disabled={busy || !quotaRefreshable} title="仅查询额度，不发送生成请求；无额度查询接口的账号会跳过"><RefreshCw className={operation === 'quota' ? 'spin' : ''} />{providerFilter === 'all' ? '刷新额度' : `刷新 ${providerLabel(providerFilter)}`}</button>
                 <div className={`mm-menu${openMenu === 'accounts' ? ' open' : ''}`}>
-                  <button type="button" className="btn btn-secondary mm-icon-btn" aria-label="更多账号操作" aria-haspopup="menu" aria-expanded={openMenu === 'accounts'} title="更多账号操作" onClick={() => toggleMenu('accounts')} disabled={busy}>
+                  <button type="button" className="btn btn-secondary icon-only" aria-label="更多账号操作" aria-haspopup="menu" aria-expanded={openMenu === 'accounts'} title="更多账号操作" onClick={() => toggleMenu('accounts')} disabled={busy}>
                     <MoreHorizontal />
                   </button>
                   {openMenu === 'accounts' && (
@@ -1008,7 +1008,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
                     <span className={`provider ${item.provider}`}><ProviderIcon provider={item.provider} />{providerLabel(item.provider)}</span>
                     <code>{item.id}</code>
                     <span className="caps">{item.capabilities.map((cap) => <i key={cap}>{cap === 'image' ? <Image /> : cap === 'video' ? <Film /> : <Sparkles />}{cap}</i>)}{item.maxInputTokens ? <i title={`本渠道最高支持 ${item.maxInputTokens.toLocaleString()} tokens；实际消耗取决于发送的内容`}>上下文 {formatModelTokens(item.maxInputTokens)}</i> : item.capabilities.includes('text') ? <i title="已自动查询；上游未公布或本次查询失败时保留已有值，不按模型名字猜测">容量待确认</i> : null}{item.maxOutputTokens ? <i title="仅公布上游输出上限，不自动增加单次生成长度">输出 {formatModelTokens(item.maxOutputTokens)}</i> : null}</span>
-                    <span className="mm-model-actions"><em className={available ? 'available' : ''}>{available ? '可用' : '未配置'}</em><button type="button" onClick={() => void copy(item.id, `model:${item.provider}:${item.id}`)}>{copied === `model:${item.provider}:${item.id}` ? <Check /> : <Copy />}</button>{!configured && <button type="button" onClick={() => { setTab('accounts'); setProviderFilter(item.provider); openAccount(undefined, item.provider); }}><Plus /></button>}</span>
+                    <span className="mm-model-actions"><em className={available ? 'available' : ''}>{available ? '可用' : '未配置'}</em><button type="button" className="btn btn-ghost btn-sm icon-only" onClick={() => void copy(item.id, `model:${item.provider}:${item.id}`)}>{copied === `model:${item.provider}:${item.id}` ? <Check /> : <Copy />}</button>{!configured && <button type="button" onClick={() => { setTab('accounts'); setProviderFilter(item.provider); openAccount(undefined, item.provider); }}><Plus /></button>}</span>
                   </div>
                 );
               })}
@@ -1024,8 +1024,8 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
                 <div className="mm-key" key={item.id}>
                   <label><input type="checkbox" checked={item.enabled} onChange={(event) => { const next = { ...draft, apiKeys: draft.apiKeys.map((key) => key.id === item.id ? { ...key, enabled: event.target.checked } : key) }; setDraft(next); void save(next, event.target.checked ? 'Key 已启用' : 'Key 已停用'); }} /><span><strong>{item.label}</strong><small>{item.allowedModels.length ? `${item.allowedModels.length} 个授权模型` : '全部模型'}</small></span></label>
                   <code>{item.key}</code>
-                  <button type="button" onClick={() => void copy(item.key, item.id)} aria-label="复制 Key">{copied === item.id ? <Check /> : <Copy />}</button>
-                  <button type="button" className="trash" onClick={() => { if (!window.confirm(`确定删除“${item.label}”吗？`)) return; const next = { ...draft, apiKeys: draft.apiKeys.filter((key) => key.id !== item.id) }; setDraft(next); void save(next, 'Key 已删除'); }} aria-label="删除 Key"><Trash2 /></button>
+                  <button type="button" className="btn btn-ghost btn-sm icon-only" onClick={() => void copy(item.key, item.id)} aria-label="复制 Key">{copied === item.id ? <Check /> : <Copy />}</button>
+                  <button type="button" className="btn btn-danger btn-sm icon-only trash" onClick={() => { if (!window.confirm(`确定删除“${item.label}”吗？`)) return; const next = { ...draft, apiKeys: draft.apiKeys.filter((key) => key.id !== item.id) }; setDraft(next); void save(next, 'Key 已删除'); }} aria-label="删除 Key"><Trash2 /></button>
                 </div>
               ))}
             </div>
@@ -1273,7 +1273,7 @@ const AccountCard = memo(function AccountCard({ account, usage, dispatch, xaiUsa
       {dispatch && <em>成功 {dispatch.succeeded} · 失败 {dispatch.failed}{dispatch.lastModel ? ` · ${dispatch.lastModel}` : ''}</em>}
     </div>
     <code>{account.provider === 'claude-cli' ? 'claude-cli/模型名' : account.provider === 'doubao-work' ? account.cliPath || '豆包工作 CLI' : account.baseUrl || 'CLIProxy native endpoint'}</code>
-    <footer><span>{account.source === 'local:doubao-work' ? '本机豆包工作账号' : account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span>{canRefreshQuota(account) && <button type="button" onClick={() => actions.refresh(account)} disabled={busy} title="仅查询额度，不消耗生成积分" aria-label={`刷新 ${account.name} 额度`}><RefreshCw className={refreshing ? 'spin' : ''} />刷新额度</button>}<button type="button" onClick={() => actions.edit(account)} disabled={busy} title={account.provider === 'claude-cli' ? '重新授权同一个 Claude 账号，原账号会保留' : undefined}>{account.provider === 'claude-cli' ? '重新登录' : account.provider === 'workbuddy' ? '管理 / 登录' : '编辑'}</button>{account.provider !== 'claude-cli' && <button type="button" className="trash" onClick={() => actions.remove(account)} disabled={busy} aria-label="删除账号"><Trash2 /></button>}</footer>
+    <footer><span>{account.source === 'local:doubao-work' ? '本机豆包工作账号' : account.source.startsWith('cle:') ? 'C.le. 托管账号' : account.source.startsWith('grok:local:') ? 'Grok CLI 本机导入' : account.source === 'grok:device-oauth' ? 'xAI 官方 Device Flow' : account.source === 'grok:json-import' ? 'Grok OAuth JSON 导入' : '手动账号'}</span>{canRefreshQuota(account) && <button type="button" className="btn btn-ghost btn-sm" onClick={() => actions.refresh(account)} disabled={busy} title="仅查询额度，不消耗生成积分" aria-label={`刷新 ${account.name} 额度`}><RefreshCw className={refreshing ? 'spin' : ''} />刷新额度</button>}<button type="button" className="btn btn-ghost btn-sm" onClick={() => actions.edit(account)} disabled={busy} title={account.provider === 'claude-cli' ? '重新授权同一个 Claude 账号，原账号会保留' : undefined}>{account.provider === 'claude-cli' ? '重新登录' : account.provider === 'workbuddy' ? '管理 / 登录' : '编辑'}</button>{account.provider !== 'claude-cli' && <button type="button" className="btn btn-danger btn-sm icon-only trash" onClick={() => actions.remove(account)} disabled={busy} aria-label="删除账号"><Trash2 /></button>}</footer>
   </article>;
 }, (previous, next) => previous.account === next.account
   && previous.actions === next.actions
@@ -2087,5 +2087,5 @@ function Routes({ baseUrl, apiKey, copied, copy }: { baseUrl: string; apiKey: st
     { id: 'video', icon: <Film />, title: '视频生成（Veo / Grok / Seedance）', method: 'POST', path: '/v1/videos/generations', code: `curl ${baseUrl}/v1/videos/generations -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"model":"doubao-seedance-1.5-pro","prompt":"cinematic ocean storm","seconds":5,"size":"1280x720"}'` },
     { id: 'video-status', icon: <RefreshCw />, title: 'Seedance 任务状态', method: 'GET', path: '/v1/videos/generations/{video_id}', code: `curl ${baseUrl}/v1/videos/generations/VIDEO_ID -H "Authorization: Bearer ${apiKey}"` },
   ];
-  return <section className="mm-api-panel"><header className="mm-api-panel-head"><div><h2>统一网关路线</h2><p>OpenAI-compatible 文本、图片与视频端点；同一个 Bearer Key 通行全部授权模型。</p></div></header><div className="mm-route-grid">{routes.map((route) => <article className="mm-route" key={route.id}><header><span>{route.icon}</span><div><h3>{route.title}</h3><code><b>{route.method}</b> {route.path}</code></div></header><pre>{route.code}</pre><button type="button" onClick={() => void copy(route.code, route.id)}>{copied === route.id ? <Check /> : <Copy />}{copied === route.id ? '已复制' : '复制 cURL'}</button></article>)}</div></section>;
+  return <section className="mm-api-panel"><header className="mm-api-panel-head"><div><h2>统一网关路线</h2><p>OpenAI-compatible 文本、图片与视频端点；同一个 Bearer Key 通行全部授权模型。</p></div></header><div className="mm-route-grid">{routes.map((route) => <article className="mm-route" key={route.id}><header><span>{route.icon}</span><div><h3>{route.title}</h3><code><b>{route.method}</b> {route.path}</code></div></header><pre>{route.code}</pre><button type="button" className="btn btn-secondary btn-sm" onClick={() => void copy(route.code, route.id)}>{copied === route.id ? <Check /> : <Copy />}{copied === route.id ? '已复制' : '复制 cURL'}</button></article>)}</div></section>;
 }

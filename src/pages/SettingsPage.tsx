@@ -2658,9 +2658,9 @@ export function SettingsPage() {
   };
 
   return (
-    <main className="main-content">
+    <main className="main-content settings-page">
       <div className="page-tabs-row settings-page-tabs-row">
-        <div className="page-tabs-label">{t('settings.title')}</div>
+        <h1 className="page-tabs-label">{t('settings.title')}</h1>
         <div className="page-tabs filter-tabs">
           <button 
             className={`filter-tab ${activeTab === 'general' ? 'active' : ''}`}

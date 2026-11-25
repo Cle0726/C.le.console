@@ -32,16 +32,16 @@
 /* Stats Row */
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 24px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: var(--space-3);
 }
 
 .stat-card {
   border-radius: 16px;
-  padding: 24px;
+  padding: var(--space-4);
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: var(--space-4);
 }
 
 .glass-card {
@@ -123,11 +123,9 @@
   font-weight: 600;
   color: var(--text-secondary);
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   line-height: 1.7;
   letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
 }
 
 .stat-group-more-badge {

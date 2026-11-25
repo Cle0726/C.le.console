@@ -1,39 +1,4 @@
-/* Balanced presentation mode.
-   It lowers blur radius and update frequency, but keeps the visual language,
-   startup sequence and interaction feedback intact. */
-
-/* Legacy fallback only. Modern day/night canvases are owned by the visual
-   theme system and must not collapse back to the old neutral fog palette. */
-html[data-performance-mode='lite']:not([data-visual-theme]) body {
-  background: linear-gradient(180deg, var(--fog-0), var(--fog-2)) !important;
-}
-
-html[data-performance-mode='lite'] :is(
-  .ambient-interaction-layer,
-  .startup-greeting,
-  .spatial-orbit,
-  .ambient-grain,
-  .ambient-beam
-) {
-  visibility: visible !important;
-}
-
-html[data-performance-mode='lite'] :is(
-  .spatial-command-hero,
-  .main-card,
-  .stat-card,
-  .account-card,
-  .codex-account-card,
-  .settings-card,
-  .launchpad-grid button,
-  .model-gallery-card
-) {
-  -webkit-backdrop-filter: blur(6px) saturate(108%) !important;
-  backdrop-filter: blur(6px) saturate(108%) !important;
-  box-shadow:
-    0 7px 22px color-mix(in srgb, var(--text-primary) 7%, transparent),
-    inset 0 1px 0 color-mix(in srgb, white 30%, transparent) !important;
-}
+/* Lite mode keeps the same theme and skips expensive offscreen content and WebGL. */
 
 html[data-performance-mode='lite'] :is(.account-card, .codex-account-card, .main-card) {
   content-visibility: auto;
@@ -50,12 +15,4 @@ html[data-performance-mode='lite'] .webgl-core-fallback {
   display: block !important;
   filter: saturate(0.72) contrast(1.03) !important;
   animation-duration: 16s !important;
-}
-
-html[data-performance-mode='lite'] :is(
-  .launchpad-primary::after,
-  .model-gallery-card::after
-) {
-  opacity: 0.46 !important;
-  animation-duration: 9s !important;
 }

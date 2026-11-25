@@ -15,7 +15,7 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: var(--space-2);
   margin: 0;
   padding: 0;
 }
@@ -70,32 +70,18 @@
   border: 1px solid var(--border-light);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
-  margin-bottom: 24px;
+  margin-bottom: var(--space-4);
   width: 100%;
 }
 
 .group-title {
   position: relative;
-  margin: 0 0 10px;
-  padding-left: 12px;
-  font-size: 14px;
+  margin: 0;
+  font-size: var(--text-size-section);
   font-weight: 700;
   color: var(--text-primary);
-  letter-spacing: 0.02em;
-  line-height: 1.2;
+  line-height: var(--leading-title);
   text-transform: none;
-}
-
-.group-title::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 16px;
-  border-radius: 999px;
-  background: var(--primary);
 }
 
 /* Settings Row (Item) */
@@ -103,10 +89,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 24px;
+  padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-light);
   background: var(--bg-secondary);
   transition: background 0.2s;
+  gap: var(--space-3) var(--space-4);
+  flex-wrap: wrap;
 }
 
 .settings-row:last-child {
@@ -134,8 +122,7 @@
   flex-direction: column;
   gap: 4px;
   flex: 1;
-  padding-right: 16px;
-  min-width: 240px;
+  min-width: min(100%, 220px);
 }
 
 .row-title {
@@ -150,10 +137,13 @@
 }
 
 .row-control {
-  flex-shrink: 0;
+  flex-shrink: 1;
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .row-control--grow {
@@ -263,22 +253,19 @@
 
 /* Controls */
 .settings-select {
-  padding: 6px 12px;
-  padding-right: 32px; /* Space for arrow */
+  padding: var(--space-2) var(--space-3);
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--bg-tertiary);
+  background: var(--app-inset);
   color: var(--text-primary);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  outline: none;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 8px center;
-  min-width: 140px;
-  transition: all 0.2s;
+  min-width: min(100%, 140px);
+}
+
+select.settings-select {
+  appearance: auto;
 }
 
 .settings-select:hover {
@@ -1121,3 +1108,14 @@ input:checked + .slider:before {
     transform: translateY(0);
   }
 }
+
+.settings-page-tabs-row {
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-block-end: var(--space-3);
+}
+
+.settings-page :is(.row-title, .row-desc) { overflow-wrap: anywhere; line-height: var(--leading-body); }
+.settings-page .row-title { font-size: var(--text-size-body); }
+.settings-page .row-desc { font-size: var(--text-size-meta); }
+.settings-page :is(.settings-select, .settings-input) { max-width: 100%; }

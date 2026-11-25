@@ -1,9 +1,41 @@
 /* ============================================
    C.le.控制台 - Design System
-   Brand Direction: floating dashboard with soft gradients
+   Shared workspace tokens and base type
    ============================================ */
 
 :root {
+  --app-panel: #ffffff;
+  --app-inset: #f4f6f8;
+  --app-hover: #e9eef4;
+  --app-pressed: #dce5ef;
+  --app-line: #d8e0e9;
+  --app-line-strong: #acbbcb;
+  --app-ink: #182333;
+  --app-copy: #425268;
+  --app-muted: #53647a;
+  --app-accent: #294c77;
+  --app-selected: #e2ecf7;
+  --app-focus: #305fa6;
+  --app-positive: #246449;
+  --app-caution: #805616;
+  --app-negative: #a52f3b;
+  --app-shadow: 0 1px 2px rgb(18 32 52 / 6%);
+  --app-float-shadow: 0 8px 24px rgb(18 32 52 / 12%);
+  --app-modal-shadow: 0 20px 56px rgb(18 32 52 / 22%);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --text-size-page: 24px;
+  --text-size-section: 16px;
+  --text-size-body: 14px;
+  --text-size-meta: 12px;
+  --leading-title: 1.3;
+  --leading-body: 1.5;
+
   /* Typography */
   --font-sans: 'Inter', 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'SFMono-Regular', monospace;
@@ -66,7 +98,27 @@
 }
 
 /* === Dark Theme === */
-[data-theme="dark"] {
+html[data-visual-theme='night'],
+[data-theme='dark']:not([data-visual-theme='day']) {
+  --app-panel: #222a34;
+  --app-inset: #1b222b;
+  --app-hover: #303c4b;
+  --app-pressed: #3a495b;
+  --app-line: #3a4757;
+  --app-line-strong: #627489;
+  --app-ink: #f0f4f8;
+  --app-copy: #c4ceda;
+  --app-muted: #a6b4c5;
+  --app-accent: #b4d1f2;
+  --app-selected: #2e455f;
+  --app-focus: #9ac4ff;
+  --app-positive: #a5dfbf;
+  --app-caution: #efd29d;
+  --app-negative: #ffbcc3;
+  --app-shadow: 0 1px 2px rgb(0 0 0 / 16%);
+  --app-float-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  --app-modal-shadow: 0 20px 56px rgb(0 0 0 / 42%);
+
   /* Brand Colors - slightly brighter for dark mode */
   --primary: #3b82f6;
   --primary-hover: #2563eb;
@@ -114,23 +166,10 @@
 
 body {
   font-family: var(--font-sans);
-  background: radial-gradient(circle at 12% 10%, rgba(29, 78, 216, 0.12), transparent 45%),
-    radial-gradient(circle at 90% 5%, rgba(14, 165, 165, 0.12), transparent 40%),
-    linear-gradient(180deg, #f8f7f4 0%, #eef1f6 100%);
-  color: var(--text-primary);
-  line-height: 1.6;
-  color-scheme: light;
+  font-size: var(--text-size-body);
+  line-height: var(--leading-body);
+  color: var(--app-ink);
   -webkit-font-smoothing: antialiased;
-  background-size: 104% 104%;
-}
-
-/* Dark mode body background */
-[data-theme="dark"] body,
-html[data-theme="dark"] body {
-  background: radial-gradient(circle at 12% 10%, rgba(59, 130, 246, 0.15), transparent 45%),
-    radial-gradient(circle at 90% 5%, rgba(20, 184, 166, 0.12), transparent 40%),
-    linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-  color-scheme: dark;
 }
 
 @media (prefers-reduced-motion: reduce) {

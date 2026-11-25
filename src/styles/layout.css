@@ -21,7 +21,7 @@
   flex-direction: row; /* 改为水平布局 */
   height: 100vh;
   overflow: hidden;
-  background: transparent; /* 背景由 body 处理 */
+  background: var(--app-canvas);
 }
 
 .app-container-macos .drag-region {
