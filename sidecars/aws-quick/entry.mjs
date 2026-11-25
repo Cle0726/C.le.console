@@ -85,18 +85,28 @@ async function login(flags) {
 // the bridge answers a turn Quick refuses.
 const TURNS = new Set(["/v1/chat/completions", "/chat/completions", "/v1/messages", "/messages", "/v1/responses", "/responses"])
 const REST_MAX_SECS = 6 * 3600
+const STALE_MAX_MS = 5 * 60_000
 
 function quotaGuard(handle, account, apiKey) {
-  let known = { until: 0, spent: null }
+  let known = { at: -Infinity, until: 0, spent: null }
+  let checking = null
+  const check = () =>
+    (checking ??= (async () => {
+      const auth = await account.get().catch(() => null)
+      const spent = auth ? await qbs.spent(auth) : null
+      known = { at: Date.now(), spent, until: Date.now() + (spent ? 60_000 : 20_000) }
+    })().finally(() => (checking = null)))
   const keyOf = (headers) => headers.get("x-api-key") || (headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "")
   return async (request) => {
     const path = new URL(request.url).pathname.replace(/\/+$/, "")
     if (request.method !== "POST" || !TURNS.has(path) || keyOf(request.headers) !== apiKey) return handle(request)
-    if (Date.now() >= known.until) {
-      const auth = await account.get().catch(() => null)
-      const spent = auth ? await qbs.spent(auth) : null
-      known = { spent, until: Date.now() + (spent ? 60_000 : 20_000) }
-    }
+    // The check takes a second or more (an HTTP call to Amazon Quick), so a
+    // known answer is used as it is and asked again behind the turn once it
+    // is 20 s old (60 s for a used-up allowance); only one older than five
+    // minutes, or none, is waited for.
+    const now = Date.now()
+    if (now >= known.at + STALE_MAX_MS) await check()
+    else if (now >= known.until) void check().catch(() => {})
     const spent = known.spent
     if (!spent) return handle(request)
     const secs = Math.min(spent.secs > 0 ? spent.secs : REST_MAX_SECS, REST_MAX_SECS)

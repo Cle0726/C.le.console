@@ -11,7 +11,12 @@ import { aidpDecode, aidpEncode, gatewayDecode, gatewayEncode, isGatewayProvider
 
 const DEFAULT_WS_PATH = "/streaming/quickwork-chat-bidirectional-stream"
 const READ_IDLE_MS = 2 * 60_000
-const AFTER_COMPLETE_MS = 5_000
+// After a message_complete that expects no continuation, the turn is over:
+// Amazon Quick sends no turn_completed on this path, only status frames
+// (runs_updated, task_list_update) within a few hundred ms, so the wait for
+// one is short. It was 5 s, which every turn paid in full (measured
+// 2026-11-24: message_complete at ~6 s, the turn handed on at ~11 s).
+const AFTER_COMPLETE_MS = 300
 const HANDSHAKE_MS = 20_000
 const PING_MS = 25_000
 const STOP_SETTLE_MS = 3_000
