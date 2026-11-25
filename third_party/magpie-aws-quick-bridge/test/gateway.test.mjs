@@ -344,6 +344,17 @@ describe("Anthropic Messages (Claude Code)", () => {
     mock.state.script = null
   })
 
+  test("the used-up allowance notice as a reply is a 429, not an answer", async () => {
+    const notice = "You've reached your usage limit. Your credits renew on Dec 1."
+    mock.state.script = () => [{ type: "text_delta", payload: { delta: notice } }, { type: "message_complete", payload: {} }, { type: "turn_completed", payload: {} }]
+    for (const stream of [false, true]) {
+      const res = await call("/v1/messages", { model: "smart", max_tokens: 10, stream, tools, messages: [{ role: "user", content: "hi" }] })
+      expect(res.status).toBe(429)
+      expect(await res.text()).not.toContain('"type":"text"')
+    }
+    mock.state.script = null
+  })
+
   test("tokens are estimated, errors are Anthropic's", async () => {
     const count = await (await call("/v1/messages/count_tokens", { model: "smart", messages: [{ role: "user", content: "x".repeat(400) }] })).json()
     expect(count.input_tokens).toBeGreaterThan(100)

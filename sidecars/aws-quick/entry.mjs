@@ -108,7 +108,12 @@ function quotaGuard(handle, account, apiKey) {
     if (now >= known.at + STALE_MAX_MS) await check()
     else if (now >= known.until) void check().catch(() => {})
     const spent = known.spent
-    if (!spent) return handle(request)
+    if (!spent) {
+      const answer = await handle(request)
+      // refused for the allowance after all: looked at again before the next turn
+      if (answer.status === 429) known = { at: -Infinity, until: 0, spent: null }
+      return answer
+    }
     const secs = Math.min(spent.secs > 0 ? spent.secs : REST_MAX_SECS, REST_MAX_SECS)
     const message = `Amazon Quick's ${spent.name} allowance is used up${spent.secs > 0 ? `; it is back in ${Math.max(1, Math.round(spent.secs / 60))} minutes` : ""}`
     const body = path.endsWith("/messages")

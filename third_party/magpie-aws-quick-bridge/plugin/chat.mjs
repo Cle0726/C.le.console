@@ -285,7 +285,15 @@ export const filterNotice = (text) => text.trim().length < 400 && FILTER_NOTICE.
 // guardrail's 400, not as "overloaded": the agent would only ask again.
 const askAgain = (error) => retryable(error) || (error instanceof UpstreamError && error.kind === "blocked" && filterNotice(error.message))
 
+// Amazon Quick's answer on a used-up allowance, given as the reply's text
+// ("You've reached your usage limit…"). The sidecar checks the allowance
+// first, but an allowance used up since it last looked still gets this far:
+// it is answered as a refusal (429), never as the model's reply.
+const LIMIT_NOTICE = /you(?:'|’)?ve reached your (?:usage|session|monthly|daily) limit|reached (?:your|the) (?:usage|session) limit/i
+export const limitNotice = (text) => text.trim().length < 600 && LIMIT_NOTICE.test(text)
+
 function filtered(text, calls) {
+  if (!calls.length && limitNotice(text)) throw new UpstreamError("handshake", `Amazon Quick: ${text.trim()}`, 429)
   if (!calls.length && filterNotice(text)) throw new UpstreamError("upstream", `content filter: ${text.trim()}`)
 }
 
