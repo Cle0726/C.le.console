@@ -61,6 +61,15 @@ struct PendingLogin { child: Option<Child>, info: AwsQuickLogin }
 static SERVERS: OnceLock<Mutex<BTreeMap<String, Server>>> = OnceLock::new();
 static LOGINS: OnceLock<Mutex<BTreeMap<String, PendingLogin>>> = OnceLock::new();
 static STOPPED: AtomicBool = AtomicBool::new(false);
+/// One `cle-aws-quick multi` serving every account on its own port, in place of one `serve` each.
+static MULTI: OnceLock<Mutex<Option<Server>>> = OnceLock::new();
+fn multi() -> &'static Mutex<Option<Server>> { MULTI.get_or_init(|| Mutex::new(None)) }
+fn multi_alive() -> bool {
+    multi().lock().map(|mut slot| {
+        if slot.as_mut().is_some_and(|server| !matches!(server.child.try_wait(), Ok(None))) { *slot = None; }
+        slot.is_some()
+    }).unwrap_or(false)
+}
 fn servers() -> &'static Mutex<BTreeMap<String, Server>> { SERVERS.get_or_init(|| Mutex::new(BTreeMap::new())) }
 fn logins() -> &'static Mutex<BTreeMap<String, PendingLogin>> { LOGINS.get_or_init(|| Mutex::new(BTreeMap::new())) }
 
@@ -121,6 +130,7 @@ fn safe_id(account_id: &str, tenant: &str) -> String {
 
 pub fn list() -> Vec<AwsQuickAccount> {
     let Ok(entries) = fs::read_dir(accounts_dir()) else { return Vec::new() };
+    let all = multi_alive();
     let running = servers().lock().map(|mut map| {
         map.retain(|_, server| matches!(server.child.try_wait(), Ok(None)));
         map.iter().map(|(id, server)| (id.clone(), server.port)).collect::<BTreeMap<_, _>>()
@@ -134,7 +144,7 @@ pub fn list() -> Vec<AwsQuickAccount> {
         let port = read_json(&dir.join("cle.json")).get("port").and_then(Value::as_u64).unwrap_or(0) as u16;
         let tenant_url = text(&account, "tenantUrl");
         Some(AwsQuickAccount {
-            running: running.contains_key(&id), id, account_id: text(&account, "accountId"),
+            running: all || running.contains_key(&id), id, account_id: text(&account, "accountId"),
             enterprise: !matches!(text(&account, "quickProvider").as_str(), "" | "social"), tenant_url, port, api_key: text(&cfg, "apiKey"),
         })
     }).collect::<Vec<_>>();
@@ -148,9 +158,48 @@ async fn healthy(port: u16) -> bool {
         .is_ok_and(|response| response.status().is_success())
 }
 
-/// Starts the gateway of every signed-in account that is not running yet.
+/// Starts `cle-aws-quick multi` for the accounts folder: one process that
+/// serves every account on its own port and picks up accounts added later.
+/// It ends when the console does (its stdin closes).
+async fn start_multi(ports: &[u16]) -> bool {
+    if multi_alive() { return true; }
+    let Some(exe) = executable() else { return false };
+    let mut cmd = Command::new(exe);
+    cmd.arg("multi").arg("--accounts").arg(accounts_dir()).arg("--exit-with-stdin");
+    #[cfg(windows)] { use std::os::windows::process::CommandExt; cmd.creation_flags(0x0800_0000); }
+    let Ok(mut child) = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else { return false };
+    let stdin = child.stdin.take();
+    for _ in 0..50 {
+        if child.try_wait().ok().flatten().is_some() { return false; }
+        let mut up = true;
+        for port in ports { if !healthy(*port).await { up = false; break; } }
+        if up { break; }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    if let Ok(mut slot) = multi().lock() { *slot = Some(Server { child, _stdin: stdin, port: 0 }); }
+    true
+}
+
+/// Starts the gateway of every signed-in account that is not running yet:
+/// all of them in one `multi` process, or, where that cannot start (an old
+/// sidecar), one `serve` each as before.
 pub async fn ensure_all() -> Result<Vec<AwsQuickAccount>, String> {
     if STOPPED.load(Ordering::Acquire) { return Err("应用正在退出".into()); }
+    let mut wanted = Vec::new();
+    for account in list() {
+        if account.running { continue; }
+        let port = account_port(&accounts_dir().join(&account.id))?;
+        if !healthy(port).await { wanted.push(port); }
+    }
+    if !wanted.is_empty() && start_multi(&wanted).await {
+        // multi takes a new account's port within a second or so
+        for _ in 0..25 {
+            let mut up = true;
+            for port in &wanted { if !healthy(*port).await { up = false; break; } }
+            if up { break; }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
     for account in list() {
         if account.running { continue; }
         let dir = accounts_dir().join(&account.id);
@@ -179,6 +228,9 @@ pub async fn ensure_all() -> Result<Vec<AwsQuickAccount>, String> {
 
 pub fn stop() {
     STOPPED.store(true, Ordering::Release);
+    if let Ok(mut slot) = multi().lock() {
+        if let Some(mut server) = slot.take() { let _ = server.child.kill(); let _ = server.child.wait(); }
+    }
     if let Ok(mut map) = servers().lock() {
         for (_, mut server) in std::mem::take(&mut *map) { let _ = server.child.kill(); let _ = server.child.wait(); }
     }

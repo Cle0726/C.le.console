@@ -16,7 +16,8 @@
 //       other field names, or just {"access": "<token>"}), checks it with
 //       Amazon Quick and saves it; prints {"event":"success",...} or {"event":"error",...}
 
-import { createHash } from "node:crypto"
+import { AsyncLocalStorage } from "node:async_hooks"
+import { createHash, randomBytes } from "node:crypto"
 import { spawn } from "node:child_process"
 import fs from "node:fs"
 import { createServer, request as httpRequest } from "node:http"
@@ -39,11 +40,13 @@ function parse(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (!a.startsWith("--")) {
+      // this program's own path, where a copy of it was started with it (selfScript)
+      if (!words.length && (a === process.execPath || a === process.argv[1] || /\.(c|m)?js$/i.test(a))) continue
       words.push(a)
       continue
     }
     const name = a.slice(2)
-    if (["enterprise"].includes(name)) flags[name] = true
+    if (["enterprise", "exit-with-stdin"].includes(name)) flags[name] = true
     else flags[name] = argv[++i] ?? ""
   }
   return { command: words[0] ?? "", flags }
@@ -126,7 +129,9 @@ function logToFile(home, port) {
       pending += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
       const at = pending.lastIndexOf("\n")
       if (at >= 0) {
-        const lines = pending.slice(0, at).split("\n").map((l) => `[${port}] ${l}\n`).join("")
+        // `port` is a function where one process logs for several (multi)
+        const tag = typeof port === "function" ? port() : port
+        const lines = pending.slice(0, at).split("\n").map((l) => `[${tag}] ${l}\n`).join("")
         pending = pending.slice(at + 1)
         try {
           if (fs.statSync(file).size > LOG_MAX) fs.renameSync(file, file + ".1")
@@ -141,6 +146,12 @@ function logToFile(home, port) {
     }
   }
 }
+
+// What to start this program again with, before its own arguments: run by
+// node or packaged by pkg (Windows; pkg runs a spawned copy of itself as node
+// unless it is named the bundled script), the script; a single-executable
+// app (macOS) is started with its arguments alone.
+const selfScript = () => (process.pkg || /^(node|bun)(\.exe)?$/i.test(path.basename(process.execPath)) ? [process.argv[1]] : [])
 
 async function serve(flags) {
   const cfg = setup(flags)
@@ -203,7 +214,7 @@ async function lazy(flags) {
   // run from source, node runs this file again; packaged (pkg), starting the
   // program's own executable runs the script it is given first, which is
   // this one's own path inside the package, so it is the same call
-  const self = [process.execPath, [process.argv[1]]]
+  const self = [process.execPath, selfScript()]
 
   async function start(entry, port) {
     entry.starting ??= (async () => {
@@ -390,6 +401,237 @@ async function lazy(flags) {
   process.on("SIGTERM", stop)
 }
 
+// cle-aws-quick multi --accounts <dir> [--exit-with-stdin]
+// One process for every account in <dir>, in place of one `serve` each:
+// each account keeps its own port (cle.json), key, sign-in and token
+// renewal, and answers as its own `serve` would. A port some other process
+// still holds (an old `serve`) is taken over once it is free: the folder is
+// looked at every second. Besides, one shared address (the pool, port
+// and key in <dir>/../pool.json) sends each turn to an account with
+// allowance left: a conversation stays with its account while that one
+// answers, and an account that answers 429 (allowance used up, throttled)
+// rests for as long as it says while the turn goes on to the next one.
+// It runs under a small supervisor that starts it again should it die.
+async function multi(flags) {
+  const accountsDir = path.resolve(flags.accounts || "")
+  if (!flags.accounts || !fs.existsSync(accountsDir)) throw new Error("--accounts <dir> is required")
+  if (!flags.worker) return supervise(flags)
+  const where = new AsyncLocalStorage()
+  logToFile(path.join(accountsDir, "x"), () => where.getStore() ?? "multi")
+  const log = (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`)
+  log(`started multi ${accountsDir}`)
+  // the parent (supervisor) holds the other end: gone, this one goes too
+  process.stdin.on("end", () => process.exit(0))
+  process.stdin.on("close", () => process.exit(0))
+  process.stdin.resume()
+
+  const accounts = new Map() // folder name -> { home, port, apiKey, handle, account, running, busy, rest, last, missed }
+  const readJSON = (file) => {
+    try {
+      return JSON.parse(fs.readFileSync(file, "utf8"))
+    } catch {
+      return null
+    }
+  }
+
+  function open(name, home, port) {
+    const cfg = store.config(home)
+    const account = new store.Account(home)
+    const plog = (line) => where.run(String(port), () => log(line))
+    const gateway = quotaGuard(createGateway({ apiKey: cfg.apiKey, account, options: cfg.options, log: plog }), account, cfg.apiKey)
+    return { name, home, port, apiKey: cfg.apiKey, account, handle: (req) => where.run(String(port), () => gateway(req)), running: null, busy: 0, rest: 0, last: 0, missed: false }
+  }
+
+  async function scan() {
+    let names = []
+    try {
+      names = fs.readdirSync(accountsDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)
+    } catch {}
+    for (const [name, entry] of accounts)
+      if (!names.includes(name) || !readJSON(path.join(entry.home, "account.json"))?.access) {
+        entry.running?.close()
+        accounts.delete(name)
+        log(`port ${entry.port}: account ${name} is gone, closed`)
+      }
+    for (const name of names) {
+      const home = path.join(accountsDir, name)
+      const port = Number(readJSON(path.join(home, "cle.json"))?.port)
+      if (!Number.isInteger(port) || port < 1024 || port > 65535 || !readJSON(path.join(home, "account.json"))?.access) continue
+      let entry = accounts.get(name)
+      if (entry && entry.port !== port) {
+        entry.running?.close()
+        entry = null
+      }
+      if (!entry) accounts.set(name, (entry = open(name, home, port)))
+      if (entry.running) continue
+      try {
+        entry.running = await listen(entry.handle, { port, host: "127.0.0.1" })
+        log(`port ${port}: serving ${name}`)
+        entry.missed = false
+      } catch (e) {
+        if (!entry.missed) log(`port ${port}: ${e?.code === "EADDRINUSE" ? "still held by another process; taken over once free" : `cannot listen: ${e?.message ?? e}`}`)
+        entry.missed = true
+      }
+    }
+  }
+
+  // Each account's token renewed on a timer too, a few at a time: a gateway
+  // renews only when a request comes, and an idle account would otherwise
+  // be renewed by nobody. Renewing does not change the refresh token.
+  const RENEW_BEFORE_MS = 30 * 60_000
+  async function renewAll() {
+    for (const entry of accounts.values()) {
+      const auth = entry.account.peek()
+      if (!auth?.refresh || auth.refresh === "none") continue
+      if (auth.expires && auth.expires - Date.now() >= RENEW_BEFORE_MS) continue
+      if (entry.renewFailedAt && Date.now() - entry.renewFailedAt < 5 * 60_000) continue
+      try {
+        const next = await entry.account.renew()
+        entry.renewFailedAt = 0
+        where.run(String(entry.port), () => log(`token renewed, good until ${new Date(next?.expires ?? 0).toISOString().slice(11, 19)}Z`))
+      } catch (e) {
+        entry.renewFailedAt = Date.now()
+        where.run(String(entry.port), () => log(`RENEWAL FAILED: ${String(e?.message ?? e).slice(0, 300)}`))
+      }
+    }
+  }
+
+  // The pool: <dir>/../pool.json { port, apiKey, exclude: [ports] }, made on first use.
+  const poolFile = path.join(path.dirname(accountsDir), "pool.json")
+  const pool = readJSON(poolFile) ?? {}
+  if (!pool.apiKey) {
+    pool.apiKey = "sk-quick-pool-" + randomBytes(24).toString("hex")
+    pool.port ||= 4400
+    pool.exclude ||= []
+    fs.writeFileSync(poolFile, JSON.stringify(pool, null, 2) + "\n", { mode: 0o600 })
+  }
+  const sticky = new Map() // conversation -> { name, at }
+  const STICKY_MS = 6 * 3600_000
+  const REST_DEFAULT_S = 600
+  const keyOf = (headers) => headers.get("x-api-key") || (headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "")
+  const sameKey = (a, b) => a.length === b.length && createHash("sha256").update(a).digest("hex") === createHash("sha256").update(b).digest("hex")
+
+  function candidates(conversation) {
+    const now = Date.now()
+    const excluded = new Set((readJSON(poolFile)?.exclude ?? pool.exclude ?? []).map(Number))
+    const ready = [...accounts.values()].filter((e) => e.account.peek() && e.rest <= now && !excluded.has(e.port))
+    ready.sort((a, b) => a.busy - b.busy || a.last - b.last)
+    const kept = conversation && sticky.get(conversation)
+    const first = kept && now - kept.at < STICKY_MS ? ready.find((e) => e.name === kept.name) : null
+    return first ? [first, ...ready.filter((e) => e !== first)] : ready
+  }
+
+  async function poolHandle(request) {
+    const url = new URL(request.url)
+    const route = url.pathname.replace(/\/+$/, "") || "/"
+    if (request.method === "GET" && (route === "/" || route === "/health")) {
+      const now = Date.now()
+      const list = [...accounts.values()]
+      return Response.json({ ok: true, name: "cle-aws-quick pool", accounts: list.length, serving: list.filter((e) => e.running).length, resting: list.filter((e) => e.rest > now).map((e) => ({ port: e.port, until: new Date(e.rest).toISOString() })) })
+    }
+    if (!sameKey(keyOf(request.headers), pool.apiKey)) return Response.json({ type: "error", error: { type: "authentication_error", message: "the pool key is wrong (pool.json)" } }, { status: 401 })
+    if (request.method === "GET" && route === "/pool/status") {
+      const excluded = new Set((readJSON(poolFile)?.exclude ?? pool.exclude ?? []).map(Number))
+      const now = Date.now()
+      return Response.json({
+        accounts: [...accounts.values()]
+          .map((e) => ({ port: e.port, serving: !!e.running, signedIn: !!e.account.peek(), excluded: excluded.has(e.port), busy: e.busy, restingFor: Math.max(0, Math.round((e.rest - now) / 1000)), lastUsed: e.last ? new Date(e.last).toISOString() : "" }))
+          .sort((a, b) => a.port - b.port),
+      })
+    }
+    const body = request.method === "GET" || request.method === "HEAD" ? undefined : Buffer.from(await request.arrayBuffer())
+    let conversation = ""
+    try {
+      const parsed = body ? JSON.parse(body.toString("utf8")) : null
+      conversation = String(parsed?.metadata?.user_id ?? parsed?.user ?? parsed?.prompt_cache_key ?? "")
+    } catch {}
+    conversation ||= request.headers.get("x-aws-quick-conversation") || request.headers.get("session_id") || ""
+    let answer = null
+    const tried = []
+    for (const entry of candidates(conversation).slice(0, 8)) {
+      const headers = new Headers(request.headers)
+      headers.delete("authorization")
+      headers.set("x-api-key", entry.apiKey)
+      entry.busy++
+      entry.last = Date.now()
+      tried.push(entry.port)
+      try {
+        answer = await entry.handle(new Request(request.url, { method: request.method, headers, body, signal: request.signal }))
+      } finally {
+        entry.busy--
+      }
+      if (answer.status !== 429 && answer.status !== 401) {
+        if (conversation && answer.ok) sticky.set(conversation, { name: entry.name, at: Date.now() })
+        break
+      }
+      const secs = answer.status === 401 ? 1800 : Number(answer.headers.get("retry-after")) || REST_DEFAULT_S
+      entry.rest = Date.now() + secs * 1000
+      where.run("pool", () => log(`port ${entry.port} answered ${answer.status}; it rests ${Math.round(secs / 60)} min, the turn goes to the next account`))
+      if (conversation) sticky.delete(conversation)
+    }
+    if (!answer) return Response.json({ type: "error", error: { type: "overloaded_error", message: "no AWS Quick account has allowance left" } }, { status: 529, headers: { "retry-after": "60" } })
+    if (tried.length > 1) where.run("pool", () => log(`turn served by ${tried.at(-1)} after ${tried.slice(0, -1).join(", ")}`))
+    return answer
+  }
+
+  await scan()
+  let poolServer = null
+  const openPool = async () => {
+    if (poolServer) return
+    try {
+      poolServer = await listen((req) => where.run("pool", () => poolHandle(req)), { port: Number(pool.port) || 4400, host: "127.0.0.1" })
+      log(`pool on port ${poolServer.port}`)
+    } catch (e) {
+      log(`pool: cannot listen on ${pool.port}: ${e?.message ?? e}`)
+    }
+  }
+  await openPool()
+  emit({ event: "multi", ports: [...accounts.values()].filter((e) => e.running).map((e) => e.port).sort((a, b) => a - b), pool: Number(pool.port) || 4400 })
+  setInterval(() => void scan().then(openPool).catch(() => {}), 1_000)
+  setTimeout(() => void renewAll().catch(() => {}), 30_000)
+  setInterval(() => void renewAll().catch(() => {}), 5 * 60_000)
+  const stop = () => process.exit(0)
+  process.on("SIGINT", stop)
+  process.on("SIGTERM", stop)
+}
+
+// Runs `multi --worker` and starts it again when it dies (after 1 s, then
+// longer when it keeps dying). With --exit-with-stdin (the console starts it
+// so) it ends when its stdin closes, otherwise it runs until it is stopped.
+function supervise(flags) {
+  const args = [...selfScript(), "multi", "--accounts", flags.accounts, "--worker", "1"]
+  let child = null
+  let fails = 0
+  let stopping = false
+  const start = () => {
+    const at = Date.now()
+    child = spawn(process.execPath, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true })
+    child.stdout.on("data", (d) => process.stdout.write(d))
+    child.stderr.resume()
+    child.on("exit", (code) => {
+      if (stopping) return
+      fails = Date.now() - at > 60_000 ? 0 : fails + 1
+      setTimeout(start, Math.min(30_000, 1000 * 2 ** Math.min(fails, 5)))
+    })
+  }
+  const stop = () => {
+    stopping = true
+    try {
+      child?.kill()
+    } catch {}
+    process.exit(0)
+  }
+  if (flags["exit-with-stdin"]) {
+    process.stdin.on("end", stop)
+    process.stdin.on("close", stop)
+    process.stdin.resume()
+  }
+  process.on("SIGINT", stop)
+  process.on("SIGTERM", stop)
+  start()
+  setInterval(() => {}, 1 << 30)
+}
+
 async function status(flags) {
   setup(flags)
   const account = new store.Account()
@@ -556,6 +798,7 @@ async function main() {
   if (command === "serve") return serve(flags)
   if (command === "status") return status(flags)
   if (command === "lazy") return lazy(flags)
+  if (command === "multi") return multi(flags)
   if (command === "import") return importAccount(flags)
   if (command === "version") return emit({ event: "version", version: "magpie-aws-quick-bridge 0.3.11 (5a8d414)" })
   throw new Error("usage: cle-aws-quick login|serve|status|import --home <dir>")

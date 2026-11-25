@@ -15,7 +15,9 @@
   on a new thread before the client sees anything of it. On 2026-11-24: images
   in a tool result (Claude Code reading a picture) are sent to Amazon Quick as
   attachments, as those of a user message already were, and the content
-  filter's notice sent as a guardrail event is asked again the same way;
+  filter's notice sent as a guardrail event is asked again the same way. The
+  account files can be named per call (gateway/store.mjs), so one process can
+  serve several accounts (`cle-aws-quick multi`);
 - `sidecars/aws-quick/entry.mjs`, a small command-line driver, GPL-3.0-only;
 - the Node.js 22 runtime, packaged with @yao-pkg/pkg (MIT-licensed Node.js).
 

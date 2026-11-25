@@ -14,11 +14,13 @@ const REFRESH_LEAD_MS = 10 * 60_000
 const UNKNOWN_LIFETIME_MS = 50 * 60_000
 
 export const home = () => process.env.AWS_QUICK_BRIDGE_HOME || join(homedir(), ".aws-quick-bridge")
-const file = (name) => join(home(), name)
+// `dir` names an account folder other than home(): one process can serve
+// several accounts (cle-aws-quick multi), each with its own folder.
+const file = (name, dir = home()) => join(dir, name)
 
-function read(name) {
+function read(name, dir) {
   try {
-    const value = JSON.parse(readFileSync(file(name), "utf8"))
+    const value = JSON.parse(readFileSync(file(name, dir), "utf8"))
     return value && typeof value === "object" ? value : null
   } catch {
     return null
@@ -27,21 +29,21 @@ function read(name) {
 
 // Written beside the file and moved over it, readable by the owner only:
 // the account file holds tokens.
-function write(name, value) {
-  mkdirSync(home(), { recursive: true, mode: 0o700 })
-  const tmp = file(`${name}.${process.pid}.tmp`)
+function write(name, value, dir = home()) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const tmp = file(`${name}.${process.pid}.tmp`, dir)
   writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 })
   try {
     chmodSync(tmp, 0o600)
   } catch {}
-  renameSync(tmp, file(name))
+  renameSync(tmp, file(name, dir))
 }
 
 // config.json: { apiKey, port, host, options }. `options` are the plugin's
 // options (README), the same names magpie's plugins.json takes. The key is
 // made on first use.
-export function config() {
-  const saved = read("config.json") ?? {}
+export function config(dir) {
+  const saved = read("config.json", dir) ?? {}
   const out = {
     apiKey: typeof saved.apiKey === "string" && saved.apiKey.trim() ? saved.apiKey.trim() : "",
     port: Number.isInteger(saved.port) && saved.port > 0 && saved.port < 65536 ? saved.port : DEFAULT_PORT,
@@ -50,7 +52,7 @@ export function config() {
   }
   if (!out.apiKey) {
     out.apiKey = "sk-quick-" + randomBytes(24).toString("hex")
-    write("config.json", { ...saved, ...out })
+    write("config.json", { ...saved, ...out }, dir)
   }
   return out
 }
@@ -63,7 +65,7 @@ export function saveConfig(patch) {
 
 export const newKey = () => saveConfig({ apiKey: "sk-quick-" + randomBytes(24).toString("hex") }).apiKey
 
-export const saveAccount = (auth) => write("account.json", auth)
+export const saveAccount = (auth, dir) => write("account.json", auth, dir)
 
 // Saves the account a sign-in ended with. The same account signing in again
 // keeps the device id it had.
@@ -78,19 +80,24 @@ export const accountFile = () => file("account.json")
 // The signed-in account, read again when the file changes (a sign-in while
 // the gateway runs is picked up) and renewed shortly before it expires.
 export class Account {
+  #dir
   #auth = null
   #stamp = ""
   #renewing = null
 
+  constructor(dir) {
+    this.#dir = dir
+  }
+
   peek() {
     let stamp = ""
     try {
-      const s = statSync(file("account.json"))
+      const s = statSync(file("account.json", this.#dir))
       stamp = `${s.mtimeMs}:${s.size}`
     } catch {}
     if (stamp !== this.#stamp) {
       this.#stamp = stamp
-      const value = stamp ? read("account.json") : null
+      const value = stamp ? read("account.json", this.#dir) : null
       this.#auth = value?.type === "oauth" && value.access ? value : null
     }
     return this.#auth
@@ -132,7 +139,7 @@ export class Account {
       // a renewal that names no expiry is taken to last as Amazon Quick's
       // tokens do (an hour), less a margin, so it is renewed again in time
       if (!next.expires) next.expires = Date.now() + UNKNOWN_LIFETIME_MS
-      saveAccount(next)
+      saveAccount(next, this.#dir)
       return next
     })().finally(() => (this.#renewing = null))
     return this.#renewing
