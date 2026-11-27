@@ -29,6 +29,7 @@ import { browserSignIn } from "../../third_party/magpie-aws-quick-bridge/plugin/
 import * as oauth from "../../third_party/magpie-aws-quick-bridge/plugin/oauth.mjs"
 import * as qbs from "../../third_party/magpie-aws-quick-bridge/plugin/qbs.mjs"
 import { settings } from "../../third_party/magpie-aws-quick-bridge/plugin/settings.mjs"
+import { CONVERSATION_HEADER, REST_MAX_SECS, backoffSecs, conversationKey, restFor } from "./pool-policy.mjs"
 
 const emit = (value) => process.stdout.write(JSON.stringify(value) + "\n")
 
@@ -82,13 +83,16 @@ async function login(flags) {
 // pass it on as the model's answer and the console's account pool would not
 // move on to another account. Turns are checked against the allowance first
 // (the answer kept briefly) and refused with 429 and Retry-After, the way
-// the bridge answers a turn Quick refuses.
+// the bridge answers a turn Quick refuses. Where Quick does not say when the
+// allowance is back, the Retry-After starts at 10 minutes and doubles with
+// every turn refused so in a row (up to six hours), rather than six hours
+// at once.
 const TURNS = new Set(["/v1/chat/completions", "/chat/completions", "/v1/messages", "/messages", "/v1/responses", "/responses"])
-const REST_MAX_SECS = 6 * 3600
 const STALE_MAX_MS = 5 * 60_000
 
 function quotaGuard(handle, account, apiKey) {
   let known = { at: -Infinity, until: 0, spent: null }
+  let strikes = 0
   let checking = null
   const check = () =>
     (checking ??= (async () => {
@@ -109,12 +113,13 @@ function quotaGuard(handle, account, apiKey) {
     else if (now >= known.until) void check().catch(() => {})
     const spent = known.spent
     if (!spent) {
+      strikes = 0
       const answer = await handle(request)
       // refused for the allowance after all: looked at again before the next turn
       if (answer.status === 429) known = { at: -Infinity, until: 0, spent: null }
       return answer
     }
-    const secs = Math.min(spent.secs > 0 ? spent.secs : REST_MAX_SECS, REST_MAX_SECS)
+    const secs = spent.secs > 0 ? Math.min(spent.secs, REST_MAX_SECS) : backoffSecs(strikes++)
     const message = `Amazon Quick's ${spent.name} allowance is used up${spent.secs > 0 ? `; it is back in ${Math.max(1, Math.round(spent.secs / 60))} minutes` : ""}`
     const body = path.endsWith("/messages")
       ? { type: "error", error: { type: "rate_limit_error", message } }
@@ -632,7 +637,6 @@ async function multi(flags) {
   }
   const sticky = new Map() // conversation -> { name, at }
   const STICKY_MS = 6 * 3600_000
-  const REST_DEFAULT_S = 600
   const keyOf = (headers) => headers.get("x-api-key") || (headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "")
   const sameKey = (a, b) => a.length === b.length && createHash("sha256").update(a).digest("hex") === createHash("sha256").update(b).digest("hex")
 
@@ -665,18 +669,21 @@ async function multi(flags) {
       })
     }
     const body = request.method === "GET" || request.method === "HEAD" ? undefined : Buffer.from(await request.arrayBuffer())
-    let conversation = ""
+    // the conversation: the x-aws-quick-conversation header (the console's API
+    // fills it), what the body names it by, else what it began with
+    let parsed = null
     try {
-      const parsed = body ? JSON.parse(body.toString("utf8")) : null
-      conversation = String(parsed?.metadata?.user_id ?? parsed?.user ?? parsed?.prompt_cache_key ?? "")
+      parsed = body ? JSON.parse(body.toString("utf8")) : null
     } catch {}
-    conversation ||= request.headers.get("x-aws-quick-conversation") || request.headers.get("session_id") || ""
+    const conversation = conversationKey(request.headers, parsed)
     let answer = null
     const tried = []
     for (const entry of candidates(conversation).slice(0, 8)) {
       const headers = new Headers(request.headers)
       headers.delete("authorization")
       headers.set("x-api-key", entry.apiKey)
+      // the account's own threads are kept per conversation too
+      if (conversation && !headers.get(CONVERSATION_HEADER)) headers.set(CONVERSATION_HEADER, conversation)
       entry.busy++
       entry.last = Date.now()
       tried.push(entry.port)
@@ -686,10 +693,13 @@ async function multi(flags) {
         entry.busy--
       }
       if (answer.status !== 429 && answer.status !== 401) {
+        if (answer.ok) entry.strikes = 0
         if (conversation && answer.ok) sticky.set(conversation, { name: entry.name, at: Date.now() })
         break
       }
-      const secs = answer.status === 401 ? 1800 : Number(answer.headers.get("retry-after")) || REST_DEFAULT_S
+      // the Retry-After it gave, else 10 minutes doubling while it keeps refusing
+      const { secs, strikes } = restFor(answer.status, answer.headers.get("retry-after"), entry.strikes || 0)
+      entry.strikes = strikes
       entry.rest = Date.now() + secs * 1000
       where.run("pool", () => log(`port ${entry.port} answered ${answer.status}; it rests ${Math.round(secs / 60)} min, the turn goes to the next account`))
       if (conversation) sticky.delete(conversation)

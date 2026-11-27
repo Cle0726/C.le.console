@@ -146,6 +146,20 @@ describe("the gateway", () => {
   })
 })
 
+describe("the model list", () => {
+  test("says the window a client can fill, not Quick's 1M", async () => {
+    const list = await (await call("/v1/models")).json()
+    expect(list.data.length).toBeGreaterThan(0)
+    for (const m of list.data) {
+      expect(m.context_length).toBe(128_000)
+      expect(m.context_window).toBe(128_000)
+      expect(m.max_output_tokens).toBeGreaterThan(0)
+      expect(m.context_length).not.toBe(900_000)
+      expect(m.context_length).toBeLessThan(1_000_000)
+    }
+  })
+})
+
 describe("Anthropic Messages (Claude Code)", () => {
   const tools = [{ name: "Read", description: "Read a file", input_schema: { type: "object", properties: { file_path: { type: "string" } }, required: ["file_path"] } }]
 
@@ -310,12 +324,19 @@ describe("Anthropic Messages (Claude Code)", () => {
       expect(stream.find(([, e]) => e.content_block?.type === "tool_use")[1].content_block.name).toBe("Read")
       expect(stream.find(([name]) => name === "message_delta")[1].delta.stop_reason).toBe("tool_use")
     }
-    // one that keeps failing ends as a retryable error, after four retries
+    // one the filter keeps stopping is asked again once only, and ends as an
+    // error no layer above sends again as it is
     let n = 0
     mock.state.script = () => (n++, [{ type: "thinking_delta", payload: { delta: "x" } }, { type: "stream_error", payload: { message: "content filter" } }])
     const stream = await events(await call("/v1/messages", body))
+    expect(n).toBe(2)
+    expect(stream.find(([name]) => name === "error")[1].error.type).not.toBe("overloaded_error")
+    // a connection lost the same way is still asked again up to four times
+    n = 0
+    mock.state.script = () => (n++, [{ type: "thinking_delta", payload: { delta: "x" } }, { type: "stream_error", payload: { message: "internal failure" } }])
+    const lost = await events(await call("/v1/messages", body))
     expect(n).toBe(5)
-    expect(stream.find(([name]) => name === "error")[1].error.type).toBe("overloaded_error")
+    expect(lost.find(([name]) => name === "error")[1].error.type).toBe("overloaded_error")
     mock.state.script = null
   })
 
@@ -324,23 +345,44 @@ describe("Anthropic Messages (Claude Code)", () => {
     const ok = [{ type: "text_delta", payload: { delta: "fine" } }, { type: "message_complete", payload: {} }, { type: "turn_completed", payload: {} }]
     for (const stream of [false, true]) {
       let n = 0
-      mock.state.script = () => (n++ < 2 ? [{ type: "guardrail_blocked", payload: { message: notice } }] : ok)
+      mock.state.script = () => (n++ < 1 ? [{ type: "guardrail_blocked", payload: { message: notice } }] : ok)
       const res = await call("/v1/messages", { model: "smart", max_tokens: 10, stream, tools, messages: [{ role: "user", content: "hi" }] })
       expect(res.status).toBe(200)
       expect(await res.text()).toContain("fine")
-      expect(n).toBe(3)
+      expect(n).toBe(2)
     }
-    // stopped every time: still the guardrail's 400
+    // stopped again: the guardrail's 400 after one retry, not four
+    for (const stream of [false, true]) {
+      let n = 0
+      mock.state.script = () => (n++, [{ type: "guardrail_blocked", payload: { message: notice } }])
+      const res = await call("/v1/messages", { model: "smart", max_tokens: 10, stream, tools, messages: [{ role: "user", content: "hi" }] })
+      expect(res.status).toBe(400)
+      expect(n).toBe(2)
+    }
     let n = 0
-    mock.state.script = () => (n++, [{ type: "guardrail_blocked", payload: { message: notice } }])
-    const res = await call("/v1/messages", { model: "smart", max_tokens: 10, stream: true, tools, messages: [{ role: "user", content: "hi" }] })
-    expect(res.status).toBe(400)
-    expect(n).toBe(5)
     // a policy block is answered at once
     n = 0
     mock.state.script = () => (n++, [{ type: "guardrail_blocked", payload: { message: "blocked by policy" } }])
     expect((await call("/v1/messages", { model: "smart", max_tokens: 10, stream: true, tools, messages: [{ role: "user", content: "bad" }] })).status).toBe(400)
     expect(n).toBe(1)
+    mock.state.script = null
+  })
+
+  test("a usage-limit notice is a 429 on a plain stream too; a reply that talks of limits is not", async () => {
+    for (const notice of ["You've reached your usage limit. Your credits renew on Dec 1.", "You have hit your monthly limit for Quick Smart."]) {
+      mock.state.script = () => [{ type: "text_delta", payload: { delta: notice } }, { type: "message_complete", payload: {} }, { type: "turn_completed", payload: {} }]
+      // no tools: the reply is streamed as it comes, its first few hundred characters held
+      const res = await call("/v1/messages", { model: "smart", max_tokens: 10, stream: true, messages: [{ role: "user", content: "hi" }] })
+      expect(res.status).toBe(429)
+      expect(await res.text()).not.toContain("text_delta")
+    }
+    const plain = "The API allows 10 requests a second; past that rate limit it answers 429, and a usage limit applies per month."
+    const long = "x".repeat(700) + " You've reached your usage limit."
+    for (const text of [plain, long]) {
+      mock.state.script = () => [{ type: "text_delta", payload: { delta: text.slice(0, 30) } }, { type: "text_delta", payload: { delta: text.slice(30) } }, { type: "message_complete", payload: {} }, { type: "turn_completed", payload: {} }]
+      const stream = await events(await call("/v1/messages", { model: "smart", max_tokens: 10, stream: true, messages: [{ role: "user", content: "hi" }] }))
+      expect(stream.filter(([, e]) => e.delta?.type === "text_delta").map(([, e]) => e.delta.text).join("")).toBe(text)
+    }
     mock.state.script = null
   })
 

@@ -10,6 +10,14 @@ use super::multi_model_api::{MultiModelAccountUsage, MultiModelUsageBucket};
 
 pub const PROVIDER: &str = "aws-quick";
 pub const SOURCE_PREFIX: &str = "cle:aws-quick:";
+/// The one route the multi-model API keeps for AWS Quick: the sidecar's pool
+/// address (multi), which picks an account with allowance left for each turn
+/// and keeps a conversation on its account.
+pub const POOL_SOURCE: &str = "cle:aws-quick:pool";
+pub const POOL_ROUTE_ID: &str = "cle-aws-quick-pool";
+/// The header the pool keeps a conversation on its account by; the API fills
+/// it with the conversation id it derives for every request.
+pub const CONVERSATION_HEADER: &str = "x-aws-quick-conversation";
 /// The models clients ask for and the Amazon Quick mode each one is. Quick
 /// names the model behind every mode in its usage (seen on a real account,
 /// 2026-11): smart = Claude Opus 5.5, balanced = Sonnet 5.5, fast = Haiku 5.5.
@@ -127,6 +135,24 @@ fn safe_id(account_id: &str, tenant: &str) -> String {
     let digest = Sha256::digest(format!("{account_id}\n{tenant}").as_bytes());
     digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
+
+/// The pool address `multi` serves (<root>/pool.json: port, apiKey).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pool { pub port: u16, pub api_key: String }
+
+pub(crate) fn parse_pool(value: &Value) -> Option<Pool> {
+    let api_key = value.get("apiKey").and_then(Value::as_str).map(str::trim).filter(|key| !key.is_empty())?.to_string();
+    let port = match value.get("port").and_then(Value::as_u64) {
+        None | Some(0) => 4400,
+        Some(port) if (1024..=65535).contains(&port) => port as u16,
+        Some(_) => return None,
+    };
+    Some(Pool { port, api_key })
+}
+
+/// The pool, once `multi` has made it; None where it never ran (an old sidecar
+/// that only has `serve`), which keeps one route per account.
+pub fn pool() -> Option<Pool> { parse_pool(&read_json(&root().join("pool.json"))) }
 
 pub fn list() -> Vec<AwsQuickAccount> {
     let Ok(entries) = fs::read_dir(accounts_dir()) else { return Vec::new() };
@@ -549,6 +575,16 @@ mod tests {
     }
 
     #[test]
+    fn pool_json_gives_the_pool_address() {
+        assert_eq!(parse_pool(&json!({"port": 4400, "apiKey": "sk-quick-pool-a"})), Some(Pool { port: 4400, api_key: "sk-quick-pool-a".into() }));
+        assert_eq!(parse_pool(&json!({"apiKey": "k"})).map(|p| p.port), Some(4400));
+        assert_eq!(parse_pool(&json!({"port": 4400})), None);
+        assert_eq!(parse_pool(&json!({"port": 4400, "apiKey": "  "})), None);
+        assert_eq!(parse_pool(&json!({"port": 80, "apiKey": "k"})), None);
+        assert_eq!(parse_pool(&Value::Null), None);
+    }
+
+    #[test]
     fn real_model_names_map_to_quick_modes() {
         assert_eq!(upstream_mode("aws-quick/claude-opus-5-5"), Some("smart"));
         assert_eq!(upstream_mode("aws-quick/claude-sonnet-5-5"), Some("balanced"));
@@ -565,7 +601,7 @@ mod tests {
     fn models_declare_vision_thinking_and_limits() {
         let models = super::super::multi_model_api::aws_quick_models_for_test();
         assert!(models.iter().all(|m| m.capabilities.iter().any(|c| c == "vision") && m.capabilities.iter().any(|c| c == "reasoning")));
-        assert!(models.iter().all(|m| m.max_input_tokens == Some(900_000) && m.max_output_tokens == Some(128_000)));
+        assert!(models.iter().all(|m| m.max_input_tokens == Some(128_000) && m.max_output_tokens == Some(64_000)));
         assert_eq!(models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["aws-quick/claude-opus-5-5", "aws-quick/claude-sonnet-5-5", "aws-quick/claude-haiku-5-5"]);
     }
 }

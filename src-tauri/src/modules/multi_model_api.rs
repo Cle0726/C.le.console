@@ -3417,7 +3417,7 @@ fn quota_refresh_supported(route: &MultiModelAccount) -> bool {
         || route.source.starts_with("cle:antigravity:")
         || route.source.starts_with("cle:gemini:")
         || route.source.starts_with("cle:claude-cli:")
-        || route.source.starts_with(aws_quick::SOURCE_PREFIX)
+        || (route.source.starts_with(aws_quick::SOURCE_PREFIX) && route.source != aws_quick::POOL_SOURCE)
         || (managed_provider_api::supported(&route.provider) && route.source.starts_with(&format!("cle:{}:",route.provider)))
         || (route.auth_mode == "oauth_json" && (route.source.starts_with("cle:claude:") || route.source.starts_with("cle:claude-web:")))
 }
@@ -5434,12 +5434,15 @@ pub async fn sync_aws_quick_accounts() -> Result<MultiModelApiState, String> {
     save_config(config).await
 }
 
-// AWS Quick's models under their real names (aws_quick::MODELS), all with a
-// 1M context and 128K output. Quick adds about 70K tokens of its own prompt
-// to every turn, so clients get 900K. Images and thinking levels
-// (reasoning_effort low/medium/high) pass through the bridge.
-const AWS_QUICK_MAX_INPUT_TOKENS: u32 = 900_000;
-const AWS_QUICK_MAX_OUTPUT_TOKENS: u32 = 128_000;
+// AWS Quick's models under their real names (aws_quick::MODELS). Amazon
+// Quick takes about 63000 bytes per request (its 64 KB frame) and keeps the
+// rest of a conversation in its own thread, which is lost when a turn moves
+// to another account and the conversation is sent again from the start: a
+// window of 128K tokens is what a conversation can be sent again in (with
+// its oldest parts in an attachment), not the model's 1M. Images and
+// thinking levels (reasoning_effort low/medium/high) pass through the bridge.
+const AWS_QUICK_MAX_INPUT_TOKENS: u32 = 128_000;
+const AWS_QUICK_MAX_OUTPUT_TOKENS: u32 = 64_000;
 
 fn aws_quick_models() -> Vec<MultiModelDefinition> {
     aws_quick::MODELS.iter().map(|(model, _)| MultiModelDefinition {
@@ -5474,11 +5477,54 @@ fn rename_aws_quick_models(config: &mut MultiModelApiConfig) {
 #[cfg(test)]
 pub(crate) fn aws_quick_models_for_test() -> Vec<MultiModelDefinition> { aws_quick_models() }
 
-// Every signed-in AWS Quick account is its own local gateway; they share the
-// provider name, so the gateway pools them under aws-quick/<mode>.
+// AWS Quick goes through one route: the sidecar's pool address, which picks
+// an account with allowance left for each turn, rests one that is used up and
+// keeps a conversation on its account (by the x-aws-quick-conversation header
+// the API fills with its conversation id). Only where there is no pool (an old
+// sidecar without `multi`) is every account a route of its own, as before.
 async fn import_aws_quick_routes(config: &mut MultiModelApiConfig) -> Result<(), String> {
-    rename_aws_quick_models(config);
     let accounts = aws_quick::ensure_all().await?;
+    apply_aws_quick_routes(config, accounts, aws_quick::pool());
+    Ok(())
+}
+
+fn apply_aws_quick_routes(config: &mut MultiModelApiConfig, accounts: Vec<aws_quick::AwsQuickAccount>, pool: Option<aws_quick::Pool>) {
+    rename_aws_quick_models(config);
+    let serving = accounts.iter().filter(|account| account.port != 0 && !account.api_key.is_empty()).count();
+    if let Some(pool) = pool.filter(|_| serving > 0) {
+        // the toggles and aliases of the route(s) it replaces stay
+        let previous = config.accounts.iter().find(|route| route.source == aws_quick::POOL_SOURCE)
+            .or_else(|| config.accounts.iter().find(|route| route.source.starts_with(aws_quick::SOURCE_PREFIX)))
+            .map(|route| (route.models.clone(), route.enabled, route.priority));
+        let replaced = config.accounts.iter()
+            .filter(|route| route.source.starts_with(aws_quick::SOURCE_PREFIX) && route.source != aws_quick::POOL_SOURCE)
+            .map(|route| route.id.clone()).collect::<BTreeSet<_>>();
+        config.accounts.retain(|route| !route.source.starts_with(aws_quick::SOURCE_PREFIX) || route.source == aws_quick::POOL_SOURCE);
+        // a key limited to some AWS Quick accounts keeps AWS Quick through the pool
+        for key in &mut config.api_keys {
+            if key.account_ids.iter().any(|id| replaced.contains(id)) {
+                key.account_ids.retain(|id| !replaced.contains(id));
+                if !key.account_ids.iter().any(|id| id == aws_quick::POOL_ROUTE_ID) { key.account_ids.push(aws_quick::POOL_ROUTE_ID.into()); }
+            }
+        }
+        let name = format!("AWS Quick 账号池 · {serving} 个账号");
+        let base_url = format!("http://127.0.0.1:{}/v1", pool.port);
+        let mut headers = BTreeMap::new();
+        headers.insert(aws_quick::CONVERSATION_HEADER.to_string(), "$CPA-SESSION-ID".to_string());
+        if let Some(route) = config.accounts.iter_mut().find(|route| route.source == aws_quick::POOL_SOURCE) {
+            route.name = name; route.base_url = base_url; route.api_key = pool.api_key;
+            route.headers.extend(headers);
+            merge_workbuddy_models(&mut route.models, aws_quick_models());
+        } else {
+            let (mut models, enabled, priority) = previous.unwrap_or_else(|| (Vec::new(), true, 0));
+            merge_workbuddy_models(&mut models, aws_quick_models());
+            config.accounts.push(MultiModelAccount { id: aws_quick::POOL_ROUTE_ID.into(), name,
+                provider: aws_quick::PROVIDER.into(), auth_mode: "api_key".into(), base_url, api_key: pool.api_key,
+                cli_path: String::new(), cli_app: String::new(), cli_profile: String::new(), credential_json: None, proxy_url: String::new(),
+                prefix: String::new(), priority, headers, models, enabled, source: aws_quick::POOL_SOURCE.into() });
+        }
+        return;
+    }
     let sources = accounts.iter().map(|account| format!("{}{}", aws_quick::SOURCE_PREFIX, account.id)).collect::<BTreeSet<_>>();
     config.accounts.retain(|route| !route.source.starts_with(aws_quick::SOURCE_PREFIX) || sources.contains(&route.source));
     for account in accounts {
@@ -5497,7 +5543,11 @@ async fn import_aws_quick_routes(config: &mut MultiModelApiConfig) -> Result<(),
                 prefix: String::new(), priority: 0, headers: BTreeMap::new(), models: aws_quick_models(), enabled: true, source });
         }
     }
-    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn apply_aws_quick_routes_for_test(config: &mut MultiModelApiConfig, accounts: Vec<aws_quick::AwsQuickAccount>, pool: Option<aws_quick::Pool>) {
+    apply_aws_quick_routes(config, accounts, pool)
 }
 
 pub async fn sync_extension_accounts() -> Result<MultiModelApiState, String> {
@@ -6043,8 +6093,61 @@ mod tests {
         let sonnet = &route.models[1];
         assert!(!sonnet.enabled, "a model the user switched off stays off");
         assert_eq!(route.models[2].alias, "quick-fast");
-        assert!(route.models.iter().all(|m| m.capabilities.iter().any(|c| c == "vision") && m.max_input_tokens == Some(900_000) && m.max_output_tokens == Some(128_000)));
+        assert!(route.models.iter().all(|m| m.capabilities.iter().any(|c| c == "vision") && m.max_input_tokens == Some(128_000) && m.max_output_tokens == Some(64_000)));
         assert_eq!(config.api_keys[0].allowed_models, ["aws-quick/claude-opus-5-5", "doubao-web/fast"]);
+    }
+
+    fn quick_account(id: &str, port: u16) -> crate::modules::aws_quick::AwsQuickAccount {
+        crate::modules::aws_quick::AwsQuickAccount { id: id.into(), account_id: format!("acct-{id}"), tenant_url: String::new(), enterprise: false,
+            port, running: true, api_key: format!("key-{id}") }
+    }
+
+    fn quick_route(id: &str, port: u16) -> super::MultiModelAccount {
+        let mut models = super::aws_quick_models_for_test();
+        models[1].enabled = false;
+        super::MultiModelAccount { id: format!("cle-aws-quick-{id}"), name: format!("AWS Quick · {id}"), provider: "aws-quick".into(),
+            auth_mode: "api_key".into(), base_url: format!("http://127.0.0.1:{port}/v1"), api_key: format!("key-{id}"), cli_path: String::new(),
+            cli_app: String::new(), cli_profile: String::new(), credential_json: None, proxy_url: String::new(), prefix: String::new(), priority: 0,
+            headers: Default::default(), models, enabled: true, source: format!("cle:aws-quick:{id}") }
+    }
+
+    #[test]
+    fn aws_quick_with_a_pool_is_one_route_to_the_pool() {
+        let mut config = super::default_config();
+        // 28 single-account routes, as 1.1.60 wrote them
+        for i in 0..28u16 { config.accounts.push(quick_route(&format!("{i:02x}"), 20_000 + i)); }
+        config.api_keys[0].account_ids = vec!["cle-aws-quick-00".into(), "cle-aws-quick-01".into(), "other".into()];
+        let accounts = (0..36u16).map(|i| quick_account(&format!("{i:02x}"), 20_000 + i)).collect::<Vec<_>>();
+        let pool = crate::modules::aws_quick::Pool { port: 4400, api_key: "sk-quick-pool-x".into() };
+        super::apply_aws_quick_routes_for_test(&mut config, accounts.clone(), Some(pool.clone()));
+        let quick = config.accounts.iter().filter(|route| route.source.starts_with("cle:aws-quick:")).collect::<Vec<_>>();
+        assert_eq!(quick.len(), 1);
+        let route = quick[0];
+        assert_eq!((route.id.as_str(), route.source.as_str()), ("cle-aws-quick-pool", "cle:aws-quick:pool"));
+        assert_eq!((route.base_url.as_str(), route.api_key.as_str()), ("http://127.0.0.1:4400/v1", "sk-quick-pool-x"));
+        assert_eq!(route.headers.get("x-aws-quick-conversation").map(String::as_str), Some("$CPA-SESSION-ID"));
+        assert!(route.name.contains("36"));
+        assert!(!route.models[1].enabled, "a model switched off on the old routes stays off");
+        assert_eq!(config.api_keys[0].account_ids, ["other", "cle-aws-quick-pool"]);
+        // opening the console again does not bring the single routes back
+        super::normalize_config(&mut config).unwrap();
+        super::apply_aws_quick_routes_for_test(&mut config, accounts, Some(pool));
+        assert_eq!(config.accounts.iter().filter(|route| route.source.starts_with("cle:aws-quick:")).count(), 1);
+    }
+
+    #[test]
+    fn aws_quick_without_a_pool_keeps_one_route_per_account() {
+        let mut config = super::default_config();
+        let accounts = vec![quick_account("aa", 20_001), quick_account("bb", 20_002), quick_account("cc", 0)];
+        super::apply_aws_quick_routes_for_test(&mut config, accounts.clone(), None);
+        let ids = config.accounts.iter().filter(|route| route.source.starts_with("cle:aws-quick:")).map(|route| route.id.as_str()).collect::<Vec<_>>();
+        assert_eq!(ids, ["cle-aws-quick-aa", "cle-aws-quick-bb"]);
+        assert!(config.accounts.iter().all(|route| !route.headers.contains_key("x-aws-quick-conversation")));
+        // and a pool with no account serving yet is not used either
+        let pool = crate::modules::aws_quick::Pool { port: 4400, api_key: "k".into() };
+        let mut empty = super::default_config();
+        super::apply_aws_quick_routes_for_test(&mut empty, vec![quick_account("cc", 0)], Some(pool));
+        assert!(empty.accounts.iter().all(|route| !route.source.starts_with("cle:aws-quick:")));
     }
 
     #[test]

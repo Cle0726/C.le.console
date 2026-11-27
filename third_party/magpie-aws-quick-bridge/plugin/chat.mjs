@@ -74,8 +74,9 @@ export function retryable(error) {
   if (error instanceof ToolCallError) return true
   if (!(error instanceof UpstreamError)) return false
   if (error.kind === "transport" || error.kind === "timeout" || error.kind === "empty") return true
-  // an error event of Amazon Quick's own, other than a limit it sets
-  if (error.kind === "upstream") return !THROTTLED.test(error.message)
+  // an error event of Amazon Quick's own, other than a limit it sets or its
+  // content filter (asked again once only, see tryAgain)
+  if (error.kind === "upstream") return !THROTTLED.test(error.message) && !filterStop(error)
   return error.kind === "handshake" && (error.status === 0 || error.status >= 500)
 }
 
@@ -109,7 +110,7 @@ export function failureResponse(error, spent = null) {
   if (error.kind === "timeout") return errorResponse(504, "upstream_timeout", error.message)
   if (error.kind === "too_large")
     return errorResponse(400, "context_length_exceeded", `the request does not fit Amazon Quick's 64 KB message limit (${error.message})`)
-  if (error.kind === "blocked") return errorResponse(400, "content_filter", error.message)
+  if (error.kind === "blocked" || filterStop(error)) return errorResponse(400, "content_filter", error.message)
   if (error.kind === "upstream" && THROTTLED.test(error.message)) return errorResponse(429, "rate_limit_exceeded", error.message)
   return errorResponse(502, "upstream_error", error.message)
 }
@@ -233,8 +234,22 @@ export async function compose(turn, { auth, cfg, session, thread, threadId, sign
     input.prompt = prompt
   }
 
+  // Every attachment adds its entry to the message, so they are made first
+  // and the message is fitted with them in it: fitted without them, a turn
+  // with a few pictures went over the limit and was refused as too large.
   const attachments = []
-  const attach = async (name, mimeType, bytes) => attachments.push(await upload(auth, { name, mimeType, bytes, threadId }, { signal }))
+  const attach = async (name, mimeType, bytes) => {
+    attachments.push(await upload(auth, { name, mimeType, bytes, threadId }, { signal }))
+    input.attachments = attachments
+  }
+  // the newest ten: a picture just read matters more than old ones
+  for (const image of images.slice(-10)) {
+    try {
+      await attach(image.name, image.mimeType, Buffer.from(image.base64, "base64"))
+    } catch (e) {
+      if (signal?.aborted) throw e
+    }
+  }
   if (!fits() && cfg.attachments && !gateway) {
     // the newest message stays in the frame when it is short
     const last = blocks.length > 1 && blocks.at(-1).length <= 6000 ? blocks.at(-1) : ""
@@ -259,15 +274,13 @@ export async function compose(turn, { auth, cfg, session, thread, threadId, sign
     if (!set()) blocks[0] = longestFit(blocks[0], (cut) => ((blocks[0] = cut), set()))
     set()
   }
-  // the newest ten: a picture just read matters more than old ones
-  for (const image of images.slice(-10)) {
-    try {
-      await attach(image.name, image.mimeType, Buffer.from(image.base64, "base64"))
-    } catch (e) {
-      if (signal?.aborted) throw e
-    }
+  // pictures that leave no room even for the newest message go, oldest first
+  while (!fits() && attachments.some((a) => a.type === "image")) {
+    attachments.splice(attachments.findIndex((a) => a.type === "image"), 1)
+    if (!attachments.length) delete input.attachments
+    const set = () => ((input.prompt = blocks.join("\n\n")), fits())
+    set()
   }
-  if (attachments.length) input.attachments = attachments
   if (!fits()) throw new UpstreamError("too_large", `${size()} bytes after shortening, over ${limit}`)
   return { input, custom: instructed ? asked : thread?.custom ?? "" }
 }
@@ -283,18 +296,28 @@ export const filterNotice = (text) => text.trim().length < 400 && FILTER_NOTICE.
 // our automated check"), which passes on a second try as often as the notice
 // as text does. Should every try be stopped, it is still answered as the
 // guardrail's 400, not as "overloaded": the agent would only ask again.
-const askAgain = (error) => retryable(error) || (error instanceof UpstreamError && error.kind === "blocked" && filterNotice(error.message))
+const askAgain = (error) => retryable(error) || filterStop(error)
 
 // Amazon Quick's answer on a used-up allowance, given as the reply's text
 // ("You've reached your usage limit…"). The sidecar checks the allowance
 // first, but an allowance used up since it last looked still gets this far:
 // it is answered as a refusal (429), never as the model's reply.
-const LIMIT_NOTICE = /you(?:'|’)?ve reached your (?:usage|session|monthly|daily) limit|reached (?:your|the) (?:usage|session) limit/i
+const LIMIT_NOTICE =
+  /\b(?:you(?:'|’)?ve|you have) (?:reached|hit|exceeded|used up) (?:your|the) (?:(?:usage|session|monthly|daily|weekly|message|plan(?:'s)?) )?(?:limit|allowance|quota)|\b(?:usage|session) limit (?:reached|exceeded)\b|reached (?:your|the) (?:usage|session) limit/i
 export const limitNotice = (text) => text.trim().length < 600 && LIMIT_NOTICE.test(text)
+
+// The content filter's stop: its notice as the reply's text or as a guardrail
+// event, or an error event that names it.
+const FILTER_EVENT = /content.?filter|did not pass our automated check/i
+export const filterStop = (error) =>
+  error instanceof UpstreamError &&
+  ((error.kind === "blocked" && filterNotice(error.message)) || (error.kind === "upstream" && FILTER_EVENT.test(error.message) && !THROTTLED.test(error.message)))
 
 function filtered(text, calls) {
   if (!calls.length && limitNotice(text)) throw new UpstreamError("handshake", `Amazon Quick: ${text.trim()}`, 429)
-  if (!calls.length && filterNotice(text)) throw new UpstreamError("upstream", `content filter: ${text.trim()}`)
+  // answered as the filter's 400 should the one retry be stopped too, which
+  // no layer above sends again as it is
+  if (!calls.length && filterNotice(text)) throw new UpstreamError("blocked", text.trim())
 }
 
 async function complete(turn, run) {
@@ -329,11 +352,20 @@ async function complete(turn, run) {
   })
 }
 
-// How many times a streamed turn is asked again, on a new thread, when it
-// fails in a way worth retrying after its stream has started.
-// The content filter was seen to stop the same turn two or three times in a
-// row before letting it through; each stop comes within seconds.
+// How many times a turn is asked again, on a new thread, when it fails in a
+// way worth retrying. A turn the content filter stopped is asked again once
+// only: sent as it is four times over, the same text was stopped as often,
+// and every try costs the account's allowance (each layer above retries too).
 const STREAM_RETRIES = 4
+export const FILTER_RETRIES = 1
+
+// Whether a turn that failed with `error` is asked again, after `tries` tries
+// of which `filterTries` were for the content filter.
+export function tryAgain(error, tries, filterTries) {
+  if (!askAgain(error)) return false
+  if (filterStop(error)) return filterTries < FILTER_RETRIES
+  return tries < STREAM_RETRIES
+}
 
 // A line on stderr (the gateway's log) for what happens inside a stream,
 // where no status is left to tell it.
@@ -395,13 +427,23 @@ function stream(turn, run, abort, headerWaitMs = 0, again = null) {
   }
 
   const hold = turn.bridge
+  // Without tools the reply streams as it comes, but its first few hundred
+  // characters wait: Amazon Quick's notices (a used-up allowance, the content
+  // filter) come as a short reply of their own and must not reach the client
+  // as the model's answer.
+  const PEEK = 600
   const once = async (run) => {
     let sawText = false
     let held = ""
+    let peeked = ""
     const text = (t) => {
       sawText = true
       if (hold) held += t
-      else chunk({ content: t })
+      else if (peeked === null) chunk({ content: t })
+      else if ((peeked += t).length >= PEEK) {
+        chunk({ content: peeked })
+        peeked = null
+      }
     }
     const bridge = turn.bridge ? new BridgeStream(turn.bridgeAllowed, text) : null
     let res
@@ -417,7 +459,9 @@ function stream(turn, run, abort, headerWaitMs = 0, again = null) {
       if (!turn.parallel) calls = calls.slice(0, 1)
       if (!sawText && !calls.length) throw new UpstreamError("empty", "upstream returned no text or tool calls")
       if (hold) filtered(held, calls)
+      if (!hold && peeked !== null) filtered(peeked, calls)
       if (held) chunk({ content: held })
+      if (peeked) chunk({ content: peeked })
       calls.forEach((c, i) => chunk({ tool_calls: [wireToolCall(c, i)] }))
       chunk({}, calls.length ? "tool_calls" : "stop")
       if (turn.includeUsage) {
@@ -427,18 +471,19 @@ function stream(turn, run, abort, headerWaitMs = 0, again = null) {
     } catch (error) {
       // the thread holds the reply that failed: it is not continued
       if (res?.threadId) threads.drop({ id: res.threadId })
-      error.shown = sawText && !hold
+      error.shown = sawText && !hold && peeked === null
       throw error
     }
   }
 
   ;(async () => {
     let current = run
-    for (let tries = 0; ; tries++) {
+    for (let tries = 0, filterTries = 0; ; tries++) {
       try {
         return await once(current)
       } catch (error) {
-        const worth = again && askAgain(error) && !error.shown && tries < STREAM_RETRIES && !closed && !abort.signal.aborted
+        const worth = again && !error.shown && tryAgain(error, tries, filterTries) && !closed && !abort.signal.aborted
+        if (worth && filterStop(error)) filterTries++
         const why = String(error?.message ?? error).replace(/\s+/g, " ").slice(0, 200)
         if (!closed && !abort.signal.aborted) note(`stream ${worth ? `retry ${tries + 1}` : "failed"}: ${why}`)
         if (worth) {
@@ -452,7 +497,13 @@ function stream(turn, run, abort, headerWaitMs = 0, again = null) {
         }
         clearTimeout(waiting)
         if (!started) return first.reject(error)
-        const code = retryable(error) ? "overloaded" : error instanceof UpstreamError && error.kind === "handshake" && error.status === 429 ? "rate_limit_exceeded" : "upstream_error"
+        const code = retryable(error)
+          ? "overloaded"
+          : error instanceof UpstreamError && error.kind === "handshake" && error.status === 429
+            ? "rate_limit_exceeded"
+            : filterStop(error) || (error instanceof UpstreamError && error.kind === "blocked")
+              ? "content_filter"
+              : "upstream_error"
         raw({ error: { message: String(error?.message ?? error), type: code, code } })
         return end()
       }
@@ -552,13 +603,14 @@ export async function chatCompletions({ body, auth, cfg, signal, conversation = 
       return answer
     }
     // a whole answer is asked again the same way, on a new thread
-    for (let tries = 0, current = run; ; tries++) {
+    for (let tries = 0, filterTries = 0, current = run; ; tries++) {
       try {
         const answer = await complete(turn, current)
         settle()
         return answer
       } catch (e) {
-        if (!askAgain(e) || tries >= STREAM_RETRIES || abort.signal.aborted) throw e
+        if (!tryAgain(e, tries, filterTries) || abort.signal.aborted) throw e
+        if (filterStop(e)) filterTries++
         current = await runFor(null)
       }
     }

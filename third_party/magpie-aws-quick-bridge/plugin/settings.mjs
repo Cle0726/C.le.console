@@ -56,11 +56,17 @@ export function settings(options = {}) {
   }
 }
 
-// The context window is what Amazon Quick reports with each turn's usage;
-// the output limits are estimates, it publishes none.
+// The window a client may fill. Amazon Quick's models have 1M tokens, but a
+// request takes about 63000 bytes (one frame) and the rest of a conversation
+// lives in Quick's thread on one account: when it has to be sent again (a new
+// thread, another account) it goes as that frame plus an attachment, and a
+// client that counted on 1M (it was 900K) kept far more than can be sent
+// again before it compacted. The output limits are estimates, Quick publishes
+// none.
+export const CONTEXT_TOKENS = 128_000
 export const model = (id) => ({
   name: MODEL_NAMES[id] ?? `Quick ${id}`,
-  limit: { context: 1_000_000, output: id === "fast" ? 32_000 : 64_000 },
+  limit: { context: CONTEXT_TOKENS, output: id === "fast" ? 32_000 : 64_000 },
   tool_call: true,
   reasoning: true,
   attachment: true,

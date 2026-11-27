@@ -12,7 +12,7 @@ import { createServer } from "node:http"
 import { MODES, chatCompletions, mapModel } from "../plugin/chat.mjs"
 import * as oauth from "../plugin/oauth.mjs"
 import * as qbs from "../plugin/qbs.mjs"
-import { MODEL_NAMES, accountModels, models, settings } from "../plugin/settings.mjs"
+import { MODEL_NAMES, accountModels, model, models, settings } from "../plugin/settings.mjs"
 import { conversationOf } from "../plugin/threads.mjs"
 import * as anthropic from "./anthropic.mjs"
 import * as responses from "./responses.mjs"
@@ -59,6 +59,12 @@ export function createGateway({ apiKey, account, options = {}, log = () => {} })
     }
   }
 
+  const windowOf = (m) => {
+    const context = m?.limit?.context ?? model("smart").limit.context
+    const output = m?.limit?.output ?? model("smart").limit.output
+    return { context_length: context, context_window: context, max_input_tokens: context, max_output_tokens: output, max_tokens: output }
+  }
+
   async function modelList() {
     let listed = models()
     try {
@@ -75,6 +81,8 @@ export function createGateway({ apiKey, account, options = {}, log = () => {} })
       type: "model",
       display_name: MODEL_NAMES[id] ?? id,
       created_at: new Date(created * 1000).toISOString(),
+      // the window clients size their context by (settings.CONTEXT_TOKENS), under the names they read it by
+      ...windowOf(listed[id]),
     }))
     return Response.json({ object: "list", data, has_more: false, first_id: data[0]?.id ?? null, last_id: data.at(-1)?.id ?? null })
   }
