@@ -31,22 +31,32 @@ export function restFor(status, retryAfter, strikes = 0) {
 const text = (value) => (typeof value === "string" ? value : value === undefined || value === null ? "" : JSON.stringify(value))
 const role = (m) => String(m?.role ?? "").toLowerCase()
 
-// What a conversation keeps from its first turn on: its instructions and its
-// first user message (Anthropic Messages, Chat Completions or Responses).
+// What a conversation keeps from its first turn on: its first user message
+// (Anthropic Messages, Chat Completions or Responses). Not its instructions:
+// agents rewrite those between turns (碧琪's Metre adds what the last turn
+// did, seen 2026-11-27), which moved a conversation to another account on
+// every turn. Two conversations that open with the very same message share
+// an account, which costs nothing.
 export function fingerprint(body) {
   if (!body || typeof body !== "object") return ""
   const list = Array.isArray(body.messages) ? body.messages : Array.isArray(body.input) ? body.input : typeof body.input === "string" ? [{ role: "user", content: body.input }] : []
   const first = list.find((m) => role(m) === "user" || (!m?.role && m?.content !== undefined))
   if (!first) return ""
-  const system = [body.system, body.instructions, ...list.filter((m) => ["system", "developer"].includes(role(m))).map((m) => m.content)].map(text).join("\n")
-  return "fp:" + createHash("sha256").update(`${system}\n\u0000\n${text(first.content)}`).digest("hex").slice(0, 32)
+  return "fp:" + createHash("sha256").update(text(first.content)).digest("hex").slice(0, 32)
 }
 
 // The conversation a turn belongs to: the header first, then what the body
 // names it by, then its fingerprint; "" for a request that has none.
+//
+// A header of the form msg:<hex> is the console API's own guess, made when the
+// client names no session: a hash of the instructions, the first user message
+// and the first reply, which changes once the first reply is in. The
+// fingerprint, which does not, stands in for it.
+const GUESSED = /^msg:[0-9a-f]+$/i
+
 export function conversationKey(headers, body) {
   const named = String(headers?.get?.(CONVERSATION_HEADER) ?? "").trim()
-  if (named) return named.slice(0, 256)
+  if (named && !GUESSED.test(named)) return named.slice(0, 256)
   const said = body?.metadata?.user_id ?? body?.user ?? body?.prompt_cache_key ?? headers?.get?.("session_id") ?? ""
   if (String(said).trim()) return String(said).trim().slice(0, 256)
   return fingerprint(body)
