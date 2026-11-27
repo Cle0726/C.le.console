@@ -14,6 +14,9 @@ type Quota = { plan?: string; windows?: { name: string; display?: string; resets
 // aws-quick/claude-haiku-5-5.
 export function AwsQuickPanel({ onChanged }: { onChanged: (state: MultiModelApiState) => void }) {
   const [accounts, setAccounts] = useState<AwsQuickAccount[]>([]);
+  // the empty-list hint waits for the first answer: shown before it, it told
+  // someone with a hundred accounts that there were none
+  const [loaded, setLoaded] = useState(false);
   const [quotas, setQuotas] = useState<Record<string, Quota>>({});
   const [busy, setBusy] = useState(false);
   const [login, setLogin] = useState<{ id: string; url: string } | null>(null);
@@ -27,7 +30,7 @@ export function AwsQuickPanel({ onChanged }: { onChanged: (state: MultiModelApiS
 
   const load = useCallback(async () => {
     const list = await api.awsQuickAccounts();
-    if (mounted.current) setAccounts(list);
+    if (mounted.current) { setAccounts(list); setLoaded(true); }
     return list;
   }, []);
 
@@ -163,7 +166,7 @@ export function AwsQuickPanel({ onChanged }: { onChanged: (state: MultiModelApiS
           </div>
         </article>;
       })}
-      {!accounts.length && <p className="mm-quota-hint">还没有 AWS Quick 账号。点“添加个人账号”在浏览器登录 Amazon Quick；企业账号先填区域再登录；已有 account.json 或 token 的点“导入 JSON / Token”。可以添加多个账号。</p>}
+      {loaded && !accounts.length && <p className="mm-quota-hint">还没有 AWS Quick 账号。点“添加个人账号”在浏览器登录 Amazon Quick；企业账号先填区域再登录；已有 account.json 或 token 的点“导入 JSON / Token”。可以添加多个账号。</p>}
     </div>
   </section>;
 }

@@ -667,6 +667,19 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   }), []);
 
   const accounts = draft?.accounts ?? [];
+  // AWS Quick reaches the API through one route, the sidecar's pool, which
+  // stands for every signed-in account: its count is the accounts', not 1.
+  const awsQuickPool = accounts.find((item) => item.source === 'cle:aws-quick:pool');
+  const [awsQuickCount, setAwsQuickCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!awsQuickPool) return;
+    let live = true;
+    multiModelApiService.awsQuickAccounts().then((list) => { if (live) setAwsQuickCount(list.length); }).catch(() => {});
+    return () => { live = false; };
+  }, [awsQuickPool?.name]);
+  const providerAccountCount = (provider: string) => provider === 'aws-quick' && awsQuickPool
+    ? (awsQuickCount ?? 1)
+    : accounts.filter((item) => item.provider === provider).length;
   const visibleAccounts = providerFilter === 'all' ? accounts : accounts.filter((item) => item.provider === providerFilter);
   const configuredProviders = useMemo(() => new Set(accounts.filter((item) => item.enabled).map((item) => item.provider)), [accounts]);
   const visibleCatalog = useMemo(() => {
@@ -817,7 +830,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
                 <button type="button" className="btn btn-secondary" onClick={() => { setProviderFilter('aws-quick'); setTab('accounts'); }}><Users />查看 API 账号池</button>
               </div>
             </header>
-            <div className="mm-api-message info"><Network /><span>已接入 {accounts.filter((account) => account.provider === 'aws-quick').length} 个账号 · Base URL：<code>{baseUrl}/v1</code> · 由开源项目 magpie-AWS-Quick-bridge（GPL-3.0，独立进程）提供，非 Amazon 官方。</span></div>
+            <div className="mm-api-message info"><Network /><span>已接入 {providerAccountCount('aws-quick')} 个账号{awsQuickPool ? <>，在 API 账号池里是一条统一入口路由（<code>{awsQuickPool.baseUrl}</code>）：每段对话留在同一个账号上，额度用完的账号自动跳过</> : null} · Base URL：<code>{baseUrl}/v1</code> · 由开源项目 magpie-AWS-Quick-bridge（GPL-3.0，独立进程）提供，非 Amazon 官方。</span></div>
             <AwsQuickPanel onChanged={(next) => { setState(next); setDraft(structuredClone(next.config)); }} />
           </section>
         ) : tab === 'doubao-web' ? (
@@ -917,7 +930,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             <b>全部</b><small>{summary.accounts} 个账号</small>
           </button>
           {primaryProviders.map((provider) => {
-            const count = accounts.filter((item) => item.provider === provider.id).length;
+            const count = providerAccountCount(provider.id);
             return (
               <button key={provider.id} type="button" className={providerFilter === provider.id ? 'active' : ''} onClick={() => { setOpenMenu(null); if (!count && pinnedProviders.includes(provider.id)) { openAccount(undefined, provider.id); return; } setProviderFilter(provider.id); }}>
                 <span className={`mm-provider-icon ${provider.id}`}><ProviderIcon provider={provider.id} /></span>
