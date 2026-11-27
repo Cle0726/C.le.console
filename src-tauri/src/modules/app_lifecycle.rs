@@ -7,6 +7,7 @@ use std::time::Duration;
 
 pub fn shutdown_for_exit() {
     crate::modules::agent_provider_bridge::stop();
+    crate::modules::aws_quick::stop();
     crate::modules::subscription_proxy::shutdown_for_exit();
 
     let (tx, rx) = std::sync::mpsc::channel();

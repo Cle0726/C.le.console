@@ -4,6 +4,7 @@
       "../sidecars/cle-cliproxy/bin/cle-cliproxy",
       "../sidecars/cockpit-cliproxy/bin/cockpit-cliproxy",
       "../sidecars/jimeng-api/bin/jimeng-api",
+      "../sidecars/aws-quick/bin/cle-aws-quick",
       "../sidecars/mihomo/bin/mihomo"
     ],
     "resources": {

@@ -106,4 +106,8 @@ for (const architecture of architectures) {
   fs.chmodSync(output, 0o755);
 }
 
+for (const architecture of architectures) {
+  run(process.execPath, [path.join(repoRoot, 'scripts', 'build-aws-quick-sidecar.mjs'), architecture.rust]);
+}
+
 console.log(`macOS sidecars ready for ${requestedTarget}`);

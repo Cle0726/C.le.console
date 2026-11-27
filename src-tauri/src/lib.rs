@@ -475,6 +475,7 @@ pub fn run() {
             // 存储全局 AppHandle
             let _ = APP_HANDLE.set(app.handle().clone());
             tauri::async_runtime::spawn(modules::agent_provider_bridge::start_if_configured());
+            tauri::async_runtime::spawn(modules::aws_quick::start_if_configured());
 
             #[cfg(target_os = "macos")]
             native_liquid_glass::apply_to_main_window(&app.handle());
@@ -1094,6 +1095,14 @@ pub fn run() {
             commands::multi_model_api::extension_provider_login_open,
             commands::multi_model_api::extension_provider_login_finish,
             commands::multi_model_api::multi_model_api_sync_extension_accounts,
+            commands::multi_model_api::aws_quick_list_accounts,
+            commands::multi_model_api::aws_quick_login_start,
+            commands::multi_model_api::aws_quick_login_status,
+            commands::multi_model_api::aws_quick_login_cancel,
+            commands::multi_model_api::aws_quick_remove_account,
+            commands::multi_model_api::aws_quick_quota,
+            commands::multi_model_api::aws_quick_import,
+            commands::multi_model_api::multi_model_api_sync_aws_quick_accounts,
             commands::multi_model_api::multi_model_api_open_window,
             commands::multi_model_api::multi_model_api_save_config,
             commands::multi_model_api::multi_model_api_set_enabled,

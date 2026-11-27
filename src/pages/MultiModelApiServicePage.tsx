@@ -5,7 +5,7 @@ import { confirm, open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile } from '@tauri-apps/plugin-fs';
 import { openOAuthUrl } from '../utils/openOAuthUrl';
 import {
-  Bot, Boxes, CalendarCheck, Check, ChevronDown, CircleAlert, Copy, Database, Download, Eye, EyeOff, FileText,
+  Bot, Boxes, CalendarCheck, Check, Cloud, ChevronDown, CircleAlert, Copy, Database, Download, Eye, EyeOff, FileText,
   FileUp, Film, Globe, Image, KeyRound, MoreHorizontal, Network, Plus, Power, RefreshCw, Route,
   Save, Settings2, ShieldCheck, Sparkles, Trash2, Users, X, Zap,
 } from 'lucide-react';
@@ -29,6 +29,7 @@ import { multiModelApiService } from '../services/multiModelApiService';
 import { canRefreshQuota, preserveModelMetadata, quotaStatusLabel } from '../utils/multiModelQuota';
 import { WorkbuddyAccountsPage } from './WorkbuddyAccountsPage';
 import { DoubaoWebPoolPanel } from './DoubaoWebPoolPanel';
+import { AwsQuickPanel } from './AwsQuickPanel';
 import type {
   ModelCapability, MultiModelAccount, MultiModelApiConfig, MultiModelApiState,
   MultiModelDefinition, MultiModelApiTestResult, MultiModelRepairReport,
@@ -36,7 +37,7 @@ import type {
 } from '../types/multiModelApi';
 import './MultiModelApiServicePage.css';
 
-type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'subscription' | 'doubao-work' | 'doubao-web' | 'workbuddy' | 'native' | 'extensions';
+type Tab = 'overview' | 'accounts' | 'models' | 'keys' | 'routes' | 'subscription' | 'doubao-work' | 'doubao-web' | 'workbuddy' | 'native' | 'extensions' | 'aws-quick';
 type MenuId = 'connect' | 'maintain' | 'accounts' | 'providers' | null;
 type AccountAddMode = 'oauth' | 'token' | 'api_key' | 'import';
 type Notice = { tone: 'success' | 'error' | 'info'; text: string } | null;
@@ -53,6 +54,7 @@ const PROVIDERS = [
   { id: 'github-copilot', label: 'GitHub Copilot', short: 'Copilot', baseUrl: '' },
   ...EXTENSION_PROVIDERS.map(provider => ({ ...provider, short: provider.label, baseUrl: '' })),
   { id: 'doubao-web', label: '豆包对话（网页登录）', short: '豆包对话', baseUrl: '' },
+  { id: 'aws-quick', label: 'AWS Quick（浏览器登录）', short: 'AWS Quick', baseUrl: '' },
   { id: 'doubao-work', label: '豆包工作 Agent', short: '豆包工作', baseUrl: '' },
   { id: 'doubao-seedance', label: 'Doubao Seedance', short: 'Seedance', baseUrl: 'https://doubao.happieapi.top' },
   { id: 'custom', label: '兼容 API', short: '自定义', baseUrl: '' },
@@ -93,6 +95,7 @@ const PROVIDER_MODELS: Record<string, MultiModelDefinition[]> = {
   ].map(([id, capabilities]) => ({ id: id as string, alias: '', capabilities: capabilities as ModelCapability[], enabled: true })),
   'doubao-work': [],
   'doubao-web': [],
+  'aws-quick': [],
   custom: [],
 };
 
@@ -519,6 +522,10 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
       setTab('doubao-web');
       return;
     }
+    if (selected === 'aws-quick') {
+      setTab('aws-quick');
+      return;
+    }
     const value = structuredClone(account ?? blankAccount(provider));
     setEditing(value);
     setEditingIsNew(!account);
@@ -660,6 +667,19 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
   }), []);
 
   const accounts = draft?.accounts ?? [];
+  // AWS Quick reaches the API through one route, the sidecar's pool, which
+  // stands for every signed-in account: its count is the accounts', not 1.
+  const awsQuickPool = accounts.find((item) => item.source === 'cle:aws-quick:pool');
+  const [awsQuickCount, setAwsQuickCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!awsQuickPool) return;
+    let live = true;
+    multiModelApiService.awsQuickAccounts().then((list) => { if (live) setAwsQuickCount(list.length); }).catch(() => {});
+    return () => { live = false; };
+  }, [awsQuickPool?.name]);
+  const providerAccountCount = (provider: string) => provider === 'aws-quick' && awsQuickPool
+    ? (awsQuickCount ?? 1)
+    : accounts.filter((item) => item.provider === provider).length;
   const visibleAccounts = providerFilter === 'all' ? accounts : accounts.filter((item) => item.provider === providerFilter);
   const configuredProviders = useMemo(() => new Set(accounts.filter((item) => item.enabled).map((item) => item.provider)), [accounts]);
   const visibleCatalog = useMemo(() => {
@@ -705,12 +725,13 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
     { id: 'workbuddy' as const, label: 'WorkBuddy', detail: '多账号登录后同步', Icon: WorkbuddyIcon },
     { id: 'native' as const, label: 'Kiro / Copilot', detail: '官方登录态接入', Icon: Users },
     { id: 'doubao-web' as const, label: '豆包对话', detail: '网页登录 · 工具调用', Icon: Bot },
+    { id: 'aws-quick' as const, label: 'AWS Quick', detail: '浏览器登录 · 多账号', Icon: Cloud },
     { id: 'doubao-work' as const, label: '豆包工作', detail: '本机已登录账号', Icon: Bot },
     { id: 'extensions' as const, label: '扩展账号 / 签到', detail: 'Qoder、Trae 等', Icon: CalendarCheck },
   ];
   const activeConnect = connectTabs.find((item) => item.id === tab);
   // Providers whose login lives on their own page stay in the strip even with no accounts, so the entry is never buried in 更多厂商.
-  const pinnedProviders: readonly string[] = ['doubao-web'];
+  const pinnedProviders: readonly string[] = ['doubao-web', 'aws-quick'];
   const isListedProvider = (id: string) => pinnedProviders.includes(id) || accounts.some((account) => account.provider === id);
   const primaryProviders = PROVIDERS.filter((provider) => isListedProvider(provider.id));
   const extraProviders = PROVIDERS.filter((provider) => provider.id !== 'claude-cli' && !isListedProvider(provider.id));
@@ -797,6 +818,20 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             {notice && <div className={`mm-api-message ${notice.tone}`}><CircleAlert /><span>{notice.text}</span></div>}
             <div className="mm-api-message info"><Network /><span>已接入 {accounts.filter((account) => account.provider === 'workbuddy').length} 个账号 · Base URL：<code>{baseUrl}/v1</code> · 自动同步上游模型，登录凭证由 C.le 托管。</span></div>
             <WorkbuddyAccountsPage embedded />
+          </section>
+        ) : tab === 'aws-quick' ? (
+          <section className="mm-workbuddy-host" aria-label="AWS Quick 多账号">
+            <header className="mm-api-panel-head mm-workbuddy-heading">
+              <div>
+                <h1>AWS Quick（Amazon Quick）API</h1>
+                <p>浏览器登录 Amazon Quick 账号（个人或企业 IAM Identity Center），可添加多个账号。使用同一个网关地址和 Key，调用 aws-quick/claude-opus-5-5、aws-quick/claude-sonnet-5-5、aws-quick/claude-haiku-5-5；也可以导入 account.json 或 token。各账号按自己的额度扣费。</p>
+              </div>
+              <div className="mm-inline-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => { setProviderFilter('aws-quick'); setTab('accounts'); }}><Users />查看 API 账号池</button>
+              </div>
+            </header>
+            <div className="mm-api-message info"><Network /><span>已接入 {providerAccountCount('aws-quick')} 个账号{awsQuickPool ? <>，在 API 账号池里是一条统一入口路由（<code>{awsQuickPool.baseUrl}</code>）：每段对话留在同一个账号上，额度用完的账号自动跳过</> : null} · Base URL：<code>{baseUrl}/v1</code> · 由开源项目 magpie-AWS-Quick-bridge（GPL-3.0，独立进程）提供，非 Amazon 官方。</span></div>
+            <AwsQuickPanel onChanged={(next) => { setState(next); setDraft(structuredClone(next.config)); }} />
           </section>
         ) : tab === 'doubao-web' ? (
           <section className="mm-workbuddy-host" aria-label="豆包对话多账号">
@@ -895,7 +930,7 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
             <b>全部</b><small>{summary.accounts} 个账号</small>
           </button>
           {primaryProviders.map((provider) => {
-            const count = accounts.filter((item) => item.provider === provider.id).length;
+            const count = providerAccountCount(provider.id);
             return (
               <button key={provider.id} type="button" className={providerFilter === provider.id ? 'active' : ''} onClick={() => { setOpenMenu(null); if (!count && pinnedProviders.includes(provider.id)) { openAccount(undefined, provider.id); return; } setProviderFilter(provider.id); }}>
                 <span className={`mm-provider-icon ${provider.id}`}><ProviderIcon provider={provider.id} /></span>
@@ -956,6 +991,9 @@ export function MultiModelApiServicePage({ standalone = false }: { standalone?: 
                       </button>
                       <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); openAccount(undefined, 'doubao-web'); }} disabled={busy}>
                         <Bot /><span><b>添加豆包账号</b><small>浏览器登录 / 导入凭证 / 豆包桌面版</small></span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); openAccount(undefined, 'aws-quick'); }} disabled={busy}>
+                        <Cloud /><span><b>添加 AWS Quick 账号</b><small>浏览器登录 Amazon Quick · 多账号</small></span>
                       </button>
                     </div>
                   )}
@@ -1057,6 +1095,7 @@ function ProviderIcon({ provider }: { provider: string }) {
   if (provider === 'openai') return <Sparkles />;
   if (provider === 'doubao-work' || provider === 'doubao-web') return <Bot />;
   if (provider === 'doubao-seedance') return <Film />;
+  if (provider === 'aws-quick') return <Cloud />;
   return <Boxes />;
 }
 

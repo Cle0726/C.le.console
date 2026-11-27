@@ -10877,6 +10877,8 @@ fn process_is_owned_sidecar(process: &sysinfo::Process) -> bool {
             | "cockpit-cliproxy.exe"
             | "jimeng-api"
             | "jimeng-api.exe"
+            | "cle-aws-quick"
+            | "cle-aws-quick.exe"
     ) || helper_command_is_owned(process, &name)
 }
 

@@ -24,6 +24,7 @@ $lockedNames = @(
   'cle-cliproxy.exe',
   'cockpit-cliproxy.exe',
   'jimeng-api.exe',
+  'cle-aws-quick.exe',
   'cle-console.exe',
   'cle_console.exe'
 )
