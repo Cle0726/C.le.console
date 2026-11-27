@@ -46,7 +46,9 @@ jobs:
 
   console:
     name: Console routes (cargo test)
-    runs-on: windows-latest
+    # a Tauri lib test binary does not start on Windows without the app's
+    # manifest (STATUS_ENTRYPOINT_NOT_FOUND); macOS runs it as it is
+    runs-on: macos-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
@@ -55,18 +57,11 @@ jobs:
         with:
           workspaces: . -> target
       - name: Compile-only sidecar placeholders
-        shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          foreach ($path in @(
-            'sidecars/cle-cliproxy/bin/cle-cliproxy-x86_64-pc-windows-msvc.exe',
-            'sidecars/cockpit-cliproxy/bin/cockpit-cliproxy-x86_64-pc-windows-msvc.exe',
-            'sidecars/jimeng-api/bin/jimeng-api-x86_64-pc-windows-msvc.exe',
-            'sidecars/aws-quick/bin/cle-aws-quick-x86_64-pc-windows-msvc.exe',
-            'sidecars/mihomo/bin/mihomo-x86_64-pc-windows-msvc.exe')) {
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
-            New-Item -ItemType File -Force -Path $path | Out-Null
-          }
+          for bin in cle-cliproxy/bin/cle-cliproxy cockpit-cliproxy/bin/cockpit-cliproxy jimeng-api/bin/jimeng-api aws-quick/bin/cle-aws-quick mihomo/bin/mihomo; do
+            mkdir -p "sidecars/$(dirname "$bin")"
+            touch "sidecars/${bin}-aarch64-apple-darwin"
+          done
       - name: AWS Quick and multi-model tests
         env:
           CLE_SKIP_CLIPROXY_BUILD: '1'
